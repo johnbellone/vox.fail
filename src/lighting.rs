@@ -36,7 +36,7 @@ use bevy::{
 pub const CORNER_AO: f32 = 0.75;
 pub const ROUGHNESS: f32 = 0.5;
 
-pub use warren_world::{FillLight, KeyLight, Level, RimLight};
+pub use vox_world::{FillLight, KeyLight, Level, RimLight};
 
 #[derive(Resource)]
 pub struct Studio {

@@ -1,8 +1,8 @@
-//! Run a world: `warren-server [--listen 127.0.0.1:7780] [--db world.db] [--name void]
+//! Run a world: `vox-server [--listen 127.0.0.1:7780] [--db world.db] [--name void]
 //! [--seed data/levels/void.json] [--blocks data/blocks.json] [--max-players 100]
 //! [--directory-key <hex or file> [--guests]]`.
 //!
-//! With `--directory-key`, players must sign in at the directory (warren-directory) and bring
+//! With `--directory-key`, players must sign in at the directory (vox-directory) and bring
 //! its token; they go by the name in it. `--guests` lets people in without one too.
 //!
 //! A new database is filled from the seed level; after that the world is whatever its
@@ -20,9 +20,9 @@ async fn main() {
     let blocks_path = arg("--blocks").map(PathBuf::from).unwrap_or_else(|| data.join("blocks.json"));
     let blocks = std::fs::read_to_string(&blocks_path)
         .unwrap_or_else(|e| panic!("can't read {}: {e}", blocks_path.display()));
-    let palette = warren_core::palette_names(&blocks).expect("block palette");
-    let mut cfg = warren_server::Config::new(arg("--db").unwrap_or_else(|| "world.db".into()), palette);
-    cfg.block_size = warren_core::block_size(&blocks);
+    let palette = vox_core::palette_names(&blocks).expect("block palette");
+    let mut cfg = vox_server::Config::new(arg("--db").unwrap_or_else(|| "world.db".into()), palette);
+    cfg.block_size = vox_core::block_size(&blocks);
     cfg.name = arg("--name").unwrap_or_else(|| "void".into());
     // a new world starts as the void, the first world everyone enters
     let seed = arg("--seed").map(PathBuf::from).unwrap_or_else(|| data.join("levels/void.json"));
@@ -33,16 +33,16 @@ async fn main() {
     // sign-in: the directory's public key (hex, or a file holding it)
     if let Some(k) = arg("--directory-key") {
         let hex = std::fs::read_to_string(&k).unwrap_or(k);
-        cfg.directory = Some(warren_core::auth::public_from_hex(&hex).unwrap_or_else(|e| panic!("--directory-key: {e}")));
+        cfg.directory = Some(vox_core::auth::public_from_hex(&hex).unwrap_or_else(|e| panic!("--directory-key: {e}")));
         cfg.guests = args.iter().any(|a| a == "--guests");
     }
     let db = cfg.db.clone();
-    let server = warren_server::Server::start(cfg).unwrap_or_else(|e| panic!("can't open {}: {e}", db.display()));
+    let server = vox_server::Server::start(cfg).unwrap_or_else(|e| panic!("can't open {}: {e}", db.display()));
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
     if let Some(s) = server.status().await {
-        eprintln!("warren-server: world \"{}\" ({} blocks) on ws://{listen}/ws, saved in {}", s.world, s.blocks, db.display());
+        eprintln!("vox-server: world \"{}\" ({} blocks) on ws://{listen}/ws, saved in {}", s.world, s.blocks, db.display());
     }
     let stop = server.clone();
     axum::serve(listener, server.router())

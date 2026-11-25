@@ -1,9 +1,9 @@
-//! A Warren world in the app: `--world ws://host:7780 [--name Sam]`.
+//! A Vox world in the app: `--world ws://host:7780 [--name Sam]`.
 //!
 //! The world's blocks arrive in chunks and are drawn chunk by chunk. You walk (or fly) your
 //! character around in third person and build: left click takes a block away, right click
 //! puts the chosen one down, 1–9 or the wheel choose. Edits show at once and are undone if
-//! the server refuses them (warren-core's [`View`]). Everyone else in the world is drawn
+//! the server refuses them (vox-core's [`View`]). Everyone else in the world is drawn
 //! from their poses, played 100 ms behind like a show's guest.
 //!
 //! Keyboard and mouse: WASD walk, Space jump (up when flying), Ctrl down, Shift run, F fly,
@@ -35,7 +35,7 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 use serde::{Deserialize, Serialize};
-use warren_core::{
+use vox_core::{
     Chunk, ChunkKey, Why,
     body::Body,
     predict::View,
@@ -177,7 +177,7 @@ pub struct WorldClient {
     /// the server, if this app is in a world
     pub url: Option<String>,
     pub name: String,
-    /// a sign-in token from the directory (`--token`, or `WARREN_TOKEN`), for worlds that ask
+    /// a sign-in token from the directory (`--token`, or `VOX_TOKEN`), for worlds that ask
     pub token: Option<String>,
     link: Option<Link>,
     pub status: String,
@@ -359,14 +359,24 @@ impl Default for WorldClient {
 }
 
 /// `ws://host:port` as given, or with `/ws` added; `http(s)://` becomes `ws(s)://`.
-/// A portal's address: `:7781` is another port on the same host as `current`; anything else
-/// is a full address.
+/// A portal's address: `:7781` is the world on port 7781 of the same host as `current`, or,
+/// behind a proxy that puts worlds at `/w/<port>/ws` (as vox.pub does), the same host's
+/// `/w/7781/ws`. `/some/path` is a path on the same host. Anything else is a full address.
 pub fn portal_url(current: Option<&str>, target: &str) -> String {
     let t = target.trim();
-    let Some(port) = t.strip_prefix(':') else { return t.to_string() };
     let cur = current.unwrap_or("ws://127.0.0.1:7780/ws");
     let (scheme, rest) = cur.split_once("://").unwrap_or(("ws", cur));
-    let hostport = rest.split('/').next().unwrap_or(rest);
+    let (hostport, path) = rest.split_once('/').unwrap_or((rest, ""));
+    if t.starts_with('/') {
+        return format!("{scheme}://{hostport}{t}");
+    }
+    let Some(port) = t.strip_prefix(':') else { return t.to_string() };
+    // worlds behind a proxy, by port in the path
+    if let Some(p) = path.strip_prefix("w/") {
+        if p.split('/').next().is_some_and(|n| n.parse::<u16>().is_ok()) {
+            return format!("{scheme}://{hostport}/w/{port}/ws");
+        }
+    }
     // the host without its port (an IPv6 address keeps its brackets)
     let host = match hostport.rfind(':') {
         Some(i) if !hostport[i..].contains(']') => &hostport[..i],
@@ -394,7 +404,7 @@ impl WorldClient {
         let token = std::env::args()
             .skip_while(|a| a != "--token")
             .nth(1)
-            .or_else(|| std::env::var("WARREN_TOKEN").ok())
+            .or_else(|| std::env::var("VOX_TOKEN").ok())
             .filter(|t| !t.trim().is_empty());
         WorldClient { url: url.map(|u| ws_url(&u)), name, token, ..default() }
     }
@@ -619,13 +629,13 @@ impl WorldClient {
         world: String,
         palette: Vec<String>,
         block_size: f32,
-        bounds: warren_core::Bounds,
+        bounds: vox_core::Bounds,
         spawn: [f32; 3],
         local: &crate::blocks::Palette,
     ) {
         self.you = Some(you);
         self.world = world;
-        self.view = View::new(warren_core::World::new(bounds, palette.len() as u16));
+        self.view = View::new(vox_core::World::new(bounds, palette.len() as u16));
         let fallback = local.id("stone").unwrap_or(1);
         self.remap = std::iter::once(0).chain(palette.iter().map(|n| local.id(n).unwrap_or(fallback))).collect();
         self.names = palette;
@@ -832,7 +842,7 @@ pub fn receive(
                             let o = key.origin();
                             w.lights.retain(|l, _| ChunkKey::of(*l) != key);
                             if !c.is_empty() {
-                                let n = warren_core::CHUNK;
+                                let n = vox_core::CHUNK;
                                 for y in 0..n {
                                     for z in 0..n {
                                         for x in 0..n {
@@ -980,7 +990,7 @@ fn spawn_chunk(
     commands: &mut Commands,
 ) -> Option<Entity> {
     let o = IVec3::from(k.origin());
-    let n = warren_core::CHUNK;
+    let n = vox_core::CHUNK;
     // the chunk and a block all round it, copied out once: the mesher looks at each block's
     // neighbours many times over
     let side = (n + 2) as usize;
@@ -1866,7 +1876,7 @@ mod tests {
         w.names = vec!["grass".into(), "stone".into()];
         w.remap = vec![0, 1, 3];
         w.hotbar = vec![1, 2];
-        w.view = View::new(warren_core::World::new(warren_core::Bounds::default(), 2));
+        w.view = View::new(vox_core::World::new(vox_core::Bounds::default(), 2));
         w.view.confirmed.set([0, -1, 0], 1);
         // place next to you, not in you
         run_command(&mut w, "place:2:0:0:stone");

@@ -1,4 +1,4 @@
-//! Shows over the network, through warren-relay (`relay/`).
+//! Shows over the network, through vox-relay (`relay/`).
 //!
 //! - **Host:** `net:host` (or `net:host:My title`) registers your show with the relay set by
 //!   `relay_url=` (default `http://127.0.0.1:7779`) and streams it: your avatar's pose 30 times a
@@ -38,7 +38,7 @@ use crate::proto::{self, GUEST, HOST, Msg};
 use crate::sim::{HZ, Tick};
 
 #[allow(unused_imports)]
-pub(crate) use warren_world::pose::{DELAY, Playout, Remote, Rig, Stream, WORLD_PLAYER, capture, debug, load_remotes, put, rig};
+pub(crate) use vox_world::pose::{DELAY, Playout, Remote, Rig, Stream, WORLD_PLAYER, capture, debug, load_remotes, put, rig};
 /// Ticks between poses (120 / 30).
 const POSE_EVERY: u64 = (HZ as u64) / proto::POSE_HZ;
 /// The scene (and a guest's hello) is re-sent this often, so anyone who joins late catches up.

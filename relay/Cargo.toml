@@ -1,5 +1,5 @@
 [package]
-name = "warren-relay"
+name = "vox-relay"
 version = "0.1.0"
 edition = "2024"
 

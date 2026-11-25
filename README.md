@@ -668,7 +668,7 @@ Stream your show to other copies of the app through a relay: viewers see exactly
 character does (every joint, the face, the camera), and a guest on another computer stands
 beside you with their own character, face and voice.
 
-1. **Run the relay** somewhere both of you can reach: `cargo run --release -p warren-relay --
+1. **Run the relay** somewhere both of you can reach: `cargo run --release -p vox-relay --
    --listen 0.0.0.0:7779`. For the internet, put it behind TLS (a reverse proxy, or Cloudflare)
    and give everyone the `https://` address. `http://<relay>:7779/` lists the live shows.
 2. **Go live:** control page, **Go live**: type the relay address, **Use relay**, then **Stream
@@ -688,24 +688,24 @@ cable). Settings: `relay_url=`, `net_output=`. Testing a bad network: run the re
 
 ### Worlds: build together
 
-A Warren world is a shared block space that stays: what people build is kept.
+A Vox world is a shared block space that stays: what people build is kept.
 
-1. **Run a world:** `cargo run --release -p warren-server -- --listen 0.0.0.0:7780 --db
+1. **Run a world:** `cargo run --release -p vox-server -- --listen 0.0.0.0:7780 --db
    world.db`. A new database starts as **the Void** (`--seed data/levels/yard.json` for the
    yard, or any level); after that it's whatever was built. Ctrl-C saves.
    `http://<server>:7780/` says who's in.
 2. **Join:** `block_avatar --world ws://<server>:7780 --name Sam`.
 
-### Play Warren from a web page
+### Play Vox from a web page
 
 Players sign in on a web page, make their character there, and walk into the Void in the
 browser, or download the desktop client.
 
 1. **Run the directory** (accounts, characters, the pages):
-   `cargo run --release -p warren-directory -- --listen 0.0.0.0:7700`. It makes a signing key
+   `cargo run --release -p vox-directory -- --listen 0.0.0.0:7700`. It makes a signing key
    the first time (`directory.key`) and writes its public half to `directory.key.pub`.
 2. **Run the Void so it checks sign-ins:**
-   `warren-server --listen 0.0.0.0:7780 --db void.db --directory-key directory.key.pub`
+   `vox-server --listen 0.0.0.0:7780 --db void.db --directory-key directory.key.pub`
    (add `--guests` to let people in without signing in, as guests).
 3. **Build the browser client once:** `tools/build_web.sh` (puts it in `web/pkg`; needs the
    wasm32 target and wasm-bindgen-cli, see the script).
@@ -715,12 +715,14 @@ browser, or download the desktop client.
    Edge, Safari and Firefox have it).
 
 **Desktop instead:** copy your launch code on the start page and run
-`warren-client --token <code>` (`--world ws://host:7780/ws` for another server). The code
+`vox-client --token <code>` (`--world ws://host:7780/ws` for another server). The code
 lasts a day. List downloads on the page with
-`--download "Windows=https://…/warren-client.zip"`.
+`--download "Windows=https://…/vox-client.zip"`.
 
 Worlds on the page come from `--world "The Void=:7780"` (repeatable; `:7780` is the page's own
-host). Behind HTTPS, add `--secure` and serve worlds as `wss://`.
+host, that port; `/w/7780/ws` a path on it). **vox.pub** runs it all behind Caddy: the
+directory at https://vox.pub/ and each world at `wss://vox.pub/w/<port>/ws`; `deploy/` has
+the Caddyfile, systemd units and steps. The desktop client goes there by default.
 
 **Moving and building:** the camera looks down from above at an angle, like Diablo. **Left
 click** (or hold) walks to where you point, **WASD** walk too, the **wheel** zooms in and out,
@@ -745,9 +747,9 @@ level lists its doorways under `"portals"` in its `"world"` object (where, which
 which level, which server, and the matching point on the far side); `":7781"` means another
 port on the same host. To try all three:
 
-    warren-server --listen 127.0.0.1:7780 --db void.db
-    warren-server --listen 127.0.0.1:7781 --db yard.db --seed data/levels/yard.json --name yard
-    warren-server --listen 127.0.0.1:7782 --db islands.db --seed data/levels/islands.json --name islands
+    vox-server --listen 127.0.0.1:7780 --db void.db
+    vox-server --listen 127.0.0.1:7781 --db yard.db --seed data/levels/yard.json --name yard
+    vox-server --listen 127.0.0.1:7782 --db islands.db --seed data/levels/islands.json --name islands
 
 If nobody answers on the other side, you're put back where you were. `world:portal:<name>`
 goes through by command.

@@ -21,8 +21,8 @@
 //! Written against Bevy 0.19.1 and cpal 0.17.
 
 mod applog;
-pub use warren_world::{blocks, outdoors, portals, proto};
-pub use warren_world::client as world;
+pub use vox_world::{blocks, outdoors, portals, proto};
+pub use vox_world::client as world;
 mod sets;
 mod audio;
 mod ask;
@@ -443,7 +443,7 @@ struct Args {
     watch: Option<(String, String)>,
     /// --join http://relay:7779/<session> --code ABC123 [--name Sam]: be a show's guest
     join: Option<(String, String, String)>,
-    /// --world ws://host:7780 [--name Sam]: walk and build in a Warren world
+    /// --world ws://host:7780 [--name Sam]: walk and build in a Vox world
     world: Option<String>,
     name: String,
 }
@@ -589,9 +589,9 @@ fn analyze_file(inp: &str, out: &str, mode: LipMode, formants: bool) -> Result<(
 fn main() {
     applog::attach_console_for_cli();
     // the world code reads the game's files from here, and logs through ours
-    warren_world::files::set_base(asset_base());
-    warren_world::files::set_user_dir(applog::user_dir());
-    warren_world::files::set_logger(|s| applog::write(false, s));
+    vox_world::files::set_base(asset_base());
+    vox_world::files::set_user_dir(applog::user_dir());
+    vox_world::files::set_logger(|s| applog::write(false, s));
     let Some(args) = parse_args() else { return };
     // no settings yet: this is the first run, so the control page opens on the setup steps
     let first_run = !settings_path().exists();
@@ -1221,8 +1221,8 @@ fn main() {
         )
         .add_systems(Update, facecap::update)
         .add_systems(Update, sets::build)
-        .init_resource::<warren_world::WorldRender>()
-        .init_resource::<warren_world::LocalAvatar>()
+        .init_resource::<vox_world::WorldRender>()
+        .init_resource::<vox_world::LocalAvatar>()
         .add_systems(
             Update,
             (world_in, world::receive, world::attach, world::controls, world_out, world::remesh, world::hud)
@@ -1279,7 +1279,7 @@ fn setup_scene(mut commands: Commands) {
         Camera3d::default(),
         Tonemapping::None,
         MainCamera,
-        warren_world::WorldCamera,
+        vox_world::WorldCamera,
         Transform::from_xyz(0.45, 1.6, 2.8).looking_at(Vec3::new(0.0, 1.42, 0.0), Vec3::Y),
     ));
     commands.spawn((
@@ -2034,8 +2034,8 @@ fn world_in(
     w: Res<world::WorldClient>,
     av: Res<Avatar>,
     studio: Res<lighting::Studio>,
-    mut me: ResMut<warren_world::LocalAvatar>,
-    mut render: ResMut<warren_world::WorldRender>,
+    mut me: ResMut<vox_world::LocalAvatar>,
+    mut render: ResMut<vox_world::WorldRender>,
 ) {
     if !w.active() {
         return;
@@ -2053,8 +2053,8 @@ fn world_in(
 /// What the world decided: walk or stand, and that it lights the scene.
 fn world_out(
     w: Res<world::WorldClient>,
-    me: Res<warren_world::LocalAvatar>,
-    render: Res<warren_world::WorldRender>,
+    me: Res<vox_world::LocalAvatar>,
+    render: Res<vox_world::WorldRender>,
     mut av: ResMut<Avatar>,
     mut studio: ResMut<lighting::Studio>,
     mut walking: Local<bool>,

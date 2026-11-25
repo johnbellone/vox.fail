@@ -1,0 +1,16 @@
+# One world per instance: vox-world@void, vox-world@yard, vox-world@islands.
+# Each reads /etc/vox/<name>.env for PORT and SEED.
+[Unit]
+Description=Vox world %i
+After=network-online.target vox-directory.service
+
+[Service]
+User=vox
+WorkingDirectory=/opt/vox
+EnvironmentFile=/etc/vox/%i.env
+ExecStart=/opt/vox/bin/vox-server --listen 127.0.0.1:${PORT} --db /var/lib/vox/%i.db --name %i --seed ${SEED} --directory-key /var/lib/vox/directory.key.pub
+Restart=on-failure
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

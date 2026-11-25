@@ -1,4 +1,4 @@
-//! warren-core: the rules every part of Warren shares, with no engine in them.
+//! vox-core: the rules every part of Vox shares, with no engine in them.
 //!
 //! - [`world`]: blocks in 32³ chunks, the world's bounds, edits and the checks on them.
 //! - [`ray`]: which block the crosshair is on (a voxel walk).

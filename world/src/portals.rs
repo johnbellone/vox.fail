@@ -279,7 +279,7 @@ fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Opti
             let made = (|| -> Loaded {
                 let pal = crate::blocks::Palette::load(&crate::files::base().join("data/blocks.json"))?;
                 let cells = crate::blocks::load_level(&text, &pal)?;
-                let settings = serde_json::from_str(&warren_core::level::settings(&text)).unwrap_or(Value::Null);
+                let settings = serde_json::from_str(&vox_core::level::settings(&text)).unwrap_or(Value::Null);
                 Ok((crate::blocks::mesh_level(&cells, &pal, &rects), settings))
             })();
             if let Err(e) = &made {
@@ -688,8 +688,11 @@ mod tests {
     fn the_portal_url() {
         use crate::client::portal_url;
         assert_eq!(portal_url(Some("ws://127.0.0.1:7780/ws"), ":7781"), "ws://127.0.0.1:7781/ws");
-        assert_eq!(portal_url(Some("wss://warren.example:443/ws"), ":8443"), "wss://warren.example:8443/ws");
+        assert_eq!(portal_url(Some("wss://vox.example:443/ws"), ":8443"), "wss://vox.example:8443/ws");
         assert_eq!(portal_url(Some("ws://[::1]:7780/ws"), ":7781"), "ws://[::1]:7781/ws");
         assert_eq!(portal_url(None, "ws://other:9/ws"), "ws://other:9/ws");
+        // vox.pub: worlds behind one host, by port in the path
+        assert_eq!(portal_url(Some("wss://vox.pub/w/7780/ws"), ":7781"), "wss://vox.pub/w/7781/ws");
+        assert_eq!(portal_url(Some("wss://vox.pub/w/7780/ws"), "/yard/ws"), "wss://vox.pub/yard/ws");
     }
 }

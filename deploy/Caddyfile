@@ -1,0 +1,27 @@
+# vox.pub: the directory (pages, accounts, the browser client) and the worlds, all on one
+# host behind Caddy, which gets the TLS certificate. Worlds sit at /w/<port>/ws, so a
+# portal's ":7781" becomes wss://vox.pub/w/7781/ws.
+
+vox.pub {
+	encode zstd gzip
+
+	# the worlds: the Void, the yard, the islands
+	handle_path /w/7780/* {
+		reverse_proxy 127.0.0.1:7780
+	}
+	handle_path /w/7781/* {
+		reverse_proxy 127.0.0.1:7781
+	}
+	handle_path /w/7782/* {
+		reverse_proxy 127.0.0.1:7782
+	}
+
+	# everything else: the directory
+	handle {
+		reverse_proxy 127.0.0.1:7700
+	}
+}
+
+www.vox.pub {
+	redir https://vox.pub{uri} permanent
+}

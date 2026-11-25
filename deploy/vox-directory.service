@@ -1,0 +1,12 @@
+[Unit]
+Description=Vox directory (vox.pub: accounts, characters, pages)
+After=network-online.target
+
+[Service]
+User=vox
+WorkingDirectory=/opt/vox
+ExecStart=/opt/vox/bin/vox-directory --listen 127.0.0.1:7700 --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key --secure --behind-proxy --world "The Void=/w/7780/ws"
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

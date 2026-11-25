@@ -5,7 +5,7 @@
 //! with the directory's Ed25519 key. World servers hold only the directory's public key, so
 //! they check a token with no call to the directory.
 //!
-//! A token is `w1.<claims>.<signature>`, both parts base64url (no padding); the claims are
+//! A token is `v1.<claims>.<signature>`, both parts base64url (no padding); the claims are
 //! postcard. Tokens last a day by default.
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
@@ -42,13 +42,13 @@ pub struct Claims {
 pub fn sign(claims: &Claims, key: &SigningKey) -> String {
     let body = postcard::to_stdvec(claims).expect("claims");
     let sig = key.sign(&body);
-    format!("w1.{}.{}", B64.encode(&body), B64.encode(sig.to_bytes()))
+    format!("v1.{}.{}", B64.encode(&body), B64.encode(sig.to_bytes()))
 }
 
 /// What a token says, if `key` signed it and it hasn't run out at `now` (seconds since 1970).
 pub fn verify(token: &str, key: &VerifyingKey, now: u64) -> Result<Claims, String> {
     let mut parts = token.trim().split('.');
-    let (Some("w1"), Some(body), Some(sig), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
+    let (Some("v1"), Some(body), Some(sig), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
         return Err("not a sign-in token".into());
     };
     let body = B64.decode(body).map_err(|_| "bad token")?;
@@ -111,7 +111,7 @@ mod tests {
     fn signed_tokens_check_out() {
         let key = key_from_seed([3; 32]);
         let t = sign(&claims(1000), &key);
-        assert!(t.starts_with("w1."));
+        assert!(t.starts_with("v1."));
         assert_eq!(verify(&t, &key.verifying_key(), 2000).unwrap(), claims(1000));
         assert_eq!(peek(&t).unwrap().name, "Sam");
         // the public key travels as hex
@@ -138,7 +138,7 @@ mod tests {
         let (_, sig) = t.rsplit_once('.').unwrap();
         let (head, _) = forged.rsplit_once('.').unwrap();
         assert!(verify(&format!("{head}.{sig}"), &key.verifying_key(), 2000).is_err());
-        for junk in ["", "w1", "w1.a.b", "w2.a.b", "w1.a.b.c", "hello"] {
+        for junk in ["", "v1", "v1.a.b", "w1.a.b", "v1.a.b.c", "hello"] {
             assert!(verify(junk, &key.verifying_key(), 2000).is_err(), "{junk}");
         }
     }

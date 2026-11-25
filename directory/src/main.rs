@@ -1,6 +1,8 @@
-//! Run the directory: `warren-directory [--listen 127.0.0.1:7700] [--db directory.db]
+//! Run the directory: `vox-directory [--listen 127.0.0.1:7700] [--db directory.db]
 //! [--key directory.key] [--web web] [--assets assets] [--data data]
-//! [--world "The Void=:7780"]... [--download "Windows=https://…"]... [--secure]`.
+//! [--world "The Void=:7780"]... [--download "Windows=https://…"]... [--secure] [--behind-proxy]`.
+//!
+//! On vox.pub (see deploy/): `--secure --behind-proxy --world "The Void=/w/7780/ws"`.
 //!
 //! The signing key is made the first time and kept in `--key`; its public half is written
 //! next to it (`directory.key.pub`) and served at `/api/key`. Start world servers with
@@ -9,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use warren_directory::{Config, Directory, WorldInfo, load_or_make_key};
+use vox_directory::{Config, Directory, WorldInfo, load_or_make_key};
 
 #[tokio::main]
 async fn main() {
@@ -21,7 +23,7 @@ async fn main() {
     let key_path = PathBuf::from(arg("--key").unwrap_or_else(|| "directory.key".into()));
     let key = load_or_make_key(&key_path).unwrap_or_else(|e| panic!("{e}"));
     let pub_path = PathBuf::from(format!("{}.pub", key_path.display()));
-    let public = warren_core::auth::public_hex(&key.verifying_key());
+    let public = vox_core::auth::public_hex(&key.verifying_key());
     let _ = std::fs::write(&pub_path, format!("{public}\n"));
     let pair = |s: &str| s.split_once('=').map(|(a, b)| (a.trim().to_string(), b.trim().to_string()));
     let mut worlds: Vec<WorldInfo> =
@@ -42,10 +44,11 @@ async fn main() {
         worlds,
         secure_cookies: args.iter().any(|a| a == "--secure"),
         downloads: all("--download").iter().filter_map(|d| pair(d)).collect(),
+        behind_proxy: args.iter().any(|a| a == "--behind-proxy"),
     };
     let dir = Directory::open(cfg).unwrap_or_else(|e| panic!("{e}"));
     let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
-    eprintln!("warren-directory on http://{listen}/ (public key {public}, in {})", pub_path.display());
+    eprintln!("vox-directory on http://{listen}/ (public key {public}, in {})", pub_path.display());
     axum::serve(listener, dir.router().into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

@@ -1,8 +1,8 @@
 [package]
-name = "warren-core"
+name = "vox-core"
 version = "0.1.0"
 edition = "2024"
-description = "Warren's shared rules: block chunks, edits and their checks, raycasts, levels and the world wire format. No Bevy, so the app, the server and (later) pocket worlds all run the same code."
+description = "Vox's shared rules: block chunks, edits and their checks, raycasts, levels and the world wire format. No Bevy, so the app, the server and (later) pocket worlds all run the same code."
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }

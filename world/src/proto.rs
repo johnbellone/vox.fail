@@ -1,4 +1,4 @@
-//! The wire format between a host, its guest and its viewers (carried by warren-relay).
+//! The wire format between a host, its guest and its viewers (carried by vox-relay).
 //!
 //! Every binary message is one byte the relay looks at ([`DROPPABLE`] or [`RELIABLE`]) followed
 //! by a postcard-encoded [`Msg`]. Poses (and later voice) are droppable: a newer one replaces a

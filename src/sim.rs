@@ -15,7 +15,7 @@ use std::time::Duration;
 use bevy::{prelude::*, transform::TransformSystems};
 
 /// Simulation ticks a second.
-pub const HZ: f64 = warren_world::pose::HZ;
+pub const HZ: f64 = vox_world::pose::HZ;
 /// The most simulated time one frame may catch up on (12 ticks).
 pub const MAX_CATCH_UP: Duration = Duration::from_millis(100);
 

@@ -1,6 +1,6 @@
-//! warren-server: one shared build space.
+//! vox-server: one shared build space.
 //!
-//! Players connect a WebSocket to `/ws` and speak [`warren_core::wire`]. One thread owns the
+//! Players connect a WebSocket to `/ws` and speak [`vox_core::wire`]. One thread owns the
 //! world (the blocks, the players, the edit order) and everything goes through it, so every
 //! player sees the same edits in the same order. Blocks and an edit log are kept in SQLite,
 //! written every few seconds and on shutdown.
@@ -8,7 +8,7 @@
 //! - `GET /` — a short status (world, players, blocks, edits) as JSON.
 //! - `GET /ws` — a player's connection.
 //!
-//! The rules (bounds, palette, reach, rate) are warren-core's, so the app predicts edits
+//! The rules (bounds, palette, reach, rate) are vox-core's, so the app predicts edits
 //! with the same checks the server makes.
 
 use std::{
@@ -34,7 +34,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use rusqlite::{Connection, params};
 use tokio::sync::{mpsc, oneshot};
-use warren_core::{
+use vox_core::{
     Bounds, Chunk, ChunkKey, Why, World,
     weather::{Climate, Weather},
     wire::{self, Applied, PROTOCOL, ToClient, ToServer},
@@ -69,7 +69,7 @@ pub struct Config {
     pub flush_every: Duration,
     /// the directory's public key: players must bring a sign-in token it signed, and go by
     /// the name in it. None: anyone may join under any name (a private or test world).
-    pub directory: Option<warren_core::auth::VerifyingKey>,
+    pub directory: Option<vox_core::auth::VerifyingKey>,
     /// with a directory: also let people in without signing in, as guests
     pub guests: bool,
 }
@@ -121,7 +121,7 @@ enum Event {
 pub struct Server {
     tx: mpsc::Sender<Event>,
     /// who may join: the directory's key, and whether guests may too
-    gate: Arc<(Option<warren_core::auth::VerifyingKey>, bool)>,
+    gate: Arc<(Option<vox_core::auth::VerifyingKey>, bool)>,
     thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     next_conn: Arc<AtomicU64>,
 }
@@ -188,14 +188,14 @@ fn unix_now() -> u64 {
 /// name and account; without one they're a guest (if guests are let in). Without a key, any
 /// name goes.
 fn admit(
-    gate: &(Option<warren_core::auth::VerifyingKey>, bool),
+    gate: &(Option<vox_core::auth::VerifyingKey>, bool),
     name: String,
     token: Option<&str>,
     now: u64,
 ) -> Result<(String, Option<u64>), String> {
     let Some(key) = &gate.0 else { return Ok((name, None)) };
     match token {
-        Some(t) => warren_core::auth::verify(t, key, now).map(|c| (c.name, Some(c.account))),
+        Some(t) => vox_core::auth::verify(t, key, now).map(|c| (c.name, Some(c.account))),
         None if gate.1 => {
             let n = clean(&name, 24);
             Ok((if n.is_empty() { "guest".into() } else { format!("{n} (guest)") }, None))
@@ -342,13 +342,13 @@ impl WorldState {
         let seq: u64 = meta("seq").and_then(|s| s.parse().ok()).unwrap_or(0);
         let settings = match meta("settings") {
             Some(s) if !fresh => s,
-            _ => cfg.seed.as_deref().map(warren_core::level::settings).unwrap_or_else(|| "{}".into()),
+            _ => cfg.seed.as_deref().map(vox_core::level::settings).unwrap_or_else(|| "{}".into()),
         };
         let mut world = World::new(cfg.bounds, cfg.palette.len() as u16);
         let mut dirty = HashSet::new();
         if fresh {
             if let Some(level) = &cfg.seed {
-                warren_core::level::fill(&mut world, level, &cfg.palette)?;
+                vox_core::level::fill(&mut world, level, &cfg.palette)?;
                 dirty.extend(world.keys());
             }
         } else {

@@ -1,19 +1,23 @@
-//! The desktop client: `warren-client --token <launch code> [--world ws://host:7780/ws]`.
+//! The desktop client: `vox-client --token <launch code> [--world ws://host:7780/ws]`.
 //!
 //! The launch code comes from the directory's page ("Copy launch code"); it says who you are
 //! and what you look like. Without one, `--model models/dog.glb --name Sam` joins a world
-//! that lets guests in. `--world` defaults to a Void on this machine.
+//! that lets guests in. `--world` defaults to the Void at vox.pub (`--world
+//! ws://127.0.0.1:7780/ws` for one on this machine).
 
 use std::path::PathBuf;
+
+/// Where the Void is.
+const DEFAULT_WORLD: &str = "wss://vox.pub/w/7780/ws";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1).cloned());
     let root = find_root();
-    warren_world::files::set_base(root.clone());
-    let token = arg("--token").or_else(|| std::env::var("WARREN_TOKEN").ok()).filter(|t| !t.trim().is_empty());
-    let start = warren_client::Start {
-        url: warren_world::client::ws_url(&arg("--world").unwrap_or_else(|| "ws://127.0.0.1:7780/ws".into())),
+    vox_world::files::set_base(root.clone());
+    let token = arg("--token").or_else(|| std::env::var("VOX_TOKEN").ok()).filter(|t| !t.trim().is_empty());
+    let start = vox_client::Start {
+        url: vox_world::client::ws_url(&arg("--world").unwrap_or_else(|| DEFAULT_WORLD.into())),
         token,
         name: arg("--name").unwrap_or_default(),
         model: arg("--model").unwrap_or_default(),
@@ -21,7 +25,7 @@ fn main() {
         canvas: None,
     }
     .from_token();
-    warren_client::app(start, root.join("assets").to_string_lossy().into_owned()).run();
+    vox_client::app(start, root.join("assets").to_string_lossy().into_owned()).run();
 }
 
 /// The folder holding data/ and assets/: here, or above the executable.

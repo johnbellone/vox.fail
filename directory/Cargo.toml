@@ -1,11 +1,11 @@
 [package]
-name = "warren-directory"
+name = "vox-directory"
 version = "0.1.0"
 edition = "2024"
-description = "Warren's directory: accounts, characters, sign-in tokens for world servers, and the web pages where people sign in, make a character and play."
+description = "Vox's directory: accounts, characters, sign-in tokens for world servers, and the web pages where people sign in, make a character and play."
 
 [dependencies]
-warren-core = { path = "../core" }
+vox-core = { path = "../core" }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["fs"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }

@@ -1,5 +1,5 @@
-//! warren-world: a Warren world on screen, shared by the desktop app (`block_avatar --world`)
-//! and the player client (`warren-client`, on the desktop and in the browser).
+//! vox-world: a Vox world on screen, shared by the desktop app (`block_avatar --world`)
+//! and the player client (`vox-client`, on the desktop and in the browser).
 //!
 //! - [`blocks`]: block definitions, the texture atlas, meshing, and the block, water and flame
 //!   materials.

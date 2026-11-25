@@ -1,4 +1,4 @@
-//! warren-relay: lists running shows and relays their traffic.
+//! vox-relay: lists running shows and relays their traffic.
 //!
 //! Every app connects out to the relay, so nobody needs a port forward, and the host uploads one
 //! stream however many people watch.

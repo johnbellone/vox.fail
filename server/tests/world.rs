@@ -6,12 +6,12 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
-use warren_core::{
+use vox_core::{
     Chunk, Why, World,
     weather::{Climate, Weather},
     wire::{self, PROTOCOL, ToClient, ToServer},
 };
-use warren_server::{Config, Server};
+use vox_server::{Config, Server};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -258,7 +258,7 @@ async fn wrong_version_full_and_no_hello() {
 
 #[tokio::test]
 async fn the_world_survives_a_restart() {
-    let dir = std::env::temp_dir().join(format!("warren-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vox-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("world.db");
     let _ = std::fs::remove_file(&db);
@@ -302,7 +302,7 @@ fn rusqlite_count(db: &str) -> i64 {
 
 #[tokio::test]
 async fn a_world_that_needs_sign_in() {
-    use warren_core::auth::{self, Character, Claims};
+    use vox_core::auth::{self, Character, Claims};
     let key = auth::key_from_seed([9; 32]);
     let mut cfg = config(":memory:");
     cfg.directory = Some(key.verifying_key());

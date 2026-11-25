@@ -6,7 +6,7 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use warren_relay::{Created, DROPPABLE, Listed, RELIABLE, Relay, Sim};
+use vox_relay::{Created, DROPPABLE, Listed, RELIABLE, Relay, Sim};
 
 async fn start(expire: Duration) -> (String, Relay) {
     let relay = Relay::new(expire);

@@ -1,4 +1,4 @@
-import { api, me, $, el, find } from "/warren.js";
+import { api, me, $, el, find } from "/vox.js";
 
 let mode = "in";
 
@@ -38,7 +38,7 @@ async function show() {
   links.replaceChildren();
   for (const d of w.downloads || []) links.append(el("a", { class: "button plain", href: d.url, text: `Download for ${d.label}` }));
   if (!(w.downloads || []).length) {
-    $("#dl-text").textContent = "Running the desktop app from source? Copy your launch code and start it with: warren-client --token <code>";
+    $("#dl-text").textContent = "Running the desktop app from source? Copy your launch code and start it with: vox-client --token <code>";
   }
 }
 

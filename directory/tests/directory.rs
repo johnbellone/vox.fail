@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use warren_core::auth;
-use warren_directory::{Config, Directory, WorldInfo, check_name};
+use vox_core::auth;
+use vox_directory::{Config, Directory, WorldInfo, check_name};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -21,6 +21,7 @@ async fn serve() -> (Directory, String) {
         worlds: vec![WorldInfo { name: "The Void".into(), url: ":7780".into(), about: String::new() }],
         secure_cookies: false,
         downloads: vec![],
+        behind_proxy: false,
     };
     let d = Directory::open(cfg).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

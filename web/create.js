@@ -1,4 +1,4 @@
-import { api, me, $, el, find } from "/warren.js";
+import { api, me, $, el, find } from "/vox.js";
 
 const GROUPS = { Cast: "The cast", Roast: "The roast", Animals: "Animals" };
 const SLOTS = ["hat", "face", "hand"];

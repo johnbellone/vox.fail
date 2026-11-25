@@ -296,10 +296,10 @@ fn image(bytes: Vec<u8>, w: usize, h: usize, format: TextureFormat) -> Image {
 
 /// A level's blocks: position (in blocks; block (x, y, z) spans x..x+1 times the block size)
 /// -> block id. Later boxes overwrite earlier ones; "air" removes. (The rules are
-/// warren-core's, so a world server reads levels the same way.)
+/// vox-core's, so a world server reads levels the same way.)
 pub fn load_level(text: &str, pal: &Palette) -> Result<HashMap<IVec3, u16>, String> {
     let names: Vec<String> = pal.defs.iter().map(|d| d.name.clone()).collect();
-    Ok(warren_core::level::load(text, &names)?.into_iter().map(|(c, b)| (IVec3::from(c), b)).collect())
+    Ok(vox_core::level::load(text, &names)?.into_iter().map(|(c, b)| (IVec3::from(c), b)).collect())
 }
 
 /// Where a level's file is: your own levels folder first, then the built-in ones.

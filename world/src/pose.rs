@@ -174,7 +174,7 @@ pub struct Remote {
     pub rig: Option<Rig>,
 }
 
-/// `who` for a player in a Warren world (they have their own streams, in `world`).
+/// `who` for a player in a Vox world (they have their own streams, in `world`).
 pub const WORLD_PLAYER: u8 = 255;
 
 impl Remote {

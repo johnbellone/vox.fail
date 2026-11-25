@@ -34,7 +34,7 @@ use bevy::{
 
 use crate::{FillLight, KeyLight, RimLight, WorldRender as Studio};
 use crate::client::{LightKind, WorldClient};
-use warren_core::weather::Weather;
+use vox_core::weather::Weather;
 
 /// Faces of the sky cube used for lighting, in pixels.
 const ENV_SIZE: u32 = 64;
@@ -1199,7 +1199,7 @@ mod tests {
 
     #[test]
     fn fog_from_the_weather() {
-        use warren_core::weather::{Climate, Weather};
+        use vox_core::weather::{Climate, Weather};
         let detail = fog_detail();
         assert_eq!(detail.len(), VOL[0] * VOL[1] * VOL[2]);
         let mean = |b: &[u8]| b.iter().map(|v| *v as f32).sum::<f32>() / b.len() as f32;

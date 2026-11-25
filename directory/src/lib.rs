@@ -1,4 +1,4 @@
-//! warren-directory: where people sign in, make their character and go into a world.
+//! vox-directory: where people sign in, make their character and go into a world.
 //!
 //! - Accounts: a name and a password (Argon2id). A web session is a random cookie; the
 //!   database keeps only its SHA-256.
@@ -6,8 +6,8 @@
 //!   on the face, something in the hand), from `data/characters.json` and
 //!   `data/wardrobe.json`.
 //! - Sign-in tokens: `POST /api/token` signs who you are and what you look like with the
-//!   directory's Ed25519 key ([`warren_core::auth`]). World servers started with the
-//!   directory's public key (`warren-server --directory-key`) let you in with it, with no call
+//!   directory's Ed25519 key ([`vox_core::auth`]). World servers started with the
+//!   directory's public key (`vox-server --directory-key`) let you in with it, with no call
 //!   back here.
 //! - The web pages (`web/`): sign in or up, make your character, play in the browser (the
 //!   WebAssembly client in `web/pkg`) or download the desktop client. The game's assets and
@@ -40,9 +40,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tower_http::services::{ServeDir, ServeFile};
-use warren_core::auth::{self, Character, Claims, SigningKey};
+use vox_core::auth::{self, Character, Claims, SigningKey};
 
-const COOKIE: &str = "warren_session";
+const COOKIE: &str = "vox_session";
 /// How long a web session lasts, s.
 const SESSION: u64 = 30 * 24 * 3600;
 /// Sign-in and sign-up attempts allowed per address (and per name) in `WINDOW`.
@@ -74,6 +74,9 @@ pub struct Config {
     pub secure_cookies: bool,
     /// where the desktop client can be downloaded (shown on the play page), if anywhere
     pub downloads: Vec<(String, String)>,
+    /// behind a reverse proxy (Caddy on vox.pub): a visitor's address is the last one in
+    /// `X-Forwarded-For`, not the connection's
+    pub behind_proxy: bool,
 }
 
 /// Who you can be and what you can wear.
@@ -132,6 +135,7 @@ struct Inner {
     worlds: Vec<WorldInfo>,
     secure: bool,
     downloads: Vec<(String, String)>,
+    behind_proxy: bool,
     tries: Mutex<HashMap<String, (u32, Instant)>>,
     /// a password hash checked when a name doesn't exist, so failing takes as long either way
     dummy: String,
@@ -249,6 +253,7 @@ impl Directory {
                 worlds: cfg.worlds,
                 secure: cfg.secure_cookies,
                 downloads: cfg.downloads,
+                behind_proxy: cfg.behind_proxy,
                 tries: Mutex::new(HashMap::new()),
                 dummy: Argon2::default()
                     .hash_password(random_hex(16).as_bytes(), &salt())
@@ -286,6 +291,16 @@ impl Directory {
             .fallback_service(ServeDir::new(web).precompressed_br().precompressed_gzip())
             .layer(axum::middleware::from_fn(headers))
             .with_state(self.clone())
+    }
+
+    /// Where a request came from (for counting sign-in tries).
+    fn visitor(&self, addr: SocketAddr, h: &HeaderMap) -> String {
+        if self.0.behind_proxy {
+            if let Some(ip) = h.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()) {
+                return ip.trim().to_string();
+            }
+        }
+        addr.ip().to_string()
     }
 
     /// Too many sign-in tries from `who` lately?
@@ -378,7 +393,7 @@ async fn signup(
     Json(l): Json<Login>,
 ) -> Res<Response> {
     json_only(&h)?;
-    if d.tried(&addr.ip().to_string()) {
+    if d.tried(&d.visitor(addr, &h)) {
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too many tries: wait a few minutes".into()));
     }
     let name = check_name(&l.name).map_err(bad)?;
@@ -410,7 +425,7 @@ async fn signin(
 ) -> Res<Response> {
     json_only(&h)?;
     let lname = l.name.trim().to_lowercase();
-    if d.tried(&addr.ip().to_string()) || d.tried(&format!("name:{lname}")) {
+    if d.tried(&d.visitor(addr, &h)) || d.tried(&format!("name:{lname}")) {
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too many tries: wait a few minutes".into()));
     }
     let row: Option<(i64, String, String)> = {
@@ -444,7 +459,7 @@ async fn signout(State(d): State<Directory>, h: HeaderMap) -> Response {
             }
         }
     }
-    let gone = HeaderValue::from_static("warren_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    let gone = HeaderValue::from_static("vox_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
     ([(header::SET_COOKIE, gone)], Json(json!({}))).into_response()
 }
 

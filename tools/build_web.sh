@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the browser client (warren-client for WebAssembly) into web/pkg, where the
+# Build the browser client (vox-client for WebAssembly) into web/pkg, where the
 # directory's play page loads it.
 #
 #   tools/build_web.sh
@@ -11,19 +11,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
-args=(--profile wasm-release --target wasm32-unknown-unknown -p warren-client --lib)
+args=(--profile wasm-release --target wasm32-unknown-unknown -p vox-client --lib)
 if rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
   cargo build "${args[@]}"
 else
   RUSTC_BOOTSTRAP=1 cargo build "${args[@]}" -Zbuild-std=std,panic_abort
 fi
 mkdir -p web/pkg
-wasm-bindgen --target web --no-typescript --out-dir web/pkg target/wasm32-unknown-unknown/wasm-release/warren_client.wasm
+wasm-bindgen --target web --no-typescript --out-dir web/pkg target/wasm32-unknown-unknown/wasm-release/vox_client.wasm
 if command -v wasm-opt >/dev/null; then
-  wasm-opt -Os -o web/pkg/warren_client_bg.wasm web/pkg/warren_client_bg.wasm
+  wasm-opt -Os -o web/pkg/vox_client_bg.wasm web/pkg/vox_client_bg.wasm
 fi
 # served pre-compressed by the directory (about a quarter of the size)
-for f in web/pkg/warren_client_bg.wasm web/pkg/warren_client.js; do
+for f in web/pkg/vox_client_bg.wasm web/pkg/vox_client.js; do
   gzip -9 -k -f "$f"
   if command -v brotli >/dev/null; then brotli -f -q 9 -o "$f.br" "$f"; fi
 done

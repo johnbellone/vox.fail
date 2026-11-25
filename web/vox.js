@@ -1,4 +1,4 @@
-// What every Warren page shares: talking to the directory.
+// What every Vox page shares: talking to the directory.
 
 export async function api(path, method = "GET", body) {
   const opts = { method, credentials: "same-origin", headers: {} };
@@ -24,11 +24,12 @@ export function find(catalogue, model) {
   return catalogue.characters.find((c) => c.model === model);
 }
 
-/** A world's address: ":7780" is this host, that port. */
+/** A world's address: ":7780" is this host, that port; "/w/7780/ws" a path on this host. */
 export function worldUrl(url) {
-  if (!url.startsWith(":")) return url;
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${location.hostname}${url}/ws`;
+  if (url.startsWith(":")) return `${scheme}://${location.hostname}${url}/ws`;
+  if (url.startsWith("/")) return `${scheme}://${location.host}${url}`;
+  return url;
 }
 
 export function $(sel, root = document) { return root.querySelector(sel); }

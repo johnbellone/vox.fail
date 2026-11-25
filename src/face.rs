@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(crate) use warren_world::pose::FACE_PARTS;
+pub(crate) use vox_world::pose::FACE_PARTS;
 /// Gestures on F1-F8, looked up by clip name; missing ones are skipped. F9-F12 play the
 /// character's own clips (the ones after the 100 shared clips).
 pub(crate) const GESTURES: [&str; 8] = [

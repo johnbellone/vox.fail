@@ -6,8 +6,8 @@ description = "Mic-driven block-style avatar for streaming (OBS)"
 
 [dependencies]
 bevy = "0.19.1"
-warren-core = { path = "core" }
-warren-world = { path = "world" }
+vox-core = { path = "core" }
+vox-world = { path = "world" }
 # Same major as bevy_audio's rodio, so both share one ALSA/CoreAudio/WASAPI backend.
 cpal = "0.17"
 # Built-in speech-to-text for the speech bubbles (optional: needs CMake and a C++ compiler, plus

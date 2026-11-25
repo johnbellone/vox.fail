@@ -1142,7 +1142,7 @@ impl Bevel {
 }
 
 /// On meshes that aren't voxel models (block levels, the sky): left alone.
-pub use warren_world::NoBevel;
+pub use vox_world::NoBevel;
 
 /// On an entity whose mesh has been looked at: the originals, to swap back.
 #[derive(Component)]

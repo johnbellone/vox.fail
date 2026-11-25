@@ -1,10 +1,10 @@
-//! warren-client: play Warren. Your character walks into a world: the Void first, and through
+//! vox-client: play Vox. Your character walks into a world: the Void first, and through
 //! its doorways to others.
 //!
-//! The same app runs on the desktop (`warren-client --token <launch code>`) and in the browser
+//! The same app runs on the desktop (`vox-client --token <launch code>`) and in the browser
 //! (built for WebAssembly by `tools/build_web.sh`, started by the directory's play page). The
 //! world itself (blocks, sky, weather, portals, other players, walking and building) is
-//! warren-world's; this crate brings the window, the camera, the light, and your character with
+//! vox-world's; this crate brings the window, the camera, the light, and your character with
 //! what you chose to wear.
 
 use std::time::Duration;
@@ -18,7 +18,7 @@ use bevy::{
     world_serialization::{WorldAssetRoot, WorldInstanceReady},
 };
 use serde::Deserialize;
-use warren_world::{
+use vox_world::{
     KeyLight, Level, LocalAvatar, WorldCamera, WorldRender, blocks, client as world, outdoors, portals, pose,
 };
 
@@ -46,7 +46,7 @@ pub struct Start {
 impl Start {
     /// Fill in what a token says (name, character) where nothing else did.
     pub fn from_token(mut self) -> Start {
-        if let Some(c) = self.token.as_deref().and_then(warren_core::auth::peek) {
+        if let Some(c) = self.token.as_deref().and_then(vox_core::auth::peek) {
             if self.name.is_empty() {
                 self.name = c.name;
             }
@@ -83,7 +83,7 @@ pub fn app(start: Start, assets: String) -> App {
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Warren".into(),
+                    title: "Vox".into(),
                     canvas: start.canvas.clone(),
                     fit_canvas_to_parent: true,
                     prevent_default_event_handling: true,
@@ -239,7 +239,7 @@ fn dress(
     me.dressed = true;
     let file = local.model.rsplit('/').next().unwrap_or("").to_string();
     let json = |p: &str| {
-        warren_world::files::read_string(&warren_world::files::base().join(p))
+        vox_world::files::read_string(&vox_world::files::base().join(p))
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
             .unwrap_or_default()
     };
@@ -318,7 +318,7 @@ fn report(w: Res<world::WorldClient>, mut said: Local<String>, mut done: Local<b
     web::tell(&s);
     #[cfg(not(target_arch = "wasm32"))]
     if !s.is_empty() {
-        warren_world::note!("[client] {s}");
+        vox_world::note!("[client] {s}");
     }
 }
 
@@ -340,11 +340,11 @@ mod web {
         Some(js_sys::Uint8Array::new(&buf).to_vec())
     }
 
-    /// Fetch `path` into warren-world's files.
+    /// Fetch `path` into vox-world's files.
     pub async fn get(path: &str) -> bool {
         match fetch(path).await {
             Some(b) => {
-                warren_world::files::put(path, b);
+                vox_world::files::put(path, b);
                 true
             }
             None => false,
@@ -353,19 +353,19 @@ mod web {
 
     /// Files the world asked for (a portal's level): fetch them in the background.
     pub fn fetch_wanted() {
-        for p in warren_world::files::take_wanted() {
+        for p in vox_world::files::take_wanted() {
             spawn_local(async move {
                 if !get(&p).await {
-                    warren_world::files::put(&p, Vec::new());
+                    vox_world::files::put(&p, Vec::new());
                 }
             });
         }
     }
 
-    /// Tell the page: `warren_status(text)`, or `warren_ready()` once in.
+    /// Tell the page: `vox_status(text)`, or `vox_ready()` once in.
     pub fn tell(s: &str) {
         let Some(win) = web_sys::window() else { return };
-        let (f, arg) = if s == "ready" { ("warren_ready", None) } else { ("warren_status", Some(s)) };
+        let (f, arg) = if s == "ready" { ("vox_ready", None) } else { ("vox_status", Some(s)) };
         if let Ok(func) = js_sys::Reflect::get(&win, &JsValue::from_str(f)) {
             if let Some(func) = func.dyn_ref::<js_sys::Function>() {
                 let _ = match arg {
@@ -393,7 +393,7 @@ mod web {
             for f in ["data/head_fit.json", "data/bare_heads.json", "data/wardrobe.json"] {
                 let _ = get(f).await;
             }
-            let tiles = warren_world::blocks::Palette::load(std::path::Path::new("data/blocks.json")).map(|p| p.tiles()).unwrap_or_default();
+            let tiles = vox_world::blocks::Palette::load(std::path::Path::new("data/blocks.json")).map(|p| p.tiles()).unwrap_or_default();
             let jobs: Vec<_> = tiles
                 .iter()
                 .flat_map(|t| [format!("assets/blocks/tiles/{t}.png"), format!("assets/blocks/tiles/{t}.height.png")])
@@ -413,7 +413,7 @@ mod web {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use warren_core::auth::{self, Character, Claims};
+    use vox_core::auth::{self, Character, Claims};
 
     #[test]
     fn a_token_says_who_you_are() {
