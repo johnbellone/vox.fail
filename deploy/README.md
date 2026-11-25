@@ -1,33 +1,78 @@
-# Deploying Vox at vox.fail
+# Deploying Vox at vox.fail (Cloudflare)
 
-One machine runs everything behind Caddy (which gets the TLS certificate):
+vox.fail is on Cloudflare. One machine runs the directory and the worlds on localhost, and a
+Cloudflare Tunnel (`cloudflared`) carries traffic to them: no open ports, no certificate to
+manage, and the machine's address stays private.
 
 | What | Listens on | Public address |
 | --- | --- | --- |
-| vox-directory (pages, accounts, characters, the browser client) | 127.0.0.1:7700 | https://vox.fail/ |
+| vox-directory (pages, sign-in, characters, the browser client) | 127.0.0.1:7700 | https://vox.fail/ |
 | The Void (vox-server) | 127.0.0.1:7780 | wss://vox.fail/w/7780/ws |
 | The yard | 127.0.0.1:7781 | wss://vox.fail/w/7781/ws |
 | The islands | 127.0.0.1:7782 | wss://vox.fail/w/7782/ws |
 
-Portals in the levels name other worlds by port (`":7781"`); behind this proxy that becomes
-`wss://vox.fail/w/7781/ws`, so the levels work unchanged locally and here.
+Portals in the levels name other worlds by port (`":7781"`); from a world at
+`wss://vox.fail/w/7780/ws` that becomes `wss://vox.fail/w/7781/ws`, so the levels work
+unchanged locally and here. The tunnel can't rewrite paths, so world servers answer at
+`/w/<port>/ws` as well as `/ws`.
 
-## Steps
+## On the server
 
 1. Build: `cargo build --release -p vox-directory -p vox-server -p vox-client` and
    `tools/build_web.sh` (the browser client, into `web/pkg`).
 2. Copy to `/opt/vox`: `bin/` (the three binaries), `web/`, `assets/`, `data/`. Make a `vox`
    user and `/var/lib/vox` owned by it.
-3. `/etc/vox/void.env`: `PORT=7780` and `SEED=data/levels/void.json`; `yard.env`:
-   `PORT=7781`, `SEED=data/levels/yard.json`; `islands.env`: `PORT=7782`,
+3. Worlds: `/etc/vox/void.env` holds `PORT=7780` and `SEED=data/levels/void.json`;
+   `yard.env` `PORT=7781`, `SEED=data/levels/yard.json`; `islands.env` `PORT=7782`,
    `SEED=data/levels/islands.json`.
-4. Install `vox-directory.service` and `vox-world@.service` in `/etc/systemd/system`, then
-   `systemctl enable --now vox-directory vox-world@void vox-world@yard vox-world@islands`.
-   Start the directory first: it makes the signing key the worlds check sign-ins with.
-5. Point vox.fail (and www) at the machine, put `Caddyfile` in `/etc/caddy/`, reload Caddy.
+4. Sign-in sites: copy `directory.env` to `/etc/vox/directory.env` (root, mode 600) and fill
+   it in (Discord client ID and secret; optionally a Steam Web API key).
+5. Install `vox-directory.service` and `vox-world@.service` in `/etc/systemd/system`, then
+   `systemctl enable --now vox-directory`, then
+   `systemctl enable --now vox-world@void vox-world@yard vox-world@islands`. The directory
+   goes first: it makes the signing key (`/var/lib/vox/directory.key`, and `.pub` for the
+   worlds).
+6. The tunnel: install `cloudflared`, then
+   `cloudflared tunnel login`, `cloudflared tunnel create vox` (copy the credentials file it
+   names to `/etc/cloudflared/vox.json`), `cloudflared tunnel route dns vox vox.fail` (remove
+   any A/AAAA/CNAME record for vox.fail first), copy `cloudflared/config.yml` to
+   `/etc/cloudflared/config.yml`, and `cloudflared service install`.
+   (Or make the tunnel in the dashboard, Zero Trust → Networks → Tunnels, with the same four
+   public hostnames: `vox.fail` path `^/w/7780/` → `http://127.0.0.1:7780`, and so on, the
+   directory last; then `cloudflared service install <token>`.)
+
+## In the Cloudflare dashboard (vox.fail)
+
+- SSL/TLS: Always Use HTTPS on.
+- Network: WebSockets on (the default).
+- Speed → Optimization: Rocket Loader off. It rewrites the pages' scripts, which the pages'
+  content policy then blocks. Scrape Shield → Email Address Obfuscation off, for the same
+  reason.
+- Security: leave Bot Fight Mode off, or skip it for `/w/` with a WAF skip rule. The desktop
+  client isn't a browser and can't answer a challenge.
+- Caching → Cache Rules: one rule, "URI Path starts with `/pkg/` or `/assets/` or `/data/`"
+  → Eligible for cache, edge TTL "use cache-control header if present". Cloudflare doesn't
+  cache `.wasm`, `.glb` or `.json` by default, and the browser client is about 11 MB
+  compressed. The directory marks these five minutes; the API, sign-in and pages are never
+  kept. After a release, run `deploy/purge-cache.sh` (zone ID and an API token with Cache
+  Purge).
+- Rules → Redirect Rules: `www.vox.fail/*` → `https://vox.fail/${1}`, 301 (and a proxied
+  DNS record for www, say `AAAA www 100::`, so the rule sees the requests).
+
+## The sign-in sites
+
+- Discord: discord.com/developers/applications → New Application → OAuth2. Add the redirect
+  `https://vox.fail/auth/discord/return`. The client ID and secret go in
+  `/etc/vox/directory.env`. Only the `identify` scope is asked for: Discord tells us your id
+  and name, nothing else.
+- Steam: nothing to register. Steam sends people back to `https://vox.fail/auth/steam/return`
+  and the directory checks the answer with Steam. A Steam Web API key
+  (steamcommunity.com/dev/apikey) lets new accounts take their Steam name.
+
+## Desktop client and backups
 
 The desktop client goes to the Void at vox.fail by default: `vox-client --token <launch code>`.
-Offer it on the start page with `--download "Windows=https://vox.fail/downloads/vox-client-windows.zip"`
-on the directory (files under `web/downloads/` are served as they are).
+Offer downloads on the start page with `--download "Windows=https://…"` on the directory.
+GitHub Releases is a good home for them; files under `web/downloads/` are served too.
 
 Back up `/var/lib/vox`: the directory's accounts and key, and every world's blocks.

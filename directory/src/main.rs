@@ -1,8 +1,16 @@
 //! Run the directory: `vox-directory [--listen 127.0.0.1:7700] [--db directory.db]
 //! [--key directory.key] [--web web] [--assets assets] [--data data]
-//! [--world "The Void=:7780"]... [--download "Windows=https://…"]... [--secure] [--behind-proxy]`.
+//! [--world "The Void=:7780"]... [--download "Windows=https://…"]... [--secure] [--behind-proxy]
+//! [--public-url https://vox.fail] [--steam]`.
 //!
-//! On vox.fail (see deploy/): `--secure --behind-proxy --world "The Void=/w/7780/ws"`.
+//! On vox.fail (see deploy/): `--secure --behind-proxy --public-url https://vox.fail --steam
+//! --world "The Void=/w/7780/ws"`.
+//!
+//! Signing in with Steam needs only `--steam` (and `--public-url`, where Steam sends people
+//! back); with `VOX_STEAM_KEY` (a Steam Web API key) in the environment, new accounts take
+//! their Steam name. Discord needs `VOX_DISCORD_CLIENT_ID` and `VOX_DISCORD_CLIENT_SECRET`
+//! from a Discord application whose redirect is `<public url>/auth/discord/return`. Secrets
+//! come from the environment so they don't show in the process list.
 //!
 //! The signing key is made the first time and kept in `--key`; its public half is written
 //! next to it (`directory.key.pub`) and served at `/api/key`. Start world servers with
@@ -11,7 +19,7 @@
 
 use std::path::PathBuf;
 
-use vox_directory::{Config, Directory, WorldInfo, load_or_make_key};
+use vox_directory::{Config, Directory, Discord, Social, WorldInfo, load_or_make_key};
 
 #[tokio::main]
 async fn main() {
@@ -45,16 +53,31 @@ async fn main() {
         secure_cookies: args.iter().any(|a| a == "--secure"),
         downloads: all("--download").iter().filter_map(|d| pair(d)).collect(),
         behind_proxy: args.iter().any(|a| a == "--behind-proxy"),
+        social: Social {
+            public_url: arg("--public-url").unwrap_or_else(|| format!("http://{listen}")),
+            steam: args.iter().any(|a| a == "--steam"),
+            steam_key: env("VOX_STEAM_KEY"),
+            discord: env("VOX_DISCORD_CLIENT_ID")
+                .zip(env("VOX_DISCORD_CLIENT_SECRET"))
+                .map(|(client_id, client_secret)| Discord { client_id, client_secret }),
+            sites: Default::default(),
+        },
     };
+    let offered = cfg.social.offered();
     let dir = Directory::open(cfg).unwrap_or_else(|e| panic!("{e}"));
     let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
     eprintln!("vox-directory on http://{listen}/ (public key {public}, in {})", pub_path.display());
+    eprintln!("sign in with a password{}", offered.iter().map(|s| format!(", {s}")).collect::<String>());
     axum::serve(listener, dir.router().into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await
         .expect("serve");
+}
+
+fn env(k: &str) -> Option<String> {
+    std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 /// The project folder (holding web/, assets/ and data/): here, or above the executable.

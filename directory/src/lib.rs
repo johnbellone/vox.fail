@@ -1,7 +1,7 @@
 //! vox-directory: where people sign in, make their character and go into a world.
 //!
-//! - Accounts: a name and a password (Argon2id). A web session is a random cookie; the
-//!   database keeps only its SHA-256.
+//! - Accounts: signed in with Steam or Discord ([`social`]), or a name and a password
+//!   (Argon2id). A web session is a random cookie; the database keeps only its SHA-256.
 //! - Characters: one per account for now: which model, and what they wear (a hat, something
 //!   on the face, something in the hand), from `data/characters.json` and
 //!   `data/wardrobe.json`.
@@ -42,6 +42,9 @@ use sha2::{Digest, Sha256};
 use tower_http::services::{ServeDir, ServeFile};
 use vox_core::auth::{self, Character, Claims, SigningKey};
 
+pub mod social;
+pub use social::{Discord, Sites, Social, name_from};
+
 const COOKIE: &str = "vox_session";
 /// How long a web session lasts, s.
 const SESSION: u64 = 30 * 24 * 3600;
@@ -74,9 +77,11 @@ pub struct Config {
     pub secure_cookies: bool,
     /// where the desktop client can be downloaded (shown on the play page), if anywhere
     pub downloads: Vec<(String, String)>,
-    /// behind a reverse proxy (Caddy on vox.fail): a visitor's address is the last one in
-    /// `X-Forwarded-For`, not the connection's
+    /// behind Cloudflare (or another proxy): a visitor's address is in `CF-Connecting-IP`, or
+    /// the last one in `X-Forwarded-For`, not the connection's
     pub behind_proxy: bool,
+    /// signing in with Steam and Discord
+    pub social: Social,
 }
 
 /// Who you can be and what you can wear.
@@ -136,6 +141,8 @@ struct Inner {
     secure: bool,
     downloads: Vec<(String, String)>,
     behind_proxy: bool,
+    social: Social,
+    http: reqwest::Client,
     tries: Mutex<HashMap<String, (u32, Instant)>>,
     /// a password hash checked when a name doesn't exist, so failing takes as long either way
     dummy: String,
@@ -143,6 +150,14 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct Directory(Arc<Inner>, Arc<(PathBuf, PathBuf, PathBuf)>);
+
+/// The value of cookie `name` in a request.
+fn cookie(h: &HeaderMap, name: &str) -> Option<String> {
+    h.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(';')).find_map(|c| {
+        let (k, v) = c.trim().split_once('=')?;
+        (k == name).then(|| v.to_string())
+    })
+}
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
@@ -238,7 +253,11 @@ impl Directory {
                  hash TEXT PRIMARY KEY, account INTEGER NOT NULL, expires INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS characters (
                  account INTEGER PRIMARY KEY, model TEXT NOT NULL, wear TEXT NOT NULL,
-                 updated INTEGER NOT NULL);",
+                 updated INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS identities (
+                 site TEXT NOT NULL, subject TEXT NOT NULL, account INTEGER NOT NULL,
+                 created INTEGER NOT NULL, PRIMARY KEY (site, subject));
+             CREATE INDEX IF NOT EXISTS identities_account ON identities (account);",
         )
         .map_err(|e| e.to_string())?;
         let catalogue = Catalogue::load(&cfg.data);
@@ -254,6 +273,8 @@ impl Directory {
                 secure: cfg.secure_cookies,
                 downloads: cfg.downloads,
                 behind_proxy: cfg.behind_proxy,
+                social: cfg.social,
+                http: social::http(),
                 tries: Mutex::new(HashMap::new()),
                 dummy: Argon2::default()
                     .hash_password(random_hex(16).as_bytes(), &salt())
@@ -281,6 +302,10 @@ impl Directory {
             .route("/api/token", post(token))
             .route("/api/worlds", get(worlds))
             .route("/api/key", get(key))
+            .route("/auth/steam", get(social::steam_start))
+            .route("/auth/steam/return", get(social::steam_return))
+            .route("/auth/discord", get(social::discord_start))
+            .route("/auth/discord/return", get(social::discord_return))
             .route_service("/", ServeFile::new(web.join("index.html")))
             .route_service("/create", ServeFile::new(web.join("create.html")))
             .route_service("/play", ServeFile::new(web.join("play.html")))
@@ -296,6 +321,9 @@ impl Directory {
     /// Where a request came from (for counting sign-in tries).
     fn visitor(&self, addr: SocketAddr, h: &HeaderMap) -> String {
         if self.0.behind_proxy {
+            if let Some(ip) = h.get("cf-connecting-ip").and_then(|v| v.to_str().ok()) {
+                return ip.trim().to_string();
+            }
             if let Some(ip) = h.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()) {
                 return ip.trim().to_string();
             }
@@ -305,20 +333,21 @@ impl Directory {
 
     /// Too many sign-in tries from `who` lately?
     fn tried(&self, who: &str) -> bool {
+        self.tried_up_to(who, ATTEMPTS)
+    }
+
+    fn tried_up_to(&self, who: &str, most: u32) -> bool {
         let mut t = self.0.tries.lock().unwrap();
         let now = Instant::now();
         t.retain(|_, (_, at)| now.duration_since(*at) < WINDOW);
         let e = t.entry(who.to_string()).or_insert((0, now));
         e.0 += 1;
-        e.0 > ATTEMPTS
+        e.0 > most
     }
 
     /// The account a request's session cookie belongs to.
     fn account(&self, h: &HeaderMap) -> Option<(u64, String)> {
-        let cookie = h.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(';')).find_map(|c| {
-            let (k, v) = c.trim().split_once('=')?;
-            (k == COOKIE).then(|| v.to_string())
-        })?;
+        let cookie = cookie(h, COOKIE)?;
         let db = self.0.db.lock().unwrap();
         db.query_row(
             "SELECT a.id, a.name FROM sessions s JOIN accounts a ON a.id = s.account WHERE s.hash = ?1 AND s.expires > ?2",
@@ -358,10 +387,23 @@ impl Directory {
 }
 
 /// Every response: no framing by other sites, no sniffing, and a tight content policy for
-/// the pages (the browser client needs WebAssembly).
+/// the pages (the browser client needs WebAssembly). And what Cloudflare (or a browser) may
+/// keep: the game's files for five minutes (purge Cloudflare's cache after a release), the
+/// API and sign-ins never, the pages only after checking back.
 async fn headers(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let path = req.uri().path().to_string();
     let mut r = next.run(req).await;
+    let keep = if path.starts_with("/api/") || path.starts_with("/auth/") {
+        "no-store"
+    } else if ["/pkg/", "/assets/", "/data/"].iter().any(|p| path.starts_with(p)) && r.status().is_success() {
+        "public, max-age=300"
+    } else {
+        "no-cache"
+    };
     let h = r.headers_mut();
+    if !h.contains_key(header::CACHE_CONTROL) {
+        h.insert(header::CACHE_CONTROL, HeaderValue::from_static(keep));
+    }
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     h.insert("x-frame-options", HeaderValue::from_static("DENY"));
     h.insert("referrer-policy", HeaderValue::from_static("same-origin"));
@@ -464,9 +506,12 @@ async fn signout(State(d): State<Directory>, h: HeaderMap) -> Response {
 }
 
 async fn me(State(d): State<Directory>, h: HeaderMap) -> Json<Value> {
+    let offered = d.0.social.offered();
     match d.account(&h) {
-        Some((id, name)) => Json(json!({ "name": name, "character": d.character(id) })),
-        None => Json(json!({ "name": null })),
+        Some((id, name)) => {
+            Json(json!({ "name": name, "character": d.character(id), "linked": d.linked(id), "sign_in_with": offered }))
+        }
+        None => Json(json!({ "name": null, "sign_in_with": offered })),
     }
 }
 

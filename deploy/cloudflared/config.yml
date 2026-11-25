@@ -1,0 +1,28 @@
+# Cloudflare Tunnel for vox.fail: cloudflared on the server dials out to Cloudflare, so the
+# machine needs no open ports and no certificate. Requests come in by path:
+#
+#   vox.fail/w/7780/...  the Void (vox-server on 127.0.0.1:7780)
+#   vox.fail/w/7781/...  the yard
+#   vox.fail/w/7782/...  the islands
+#   everything else      vox-directory on 127.0.0.1:7700
+#
+# The tunnel passes paths on unchanged; world servers answer at /w/<port>/ws as well as /ws.
+# Install as /etc/cloudflared/config.yml (see ../README.md). To add a world, add a rule above
+# the directory's and restart cloudflared.
+
+tunnel: vox
+credentials-file: /etc/cloudflared/vox.json
+
+ingress:
+  - hostname: vox.fail
+    path: ^/w/7780/
+    service: http://127.0.0.1:7780
+  - hostname: vox.fail
+    path: ^/w/7781/
+    service: http://127.0.0.1:7781
+  - hostname: vox.fail
+    path: ^/w/7782/
+    service: http://127.0.0.1:7782
+  - hostname: vox.fail
+    service: http://127.0.0.1:7700
+  - service: http_status:404

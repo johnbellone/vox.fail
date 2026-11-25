@@ -149,7 +149,14 @@ impl Server {
     }
 
     pub fn router(&self) -> Router {
-        Router::new().route("/", get(status_page)).route("/ws", get(connect)).with_state(self.clone())
+        Router::new()
+            .route("/", get(status_page))
+            .route("/ws", get(connect))
+            // behind a Cloudflare Tunnel, worlds share one address and are told apart by path
+            // (vox.fail/w/7780/ws), which the tunnel passes on as it is
+            .route("/w/{port}/", get(status_page))
+            .route("/w/{port}/ws", get(connect))
+            .with_state(self.clone())
     }
 
     pub async fn status(&self) -> Option<Status> {

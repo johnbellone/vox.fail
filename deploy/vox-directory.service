@@ -5,7 +5,9 @@ After=network-online.target
 [Service]
 User=vox
 WorkingDirectory=/opt/vox
-ExecStart=/opt/vox/bin/vox-directory --listen 127.0.0.1:7700 --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key --secure --behind-proxy --world "The Void=/w/7780/ws"
+# Steam and Discord secrets (see directory.env)
+EnvironmentFile=-/etc/vox/directory.env
+ExecStart=/opt/vox/bin/vox-directory --listen 127.0.0.1:7700 --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key --secure --behind-proxy --public-url https://vox.fail --steam --world "The Void=/w/7780/ws"
 Restart=on-failure
 
 [Install]

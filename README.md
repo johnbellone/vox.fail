@@ -709,7 +709,8 @@ browser, or download the desktop client.
    (add `--guests` to let people in without signing in, as guests).
 3. **Build the browser client once:** `tools/build_web.sh` (puts it in `web/pkg`; needs the
    wasm32 target and wasm-bindgen-cli, see the script).
-4. Open `http://<server>:7700/`: **New account**, pick who you are (37 characters) and what
+4. Open `http://<server>:7700/`: **Sign in with Steam** or **Sign in with Discord** (when the
+   directory has them, below), or **New account** with a name and password; pick who you are (37 characters) and what
    you wear (a hat, something on your face, something in your hand, seen on a turntable),
    **Save character**, then **Enter the Void**. The browser needs WebGPU (current Chrome,
    Edge, Safari and Firefox have it).
@@ -720,9 +721,20 @@ lasts a day. List downloads on the page with
 `--download "Windows=https://…/vox-client.zip"`.
 
 Worlds on the page come from `--world "The Void=:7780"` (repeatable; `:7780` is the page's own
-host, that port; `/w/7780/ws` a path on it). **vox.fail** runs it all behind Caddy: the
-directory at https://vox.fail/ and each world at `wss://vox.fail/w/<port>/ws`; `deploy/` has
-the Caddyfile, systemd units and steps. The desktop client goes there by default.
+host, that port; `/w/7780/ws` a path on it).
+
+**Steam and Discord sign-in:** start the directory with `--steam` and `--public-url <its
+address>` (Steam sends people back there; no key needed), and set `VOX_DISCORD_CLIENT_ID` and
+`VOX_DISCORD_CLIENT_SECRET` from a Discord application whose OAuth2 redirect is
+`<address>/auth/discord/return`. With `VOX_STEAM_KEY` (a Steam Web API key) new accounts take
+their Steam name. A first sign-in makes an account named after you there (the nearest free
+name); signed in already, **Link your Steam account** adds it to yours. Name and password
+still work.
+
+**vox.fail** is on Cloudflare: a Cloudflare Tunnel carries https://vox.fail/ to the directory
+and `wss://vox.fail/w/<port>/ws` to each world, with nothing open on the server. `deploy/` has
+the tunnel's config, systemd units, the dashboard settings and the steps. The desktop client
+goes there by default.
 
 **Moving and building:** the camera looks down from above at an angle, like Diablo. **Left
 click** (or hold) walks to where you point, **WASD** walk too, the **wheel** zooms in and out,

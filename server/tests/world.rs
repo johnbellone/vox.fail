@@ -147,6 +147,17 @@ async fn joining_sends_the_world() {
 }
 
 #[tokio::test]
+async fn reached_by_path_behind_a_tunnel() {
+    // vox.fail/w/7780/ws reaches the world on port 7780 unchanged
+    let (_server, url) = serve(config(":memory:")).await;
+    let url = url.replace("/ws", "/w/7780/ws");
+    let a = join(&url, "Ann").await;
+    let b = join(&url, "Ben").await;
+    assert_eq!(b.others, vec!["Ann"]);
+    drop(a);
+}
+
+#[tokio::test]
 async fn edits_reach_everyone_in_order() {
     let (server, url) = serve(config(":memory:")).await;
     let mut a = join(&url, "Ann").await;

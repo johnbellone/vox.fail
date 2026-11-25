@@ -22,6 +22,7 @@ async fn serve() -> (Directory, String) {
         secure_cookies: false,
         downloads: vec![],
         behind_proxy: false,
+        social: Default::default(),
     };
     let d = Directory::open(cfg).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

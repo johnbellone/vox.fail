@@ -2,6 +2,16 @@ import { api, me, $, el, find } from "/vox.js";
 
 let mode = "in";
 
+const SITES = { steam: "Steam", discord: "Discord" };
+// what /auth/<site> sends back when it goes wrong
+const FAILED = {
+  steam: "Steam didn't confirm who you are. Try again.",
+  discord: "Discord didn't confirm who you are. Try again.",
+  cancelled: "Sign-in was cancelled.",
+  expired: "That sign-in took too long or started in another tab. Try again.",
+  busy: "Too many tries. Wait a few minutes, then try again.",
+};
+
 function setMode(m) {
   mode = m;
   $("#tab-in").setAttribute("aria-selected", m === "in");
@@ -15,10 +25,13 @@ function setMode(m) {
 
 async function show() {
   const who = await me();
+  const offered = who.sign_in_with || [];
   if (!who.name) {
+    for (const s of Object.keys(SITES)) $(`#with-${s}`).hidden = !offered.includes(s);
+    $("#sites").hidden = $("#or").hidden = !offered.length;
     $("#out").hidden = false;
     $("#in").hidden = true;
-    $("#name").focus();
+    if (!offered.length) $("#name").focus();
     return;
   }
   // signed in but no character yet: make one first
@@ -33,6 +46,14 @@ async function show() {
   $("#who").textContent = who.name;
   $("#as").textContent = c ? `as ${c.name}` : "";
   if (c) $("#portrait").src = `/assets/${c.portrait}`;
+  // the sites you sign in with, and the ones you could add
+  const linked = who.linked || [];
+  const line = $("#linked");
+  line.replaceChildren();
+  if (linked.length) line.append(el("span", { text: `You sign in with ${linked.map((s) => SITES[s] || s).join(" and ")}.` }));
+  for (const s of offered.filter((s) => !linked.includes(s))) {
+    line.append(el("a", { href: `/auth/${s}`, text: `Link your ${SITES[s] || s} account` }));
+  }
   const w = await api("/api/worlds");
   const links = $("#dl-links");
   links.replaceChildren();
@@ -76,6 +97,14 @@ $("#code-btn").addEventListener("click", async () => {
     $("#code-note").textContent = err.message;
   }
 });
+
+// back from a site that didn't let you in
+const why = new URLSearchParams(location.search).get("error");
+if (why) {
+  $("#site-error").textContent = FAILED[why] || "That didn't work. Try again.";
+  $("#site-error").hidden = false;
+  history.replaceState(null, "", "/");
+}
 
 setMode("in");
 show().catch((err) => { $("#error").textContent = err.message; $("#out").hidden = false; });
