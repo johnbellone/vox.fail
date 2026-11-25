@@ -1,0 +1,190 @@
+{
+ "items": [
+  {
+   "id": "cowboy",
+   "label": "a cowboy hat",
+   "slot": "hat",
+   "file": "props/wardrobe/cowboy.glb"
+  },
+  {
+   "id": "crown",
+   "label": "a crown",
+   "slot": "hat",
+   "file": "props/wardrobe/crown.glb"
+  },
+  {
+   "id": "party",
+   "label": "a party hat",
+   "slot": "hat",
+   "file": "props/wardrobe/party.glb"
+  },
+  {
+   "id": "tophat",
+   "label": "a top hat",
+   "slot": "hat",
+   "file": "props/wardrobe/top_hat.glb"
+  },
+  {
+   "id": "propeller",
+   "label": "a propeller beanie",
+   "slot": "hat",
+   "file": "props/wardrobe/propeller.glb"
+  },
+  {
+   "id": "chef",
+   "label": "a chef's hat",
+   "slot": "hat",
+   "file": "props/wardrobe/chef.glb"
+  },
+  {
+   "id": "viking",
+   "label": "a viking helmet",
+   "slot": "hat",
+   "file": "props/wardrobe/viking.glb"
+  },
+  {
+   "id": "pirate",
+   "label": "a pirate hat",
+   "slot": "hat",
+   "file": "props/wardrobe/pirate.glb"
+  },
+  {
+   "id": "halo",
+   "label": "a halo",
+   "slot": "hat",
+   "file": "props/wardrobe/halo.glb"
+  },
+  {
+   "id": "cone",
+   "label": "a traffic cone",
+   "slot": "hat",
+   "file": "props/wardrobe/cone.glb"
+  },
+  {
+   "id": "wizard",
+   "label": "a wizard hat",
+   "slot": "hat",
+   "file": "props/wardrobe/wizard.glb"
+  },
+  {
+   "id": "hardhat",
+   "label": "a hard hat",
+   "slot": "hat",
+   "file": "props/wardrobe/hard_hat.glb"
+  },
+  {
+   "id": "santa",
+   "label": "a Santa hat",
+   "slot": "hat",
+   "file": "props/wardrobe/santa.glb"
+  },
+  {
+   "id": "grad",
+   "label": "a graduation cap",
+   "slot": "hat",
+   "file": "props/wardrobe/grad_cap.glb"
+  },
+  {
+   "id": "beanie",
+   "label": "a beanie",
+   "slot": "hat",
+   "file": "props/wardrobe/beanie.glb"
+  },
+  {
+   "id": "shades",
+   "label": "shades",
+   "slot": "face",
+   "file": "props/wardrobe/shades.glb"
+  },
+  {
+   "id": "nerd",
+   "label": "nerd glasses",
+   "slot": "face",
+   "file": "props/wardrobe/nerd_glasses.glb"
+  },
+  {
+   "id": "moustache",
+   "label": "a moustache",
+   "slot": "face",
+   "file": "props/wardrobe/moustache.glb"
+  },
+  {
+   "id": "clown",
+   "label": "a clown nose",
+   "slot": "face",
+   "file": "props/wardrobe/clown_nose.glb"
+  },
+  {
+   "id": "coffee",
+   "label": "a coffee",
+   "slot": "hand",
+   "file": "props/cast/coffee.glb"
+  },
+  {
+   "id": "burger",
+   "label": "a burger",
+   "slot": "hand",
+   "file": "props/lead/burger.glb"
+  },
+  {
+   "id": "soda",
+   "label": "a soda",
+   "slot": "hand",
+   "file": "props/lead/can.glb"
+  },
+  {
+   "id": "donut",
+   "label": "a donut",
+   "slot": "hand",
+   "file": "props/roasted/donut.glb"
+  },
+  {
+   "id": "phone",
+   "label": "a phone",
+   "slot": "hand",
+   "file": "props/lead/phone.glb"
+  },
+  {
+   "id": "mic",
+   "label": "a microphone",
+   "slot": "hand",
+   "file": "props/cast/mic.glb"
+  },
+  {
+   "id": "book",
+   "label": "a book",
+   "slot": "hand",
+   "file": "props/lead/book.glb"
+  },
+  {
+   "id": "sign",
+   "label": "a sign",
+   "slot": "hand",
+   "file": "props/cast/sign.glb"
+  },
+  {
+   "id": "bell",
+   "label": "a bell",
+   "slot": "hand",
+   "file": "props/roasted/bell.glb"
+  },
+  {
+   "id": "broom",
+   "label": "a broom",
+   "slot": "hand",
+   "file": "props/roasted/broom.glb"
+  },
+  {
+   "id": "gavel",
+   "label": "a gavel",
+   "slot": "hand",
+   "file": "props/cast/gavel.glb"
+  },
+  {
+   "id": "flashlight",
+   "label": "a flashlight",
+   "slot": "hand",
+   "file": "props/lead/flashlight.glb"
+  }
+ ]
+}

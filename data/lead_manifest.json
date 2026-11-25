@@ -1,0 +1,3183 @@
+{
+ "units": {
+  "block_m": 0.05,
+  "sprite_px_m": 0.0344
+ },
+ "facing": "+Z",
+ "nodes": {
+  "joints": [
+   "Hips",
+   "Head",
+   "UpperArm_L",
+   "LowerArm_L",
+   "UpperArm_R",
+   "LowerArm_R",
+   "UpperLeg_L",
+   "LowerLeg_L",
+   "UpperLeg_R",
+   "LowerLeg_R"
+  ],
+  "toggles": [
+   "eyes_open",
+   "eyes_shut",
+   "eyes_x",
+   "brows_normal",
+   "brows_angry",
+   "mouth_flat",
+   "mouth_grin",
+   "mouth_open",
+   "mouth_grit",
+   "mouth_pout",
+   "mouth_sad",
+   "eyes_wide",
+   "eyes_squint",
+   "eyes_left",
+   "eyes_right",
+   "eyes_up",
+   "brows_raised",
+   "brows_worried",
+   "mouth_o",
+   "mouth_smirk",
+   "mouth_tongue",
+   "mouth_frown",
+   "mouth_wavy",
+   "paint",
+   "horns",
+   "vest",
+   "hand_palm",
+   "hand_point",
+   "hand_thumb"
+  ]
+ },
+ "clips": [
+  {
+   "index": 0,
+   "id": "idle",
+   "name": "Idle",
+   "volume": 1,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [],
+   "dialogue": [],
+   "note": "Breathing loop with a blink and a head-scratch fidget.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 1,
+   "id": "walk",
+   "name": "Walk",
+   "volume": 1,
+   "fps": 9,
+   "frames": 6,
+   "duration": 0.667,
+   "props": [],
+   "dialogue": [],
+   "note": "Redraw of the existing six-frame cycle on the new rig.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 2,
+   "id": "run",
+   "name": "Run",
+   "volume": 1,
+   "fps": 12,
+   "frames": 6,
+   "duration": 0.5,
+   "props": [
+    "fx_speed"
+   ],
+   "dialogue": [],
+   "note": "Forward lean, pumping arms, two flight frames.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 3,
+   "id": "jump",
+   "name": "Jump",
+   "volume": 1,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_dust"
+   ],
+   "dialogue": [],
+   "note": "Anticipation, rise, apex tuck, landing squash.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 4,
+   "id": "pickup",
+   "name": "Pick up",
+   "volume": 1,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "crate",
+    "fx_sweat"
+   ],
+   "dialogue": [],
+   "note": "Spot the crate, squat, lift with effort, stand.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 5,
+   "id": "carry",
+   "name": "Carry",
+   "volume": 1,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "crate",
+    "fx_sweat"
+   ],
+   "dialogue": [],
+   "note": "Heavy walk: short steps, slight back lean, crate locked to hands.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 6,
+   "id": "place",
+   "name": "Place item",
+   "volume": 1,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "crate"
+   ],
+   "dialogue": [],
+   "note": "Matches the existing four-frame sequence.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 7,
+   "id": "block",
+   "name": "Block",
+   "volume": 1,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Guard, wide stance, stop hands, shove with impact.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 8,
+   "id": "push",
+   "name": "Push",
+   "volume": 1,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "crate_big",
+    "fx_sweat"
+   ],
+   "dialogue": [],
+   "note": "Shoulder into a big crate; crate tracks the hands.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 9,
+   "id": "climb",
+   "name": "Climb",
+   "volume": 1,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "ladder"
+   ],
+   "dialogue": [],
+   "note": "Profile climb over a ladder; rungs scroll to sell motion.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 10,
+   "id": "hammer",
+   "name": "Hammer",
+   "volume": 1,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "crate",
+    "fx_spark",
+    "fx_speed",
+    "hammer"
+   ],
+   "dialogue": [],
+   "note": "Building action: wind-up, top, swing, impact spark.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 11,
+   "id": "throw",
+   "name": "Throw",
+   "volume": 1,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [
+    "ball",
+    "fx_speed"
+   ],
+   "dialogue": [],
+   "note": "Overhand throw with a generic ball prop.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 12,
+   "id": "hurt",
+   "name": "Hurt",
+   "volume": 1,
+   "fps": 8,
+   "frames": 3,
+   "duration": 0.375,
+   "props": [],
+   "dialogue": [],
+   "note": "Hit flash, stagger back, recover.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 13,
+   "id": "ko",
+   "name": "Knockout",
+   "volume": 1,
+   "fps": 5,
+   "frames": 3,
+   "duration": 0.6,
+   "props": [
+    "fx_dust",
+    "fx_stars"
+   ],
+   "dialogue": [],
+   "note": "Fall back, hit the floor, dizzy stars hold.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 14,
+   "id": "victory",
+   "name": "Victory",
+   "volume": 1,
+   "fps": 5,
+   "frames": 3,
+   "duration": 0.6,
+   "props": [],
+   "dialogue": [],
+   "note": "Fist pump, jump, flex.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 15,
+   "id": "emote",
+   "name": "Emotes",
+   "volume": 1,
+   "fps": 2,
+   "frames": 3,
+   "duration": 1.5,
+   "props": [],
+   "dialogue": [],
+   "note": "Single-frame reactions for dialogue and menus.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 16,
+   "id": "flag-rally",
+   "name": "Flag rally",
+   "volume": 2,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "flag"
+   ],
+   "dialogue": [],
+   "note": "Big flag, bigger feelings. Opening beat of the Capitol level.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 17,
+   "id": "scaffold",
+   "name": "Scale the scaffold",
+   "volume": 2,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "fx_sweat",
+    "scaffold"
+   ],
+   "dialogue": [],
+   "note": "Climb reused on inaugural scaffolding. Rungs scroll.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 18,
+   "id": "lectern",
+   "name": "Lectern heist",
+   "volume": 2,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "lectern"
+   ],
+   "dialogue": [],
+   "note": "Strolls off with the Speaker\u2019s lectern, waving to the cameras.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 19,
+   "id": "feet-up",
+   "name": "Feet on the desk",
+   "volume": 2,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "desk",
+    "fx_sparkle",
+    "office_chair",
+    "phone"
+   ],
+   "dialogue": [],
+   "note": "Makes himself at home in someone else\u2019s office.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 20,
+   "id": "selfie",
+   "name": "Rotunda selfie",
+   "volume": 2,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "columns",
+    "fx_sparkle",
+    "phone"
+   ],
+   "dialogue": [],
+   "note": "Documents his own crimes for posterity.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 21,
+   "id": "horns",
+   "name": "Horned costume",
+   "volume": 2,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [
+    "flag"
+   ],
+   "dialogue": [],
+   "note": "Costume variant: horns on the cap, face paint, flag pole.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 22,
+   "id": "teargas",
+   "name": "Tear gas",
+   "volume": 2,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [
+    "fx_cough",
+    "fx_gas",
+    "fx_tears"
+   ],
+   "dialogue": [],
+   "note": "Finds out. Coughing, flailing, watering eyes.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 23,
+   "id": "livestream",
+   "name": "Livestream",
+   "volume": 2,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [
+    "fx_live",
+    "selfie_stick"
+   ],
+   "dialogue": [],
+   "note": "Streams the whole thing, ID clearly visible.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 24,
+   "id": "perp-walk",
+   "name": "Perp walk",
+   "volume": 2,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "cuffs",
+    "fx_sweat"
+   ],
+   "dialogue": [],
+   "note": "Cuffed, head down, the consequences arrive.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 25,
+   "id": "sentencing",
+   "name": "Sentencing",
+   "volume": 2,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "fx_tears",
+    "paper"
+   ],
+   "dialogue": [],
+   "note": "Tears, apology letter, \u201cjust a tourist\u201d, facepalm.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 26,
+   "id": "sharpie",
+   "name": "Sharpie forecast",
+   "volume": 2,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "easel",
+    "easel_loop1",
+    "easel_loop2",
+    "easel_loop3",
+    "sharpie"
+   ],
+   "dialogue": [],
+   "note": "Hurricane cone gets a hand-drawn extension.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 27,
+   "id": "boxes",
+   "name": "Boxes in the bathroom",
+   "volume": 2,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [
+    "bankbox",
+    "toilet"
+   ],
+   "dialogue": [],
+   "note": "Banker boxes go where banker boxes obviously belong.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 28,
+   "id": "uv-audit",
+   "name": "Ballot audit",
+   "volume": 2,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "flashlight",
+    "fx_sweat",
+    "paper",
+    "uv_beam"
+   ],
+   "dialogue": [],
+   "note": "UV flashlight hunt for bamboo fibres.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 29,
+   "id": "fry-cook",
+   "name": "Fry cook",
+   "volume": 2,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [
+    "fries",
+    "fryer"
+   ],
+   "dialogue": [],
+   "note": "One-shift photo-op at the fryer.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 30,
+   "id": "crouch",
+   "name": "Crouch",
+   "volume": 2,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [],
+   "dialogue": [],
+   "note": "Gameplay: duck and crouch-walk.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 31,
+   "id": "ledge",
+   "name": "Ledge grab",
+   "volume": 2,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [
+    "fx_sweat",
+    "ledge"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: hang, shimmy, pull up, mantle.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 32,
+   "id": "golf",
+   "name": "Foot wedge",
+   "volume": 3,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [
+    "ball",
+    "club",
+    "fx_speed"
+   ],
+   "dialogue": [],
+   "note": "Shanks it, checks nobody is watching, kicks it onto the fairway.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 33,
+   "id": "ymca",
+   "name": "Rally dance",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "fx_notes"
+   ],
+   "dialogue": [
+    {
+     "frame": 0,
+     "time": 0.0,
+     "text": "Y"
+    },
+    {
+     "frame": 1,
+     "time": 0.5,
+     "text": "M"
+    },
+    {
+     "frame": 2,
+     "time": 1.0,
+     "text": "C"
+    },
+    {
+     "frame": 3,
+     "time": 1.5,
+     "text": "A"
+    }
+   ],
+   "note": "The signature fist-shuffle, spelled out letter by letter.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 34,
+   "id": "covfefe",
+   "name": "3 a.m. posting",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "bed",
+    "fx_zzz",
+    "night_backdrop",
+    "phone"
+   ],
+   "dialogue": [
+    {
+     "frame": 2,
+     "time": 1.0,
+     "text": "COVFEFE"
+    }
+   ],
+   "note": "Lit by the phone, typing something unforgettable.",
+   "kind": null,
+   "night": true
+  },
+  {
+   "index": 35,
+   "id": "merch",
+   "name": "Merch haul",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "book",
+    "capstack",
+    "card",
+    "fx_sparkle",
+    "sneaker"
+   ],
+   "dialogue": [],
+   "note": "Gold sneakers, the book, the trading card, the hats.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 36,
+   "id": "hamberders",
+   "name": "Hamberders",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "burger",
+    "table_burgers"
+   ],
+   "dialogue": [
+    {
+     "frame": 2,
+     "time": 0.667,
+     "text": "HAMBERDERS"
+    }
+   ],
+   "note": "Fast-food banquet, misspelled in the bubble on purpose.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 37,
+   "id": "soda",
+   "name": "Soda button",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "can",
+    "fx_impact",
+    "fx_sparkle",
+    "soda_button"
+   ],
+   "dialogue": [],
+   "note": "Press the red button, a cold one arrives.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 38,
+   "id": "eclipse",
+   "name": "Eclipse",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "eclipse",
+    "fx_stars"
+   ],
+   "dialogue": [],
+   "note": "No glasses. Consequences.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 39,
+   "id": "windmill",
+   "name": "Windmill rant",
+   "volume": 3,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [
+    "turbine_rotor",
+    "turbine_tower"
+   ],
+   "dialogue": [
+    {
+     "frame": 0,
+     "time": 0.0,
+     "text": "BIRDS!"
+    },
+    {
+     "frame": 3,
+     "time": 0.75,
+     "text": "NOISY!"
+    }
+   ],
+   "note": "Shakes a fist at a wind turbine. Blades keep turning.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 40,
+   "id": "towels",
+   "name": "Paper towel toss",
+   "volume": 3,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [
+    "roll"
+   ],
+   "dialogue": [],
+   "note": "Disaster relief, delivered as a jump shot.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 41,
+   "id": "wall",
+   "name": "Build the wall",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "brick",
+    "wall_ladder",
+    "wall_row0",
+    "wall_row1",
+    "wall_row2",
+    "wall_row3",
+    "wall_row4",
+    "wall_row5",
+    "wall_row6"
+   ],
+   "dialogue": [
+    {
+     "frame": 3,
+     "time": 1.0,
+     "text": "?"
+    }
+   ],
+   "note": "Lays bricks; the payoff is a taller ladder.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 42,
+   "id": "tariffs",
+   "name": "Tariff receipt",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "fx_sweat",
+    "receipt_seg"
+   ],
+   "dialogue": [
+    {
+     "frame": 3,
+     "time": 1.0,
+     "text": "TARIFFS?"
+    }
+   ],
+   "note": "The receipt keeps printing.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 43,
+   "id": "eggs",
+   "name": "Egg prices",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "egg",
+    "fx_eggsplat",
+    "fx_sparkle"
+   ],
+   "dialogue": [],
+   "note": "One egg, held like treasure, then dropped.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 44,
+   "id": "crowd",
+   "name": "Crowd size",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "binoculars",
+    "bleachers"
+   ],
+   "dialogue": [
+    {
+     "frame": 1,
+     "time": 0.5,
+     "text": "HUGE!"
+    },
+    {
+     "frame": 2,
+     "time": 1.0,
+     "text": "1 MILLION"
+    }
+   ],
+   "note": "Empty bleachers, enormous claims.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 45,
+   "id": "boat",
+   "name": "Boat parade",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "boat",
+    "flag",
+    "fx_sweat",
+    "water"
+   ],
+   "dialogue": [
+    {
+     "frame": 3,
+     "time": 1.0,
+     "text": "HELP!"
+    }
+   ],
+   "note": "Flag flying, wake too big, boat goes down.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 46,
+   "id": "weave",
+   "name": "The weave",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "podium"
+   ],
+   "dialogue": [
+    {
+     "frame": 0,
+     "time": 0.0,
+     "text": "SHARKS"
+    },
+    {
+     "frame": 1,
+     "time": 0.5,
+     "text": "BATTERIES"
+    },
+    {
+     "frame": 2,
+     "time": 1.0,
+     "text": "HANNIBAL"
+    },
+    {
+     "frame": 3,
+     "time": 1.5,
+     "text": "WEAVE!"
+    }
+   ],
+   "note": "Podium speech that wanders off in every direction.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 47,
+   "id": "rigged",
+   "name": "Rigged tantrum",
+   "volume": 3,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [
+    "fx_tears"
+   ],
+   "dialogue": [
+    {
+     "frame": 0,
+     "time": 0.0,
+     "text": "RIGGED!"
+    },
+    {
+     "frame": 1,
+     "time": 0.2,
+     "text": "RIGGED!"
+    }
+   ],
+   "note": "Stomp, floor kicking, sitting in a puddle of tears.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 48,
+   "id": "memecoin",
+   "name": "Meme coin",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "fx_chart_crash",
+    "fx_chart_up",
+    "fx_chart_up2",
+    "fx_sparkle",
+    "fx_sweat",
+    "fx_tears",
+    "phone"
+   ],
+   "dialogue": [],
+   "note": "Number goes up. Number goes down.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 49,
+   "id": "mugshot",
+   "name": "Mugshot",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "fx_camflash",
+    "height_chart",
+    "placard"
+   ],
+   "dialogue": [],
+   "note": "Profile shot against the height chart. The scowl is the merch.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 50,
+   "id": "rake",
+   "name": "Rake the forest",
+   "volume": 3,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [
+    "fx_leaves",
+    "pine",
+    "rake"
+   ],
+   "dialogue": [
+    {
+     "frame": 3,
+     "time": 0.75,
+     "text": "FINLAND"
+    }
+   ],
+   "note": "Wildfire policy, one rake at a time.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 51,
+   "id": "garbage",
+   "name": "Garbage duty",
+   "volume": 3,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [
+    "bag",
+    "trashcan"
+   ],
+   "dialogue": [],
+   "note": "Hi-vis vest photo-op, bag goes in the can.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 52,
+   "id": "presser",
+   "name": "Wrong venue presser",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "garage",
+    "podium"
+   ],
+   "dialogue": [
+    {
+     "frame": 3,
+     "time": 1.5,
+     "text": "WRONG ONE?"
+    }
+   ],
+   "note": "Big press conference at the landscaping company.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 53,
+   "id": "chant",
+   "name": "Rally chant",
+   "volume": 3,
+   "fps": 3,
+   "frames": 4,
+   "duration": 1.333,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [
+    {
+     "frame": 0,
+     "time": 0.0,
+     "text": "USA!"
+    },
+    {
+     "frame": 2,
+     "time": 0.667,
+     "text": "USA!"
+    }
+   ],
+   "note": "Fist up, clap, fist up, clap.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 54,
+   "id": "idle-long",
+   "name": "Idle (long)",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [],
+   "dialogue": [],
+   "note": "Gameplay: plays after the player goes idle.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 55,
+   "id": "slide",
+   "name": "Belly slide",
+   "volume": 3,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_dust"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: run, dive, slide, pop up.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 56,
+   "id": "swim",
+   "name": "Swim",
+   "volume": 3,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [
+    "water"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: front crawl at the surface.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 57,
+   "id": "coin",
+   "name": "Coin grab",
+   "volume": 3,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "coin",
+    "fx_sparkle"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: jump, bonk, catch, pocket.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 58,
+   "id": "talk",
+   "name": "Talk",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [],
+   "dialogue": [
+    {
+     "frame": 0,
+     "time": 0.0,
+     "text": "HEY"
+    },
+    {
+     "frame": 1,
+     "time": 0.5,
+     "text": "..."
+    },
+    {
+     "frame": 2,
+     "time": 1.0,
+     "text": "LISTEN"
+    },
+    {
+     "frame": 3,
+     "time": 1.5,
+     "text": "?"
+    }
+   ],
+   "note": "Gameplay: NPC dialogue loop.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 59,
+   "id": "sleep",
+   "name": "Sleep",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "fx_zzz"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: rest or save point.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 60,
+   "id": "respawn",
+   "name": "Respawn",
+   "volume": 3,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_sparkle"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: fade in with sparkles.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 61,
+   "id": "tomato",
+   "name": "Tomato hit",
+   "volume": 3,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "fx_splat",
+    "tomato"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: thrown-produce reaction.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 62,
+   "id": "lawnchair",
+   "name": "Lawn chair",
+   "volume": 3,
+   "fps": 2,
+   "frames": 4,
+   "duration": 2.0,
+   "props": [
+    "can",
+    "fx_zzz",
+    "lawnchair"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: idle spot at camp.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 63,
+   "id": "door",
+   "name": "Enter door",
+   "volume": 3,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [
+    "door_frame",
+    "door_panel"
+   ],
+   "dialogue": [],
+   "note": "Gameplay: level exit.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 64,
+   "id": "sprint",
+   "name": "Sprint",
+   "volume": 4,
+   "fps": 14,
+   "frames": 6,
+   "duration": 0.429,
+   "props": [
+    "fx_speed"
+   ],
+   "dialogue": [],
+   "note": "Basics: faster than Run, deeper lean, longer stride.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 65,
+   "id": "sneak",
+   "name": "Sneak",
+   "volume": 4,
+   "fps": 6,
+   "frames": 6,
+   "duration": 1.0,
+   "props": [],
+   "dialogue": [],
+   "note": "Basics: knees bent, tiptoe steps, hands up, eyes shifting.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 66,
+   "id": "crawl",
+   "name": "Crawl",
+   "volume": 4,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [],
+   "dialogue": [],
+   "note": "Basics: hands and knees.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 67,
+   "id": "belly-crawl",
+   "name": "Belly crawl",
+   "volume": 4,
+   "fps": 5,
+   "frames": 4,
+   "duration": 0.8,
+   "props": [],
+   "dialogue": [],
+   "note": "Basics: prone crawl under obstacles.",
+   "kind": null,
+   "night": false
+  },
+  {
+   "index": 68,
+   "id": "jab",
+   "name": "Jab",
+   "volume": 5,
+   "fps": 10,
+   "frames": 4,
+   "duration": 0.4,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Quick lead-hand punch.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 69,
+   "id": "cross",
+   "name": "Cross",
+   "volume": 5,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Rear-hand straight punch.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 70,
+   "id": "hook",
+   "name": "Hook",
+   "volume": 5,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Bent-arm swing to the head.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 71,
+   "id": "uppercut",
+   "name": "Uppercut",
+   "volume": 5,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Dip, then drive up.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 72,
+   "id": "haymaker",
+   "name": "Haymaker",
+   "volume": 5,
+   "fps": 8,
+   "frames": 5,
+   "duration": 0.625,
+   "props": [
+    "fx_impact",
+    "fx_speed"
+   ],
+   "dialogue": [
+    {
+     "frame": 2,
+     "time": 0.25,
+     "text": "HIYA!"
+    }
+   ],
+   "note": "Big wind-up, bigger swing.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 73,
+   "id": "one_two",
+   "name": "One-two combo",
+   "volume": 5,
+   "fps": 10,
+   "frames": 6,
+   "duration": 0.6,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Jab then cross.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 74,
+   "id": "front_kick",
+   "name": "Front kick",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Chamber, extend, retract.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 75,
+   "id": "high_kick",
+   "name": "High kick",
+   "volume": 5,
+   "fps": 8,
+   "frames": 5,
+   "duration": 0.625,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [
+    {
+     "frame": 1,
+     "time": 0.125,
+     "text": "HIYA!"
+    }
+   ],
+   "note": "Head-height kick.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 76,
+   "id": "stomp",
+   "name": "Stomp",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_dust"
+   ],
+   "dialogue": [],
+   "note": "Knee up, stamp down.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 77,
+   "id": "shoulder_charge",
+   "name": "Shoulder charge",
+   "volume": 5,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [
+    "fx_impact",
+    "fx_speed"
+   ],
+   "dialogue": [],
+   "note": "Lowered shoulder rush.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 78,
+   "id": "shove",
+   "name": "Shove",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Two-handed push.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 79,
+   "id": "headbutt",
+   "name": "Headbutt",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_impact",
+    "fx_stars"
+   ],
+   "dialogue": [],
+   "note": "Lean back, snap forward.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 80,
+   "id": "flying_kick",
+   "name": "Flying kick",
+   "volume": 5,
+   "fps": 8,
+   "frames": 5,
+   "duration": 0.625,
+   "props": [
+    "fx_dust",
+    "fx_impact",
+    "fx_speed"
+   ],
+   "dialogue": [
+    {
+     "frame": 2,
+     "time": 0.25,
+     "text": "HIYA!"
+    }
+   ],
+   "note": "Run-up jump into a kick.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 81,
+   "id": "elbow",
+   "name": "Elbow strike",
+   "volume": 5,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Short elbow to the front.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 82,
+   "id": "overhead_smash",
+   "name": "Overhead smash",
+   "volume": 5,
+   "fps": 7,
+   "frames": 5,
+   "duration": 0.714,
+   "props": [
+    "fx_dust",
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Both fists up, then down.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 83,
+   "id": "belly_bump",
+   "name": "Belly bump",
+   "volume": 5,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [
+    {
+     "frame": 1,
+     "time": 0.143,
+     "text": "OOF"
+    }
+   ],
+   "note": "Lean back, lead with the gut.",
+   "kind": "attack",
+   "night": false
+  },
+  {
+   "index": 84,
+   "id": "guard",
+   "name": "Guard stance",
+   "volume": 5,
+   "fps": 4,
+   "frames": 4,
+   "duration": 1.0,
+   "props": [],
+   "dialogue": [],
+   "note": "Fighting stance loop.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 85,
+   "id": "high_block",
+   "name": "High block",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Forearm above the head.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 86,
+   "id": "low_block",
+   "name": "Low block",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Sweep down across the body.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 87,
+   "id": "parry",
+   "name": "Parry",
+   "volume": 5,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Open-hand deflection.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 88,
+   "id": "duck",
+   "name": "Duck",
+   "volume": 5,
+   "fps": 9,
+   "frames": 5,
+   "duration": 0.556,
+   "props": [
+    "fx_speed"
+   ],
+   "dialogue": [],
+   "note": "Drop under a swing.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 89,
+   "id": "dodge_back",
+   "name": "Dodge back",
+   "volume": 5,
+   "fps": 9,
+   "frames": 4,
+   "duration": 0.444,
+   "props": [],
+   "dialogue": [],
+   "note": "Lean away from a strike.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 90,
+   "id": "backstep",
+   "name": "Backstep",
+   "volume": 5,
+   "fps": 8,
+   "frames": 6,
+   "duration": 0.75,
+   "props": [],
+   "dialogue": [],
+   "note": "Retreat in guard (in place).",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 91,
+   "id": "brace",
+   "name": "Brace",
+   "volume": 5,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "fx_dust",
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Crossed arms, absorb the hit.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 92,
+   "id": "cover_up",
+   "name": "Cover up",
+   "volume": 5,
+   "fps": 6,
+   "frames": 4,
+   "duration": 0.667,
+   "props": [
+    "fx_sweat"
+   ],
+   "dialogue": [],
+   "note": "Arms over the head.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 93,
+   "id": "counter",
+   "name": "Catch and counter",
+   "volume": 5,
+   "fps": 9,
+   "frames": 5,
+   "duration": 0.556,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Parry, then punch back.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 94,
+   "id": "hit_light",
+   "name": "Hit reaction (light)",
+   "volume": 5,
+   "fps": 9,
+   "frames": 3,
+   "duration": 0.333,
+   "props": [],
+   "dialogue": [],
+   "note": "Head snaps back.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 95,
+   "id": "hit_heavy",
+   "name": "Hit reaction (heavy)",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_stars"
+   ],
+   "dialogue": [],
+   "note": "Knocked back a step.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 96,
+   "id": "knockdown",
+   "name": "Knockdown and get up",
+   "volume": 5,
+   "fps": 6,
+   "frames": 6,
+   "duration": 1.0,
+   "props": [
+    "fx_dust",
+    "fx_stars"
+   ],
+   "dialogue": [],
+   "note": "Fall, see stars, get back up.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 97,
+   "id": "guard_break",
+   "name": "Guard break",
+   "volume": 5,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "fx_impact",
+    "fx_stars"
+   ],
+   "dialogue": [],
+   "note": "Block smashed open.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 98,
+   "id": "leg_check",
+   "name": "Leg check",
+   "volume": 5,
+   "fps": 8,
+   "frames": 4,
+   "duration": 0.5,
+   "props": [
+    "fx_impact"
+   ],
+   "dialogue": [],
+   "note": "Knee up to block a kick.",
+   "kind": "defend",
+   "night": false
+  },
+  {
+   "index": 99,
+   "id": "lid_shield",
+   "name": "Trash-lid shield",
+   "volume": 5,
+   "fps": 7,
+   "frames": 4,
+   "duration": 0.571,
+   "props": [
+    "fx_impact",
+    "lid"
+   ],
+   "dialogue": [
+    {
+     "frame": 2,
+     "time": 0.286,
+     "text": "HA!"
+    }
+   ],
+   "note": "Block with a trash-can lid.",
+   "kind": "defend",
+   "night": false
+  }
+ ],
+ "props": [
+  {
+   "name": "phone",
+   "kind": "prop",
+   "glb": "props/phone.glb",
+   "vox": "props/phone.vox"
+  },
+  {
+   "name": "selfie_stick",
+   "kind": "prop",
+   "glb": "props/selfie_stick.glb",
+   "vox": "props/selfie_stick.vox"
+  },
+  {
+   "name": "paper",
+   "kind": "prop",
+   "glb": "props/paper.glb",
+   "vox": "props/paper.vox"
+  },
+  {
+   "name": "sharpie",
+   "kind": "prop",
+   "glb": "props/sharpie.glb",
+   "vox": "props/sharpie.vox"
+  },
+  {
+   "name": "flashlight",
+   "kind": "prop",
+   "glb": "props/flashlight.glb",
+   "vox": "props/flashlight.vox"
+  },
+  {
+   "name": "uv_beam",
+   "kind": "fx",
+   "glb": "props/uv_beam.glb",
+   "vox": "props/uv_beam.vox"
+  },
+  {
+   "name": "fries",
+   "kind": "prop",
+   "glb": "props/fries.glb",
+   "vox": "props/fries.vox"
+  },
+  {
+   "name": "club",
+   "kind": "prop",
+   "glb": "props/club.glb",
+   "vox": "props/club.vox"
+  },
+  {
+   "name": "rake",
+   "kind": "prop",
+   "glb": "props/rake.glb",
+   "vox": "props/rake.vox"
+  },
+  {
+   "name": "hammer",
+   "kind": "prop",
+   "glb": "props/hammer.glb",
+   "vox": "props/hammer.vox"
+  },
+  {
+   "name": "sneaker",
+   "kind": "prop",
+   "glb": "props/sneaker.glb",
+   "vox": "props/sneaker.vox"
+  },
+  {
+   "name": "book",
+   "kind": "prop",
+   "glb": "props/book.glb",
+   "vox": "props/book.vox"
+  },
+  {
+   "name": "card",
+   "kind": "prop",
+   "glb": "props/card.glb",
+   "vox": "props/card.vox"
+  },
+  {
+   "name": "burger",
+   "kind": "prop",
+   "glb": "props/burger.glb",
+   "vox": "props/burger.vox"
+  },
+  {
+   "name": "can",
+   "kind": "prop",
+   "glb": "props/can.glb",
+   "vox": "props/can.vox"
+  },
+  {
+   "name": "roll",
+   "kind": "prop",
+   "glb": "props/roll.glb",
+   "vox": "props/roll.vox"
+  },
+  {
+   "name": "brick",
+   "kind": "prop",
+   "glb": "props/brick.glb",
+   "vox": "props/brick.vox"
+  },
+  {
+   "name": "coin",
+   "kind": "prop",
+   "glb": "props/coin.glb",
+   "vox": "props/coin.vox"
+  },
+  {
+   "name": "egg",
+   "kind": "prop",
+   "glb": "props/egg.glb",
+   "vox": "props/egg.vox"
+  },
+  {
+   "name": "binoculars",
+   "kind": "prop",
+   "glb": "props/binoculars.glb",
+   "vox": "props/binoculars.vox"
+  },
+  {
+   "name": "bag",
+   "kind": "prop",
+   "glb": "props/bag.glb",
+   "vox": "props/bag.vox"
+  },
+  {
+   "name": "tomato",
+   "kind": "prop",
+   "glb": "props/tomato.glb",
+   "vox": "props/tomato.vox"
+  },
+  {
+   "name": "ball",
+   "kind": "prop",
+   "glb": "props/ball.glb",
+   "vox": "props/ball.vox"
+  },
+  {
+   "name": "lid",
+   "kind": "prop",
+   "glb": "props/lid.glb",
+   "vox": "props/lid.vox"
+  },
+  {
+   "name": "receipt_seg",
+   "kind": "prop",
+   "glb": "props/receipt_seg.glb",
+   "vox": "props/receipt_seg.vox"
+  },
+  {
+   "name": "flag",
+   "kind": "prop",
+   "glb": "props/flag.glb",
+   "vox": "props/flag.vox"
+  },
+  {
+   "name": "crate",
+   "kind": "prop",
+   "glb": "props/crate.glb",
+   "vox": "props/crate.vox"
+  },
+  {
+   "name": "crate_big",
+   "kind": "prop",
+   "glb": "props/crate_big.glb",
+   "vox": "props/crate_big.vox"
+  },
+  {
+   "name": "bankbox",
+   "kind": "prop",
+   "glb": "props/bankbox.glb",
+   "vox": "props/bankbox.vox"
+  },
+  {
+   "name": "lectern",
+   "kind": "prop",
+   "glb": "props/lectern.glb",
+   "vox": "props/lectern.vox"
+  },
+  {
+   "name": "placard",
+   "kind": "prop",
+   "glb": "props/placard.glb",
+   "vox": "props/placard.vox"
+  },
+  {
+   "name": "capstack",
+   "kind": "prop",
+   "glb": "props/capstack.glb",
+   "vox": "props/capstack.vox"
+  },
+  {
+   "name": "cuffs",
+   "kind": "prop",
+   "glb": "props/cuffs.glb",
+   "vox": "props/cuffs.vox"
+  },
+  {
+   "name": "ladder",
+   "kind": "prop",
+   "glb": "props/ladder.glb",
+   "vox": "props/ladder.vox"
+  },
+  {
+   "name": "scaffold",
+   "kind": "prop",
+   "glb": "props/scaffold.glb",
+   "vox": "props/scaffold.vox"
+  },
+  {
+   "name": "desk",
+   "kind": "prop",
+   "glb": "props/desk.glb",
+   "vox": "props/desk.vox"
+  },
+  {
+   "name": "office_chair",
+   "kind": "prop",
+   "glb": "props/office_chair.glb",
+   "vox": "props/office_chair.vox"
+  },
+  {
+   "name": "toilet",
+   "kind": "prop",
+   "glb": "props/toilet.glb",
+   "vox": "props/toilet.vox"
+  },
+  {
+   "name": "easel",
+   "kind": "prop",
+   "glb": "props/easel.glb",
+   "vox": "props/easel.vox"
+  },
+  {
+   "name": "easel_loop1",
+   "kind": "prop",
+   "glb": "props/easel_loop1.glb",
+   "vox": "props/easel_loop1.vox"
+  },
+  {
+   "name": "easel_loop2",
+   "kind": "prop",
+   "glb": "props/easel_loop2.glb",
+   "vox": "props/easel_loop2.vox"
+  },
+  {
+   "name": "easel_loop3",
+   "kind": "prop",
+   "glb": "props/easel_loop3.glb",
+   "vox": "props/easel_loop3.vox"
+  },
+  {
+   "name": "ledge",
+   "kind": "prop",
+   "glb": "props/ledge.glb",
+   "vox": "props/ledge.vox"
+  },
+  {
+   "name": "fryer",
+   "kind": "prop",
+   "glb": "props/fryer.glb",
+   "vox": "props/fryer.vox"
+  },
+  {
+   "name": "bed",
+   "kind": "prop",
+   "glb": "props/bed.glb",
+   "vox": "props/bed.vox"
+  },
+  {
+   "name": "table_burgers",
+   "kind": "prop",
+   "glb": "props/table_burgers.glb",
+   "vox": "props/table_burgers.vox"
+  },
+  {
+   "name": "soda_button",
+   "kind": "prop",
+   "glb": "props/soda_button.glb",
+   "vox": "props/soda_button.vox"
+  },
+  {
+   "name": "eclipse",
+   "kind": "prop",
+   "glb": "props/eclipse.glb",
+   "vox": "props/eclipse.vox"
+  },
+  {
+   "name": "turbine_tower",
+   "kind": "prop",
+   "glb": "props/turbine_tower.glb",
+   "vox": "props/turbine_tower.vox"
+  },
+  {
+   "name": "turbine_rotor",
+   "kind": "prop",
+   "glb": "props/turbine_rotor.glb",
+   "vox": "props/turbine_rotor.vox"
+  },
+  {
+   "name": "wall_row0",
+   "kind": "prop",
+   "glb": "props/wall_row0.glb",
+   "vox": "props/wall_row0.vox"
+  },
+  {
+   "name": "wall_row1",
+   "kind": "prop",
+   "glb": "props/wall_row1.glb",
+   "vox": "props/wall_row1.vox"
+  },
+  {
+   "name": "wall_row2",
+   "kind": "prop",
+   "glb": "props/wall_row2.glb",
+   "vox": "props/wall_row2.vox"
+  },
+  {
+   "name": "wall_row3",
+   "kind": "prop",
+   "glb": "props/wall_row3.glb",
+   "vox": "props/wall_row3.vox"
+  },
+  {
+   "name": "wall_row4",
+   "kind": "prop",
+   "glb": "props/wall_row4.glb",
+   "vox": "props/wall_row4.vox"
+  },
+  {
+   "name": "wall_row5",
+   "kind": "prop",
+   "glb": "props/wall_row5.glb",
+   "vox": "props/wall_row5.vox"
+  },
+  {
+   "name": "wall_row6",
+   "kind": "prop",
+   "glb": "props/wall_row6.glb",
+   "vox": "props/wall_row6.vox"
+  },
+  {
+   "name": "wall_ladder",
+   "kind": "prop",
+   "glb": "props/wall_ladder.glb",
+   "vox": "props/wall_ladder.vox"
+  },
+  {
+   "name": "bleachers",
+   "kind": "prop",
+   "glb": "props/bleachers.glb",
+   "vox": "props/bleachers.vox"
+  },
+  {
+   "name": "height_chart",
+   "kind": "prop",
+   "glb": "props/height_chart.glb",
+   "vox": "props/height_chart.vox"
+  },
+  {
+   "name": "pine",
+   "kind": "prop",
+   "glb": "props/pine.glb",
+   "vox": "props/pine.vox"
+  },
+  {
+   "name": "trashcan",
+   "kind": "prop",
+   "glb": "props/trashcan.glb",
+   "vox": "props/trashcan.vox"
+  },
+  {
+   "name": "garage",
+   "kind": "prop",
+   "glb": "props/garage.glb",
+   "vox": "props/garage.vox"
+  },
+  {
+   "name": "lawnchair",
+   "kind": "prop",
+   "glb": "props/lawnchair.glb",
+   "vox": "props/lawnchair.vox"
+  },
+  {
+   "name": "door_frame",
+   "kind": "prop",
+   "glb": "props/door_frame.glb",
+   "vox": "props/door_frame.vox"
+  },
+  {
+   "name": "door_panel",
+   "kind": "prop",
+   "glb": "props/door_panel.glb",
+   "vox": "props/door_panel.vox"
+  },
+  {
+   "name": "columns",
+   "kind": "prop",
+   "glb": "props/columns.glb",
+   "vox": "props/columns.vox"
+  },
+  {
+   "name": "night_backdrop",
+   "kind": "prop",
+   "glb": "props/night_backdrop.glb",
+   "vox": "props/night_backdrop.vox"
+  },
+  {
+   "name": "podium",
+   "kind": "prop",
+   "glb": "props/podium.glb",
+   "vox": "props/podium.vox"
+  },
+  {
+   "name": "boat",
+   "kind": "prop",
+   "glb": "props/boat.glb",
+   "vox": "props/boat.vox"
+  },
+  {
+   "name": "water",
+   "kind": "fx",
+   "glb": "props/water.glb",
+   "vox": "props/water.vox"
+  },
+  {
+   "name": "fx_speed",
+   "kind": "fx",
+   "glb": "props/fx_speed.glb",
+   "vox": "props/fx_speed.vox"
+  },
+  {
+   "name": "fx_dust",
+   "kind": "fx",
+   "glb": "props/fx_dust.glb",
+   "vox": "props/fx_dust.vox"
+  },
+  {
+   "name": "fx_sweat",
+   "kind": "fx",
+   "glb": "props/fx_sweat.glb",
+   "vox": "props/fx_sweat.vox"
+  },
+  {
+   "name": "fx_tears",
+   "kind": "fx",
+   "glb": "props/fx_tears.glb",
+   "vox": "props/fx_tears.vox"
+  },
+  {
+   "name": "fx_stars",
+   "kind": "fx",
+   "glb": "props/fx_stars.glb",
+   "vox": "props/fx_stars.vox"
+  },
+  {
+   "name": "fx_spark",
+   "kind": "fx",
+   "glb": "props/fx_spark.glb",
+   "vox": "props/fx_spark.vox"
+  },
+  {
+   "name": "fx_impact",
+   "kind": "fx",
+   "glb": "props/fx_impact.glb",
+   "vox": "props/fx_impact.vox"
+  },
+  {
+   "name": "fx_gas",
+   "kind": "fx",
+   "glb": "props/fx_gas.glb",
+   "vox": "props/fx_gas.vox"
+  },
+  {
+   "name": "fx_cough",
+   "kind": "fx",
+   "glb": "props/fx_cough.glb",
+   "vox": "props/fx_cough.vox"
+  },
+  {
+   "name": "fx_sparkle",
+   "kind": "fx",
+   "glb": "props/fx_sparkle.glb",
+   "vox": "props/fx_sparkle.vox"
+  },
+  {
+   "name": "fx_notes",
+   "kind": "fx",
+   "glb": "props/fx_notes.glb",
+   "vox": "props/fx_notes.vox"
+  },
+  {
+   "name": "fx_zzz",
+   "kind": "fx",
+   "glb": "props/fx_zzz.glb",
+   "vox": null
+  },
+  {
+   "name": "fx_splat",
+   "kind": "fx",
+   "glb": "props/fx_splat.glb",
+   "vox": "props/fx_splat.vox"
+  },
+  {
+   "name": "fx_eggsplat",
+   "kind": "fx",
+   "glb": "props/fx_eggsplat.glb",
+   "vox": "props/fx_eggsplat.vox"
+  },
+  {
+   "name": "fx_leaves",
+   "kind": "fx",
+   "glb": "props/fx_leaves.glb",
+   "vox": "props/fx_leaves.vox"
+  },
+  {
+   "name": "fx_camflash",
+   "kind": "fx",
+   "glb": "props/fx_camflash.glb",
+   "vox": "props/fx_camflash.vox"
+  },
+  {
+   "name": "fx_live",
+   "kind": "fx",
+   "glb": "props/fx_live.glb",
+   "vox": "props/fx_live.vox"
+  },
+  {
+   "name": "fx_chart_up",
+   "kind": "fx",
+   "glb": "props/fx_chart_up.glb",
+   "vox": "props/fx_chart_up.vox"
+  },
+  {
+   "name": "fx_chart_up2",
+   "kind": "fx",
+   "glb": "props/fx_chart_up2.glb",
+   "vox": "props/fx_chart_up2.vox"
+  },
+  {
+   "name": "fx_chart_crash",
+   "kind": "fx",
+   "glb": "props/fx_chart_crash.glb",
+   "vox": "props/fx_chart_crash.vox"
+  }
+ ],
+ "face_clips": [
+  {
+   "index": 100,
+   "id": "face_blink",
+   "name": "Face: Blink",
+   "duration": 2.72,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 101,
+   "id": "face_talk",
+   "name": "Face: Talk",
+   "duration": 0.94,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 102,
+   "id": "face_shout",
+   "name": "Face: Shout",
+   "duration": 0.85,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 103,
+   "id": "face_angry",
+   "name": "Face: Angry",
+   "duration": 3.32,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 104,
+   "id": "face_grin",
+   "name": "Face: Grin",
+   "duration": 2.52,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 105,
+   "id": "face_shocked",
+   "name": "Face: Shocked",
+   "duration": 2.18,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 106,
+   "id": "face_sad",
+   "name": "Face: Sad",
+   "duration": 2.2,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 107,
+   "id": "face_smug",
+   "name": "Face: Smug",
+   "duration": 3.0,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 108,
+   "id": "face_wince",
+   "name": "Face: Wince",
+   "duration": 1.25,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 109,
+   "id": "face_ko",
+   "name": "Face: KO",
+   "duration": 2.0,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 110,
+   "id": "face_surprised",
+   "name": "Face: Surprised",
+   "duration": 2.5,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 111,
+   "id": "face_nervous",
+   "name": "Face: Nervous",
+   "duration": 2.02,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 112,
+   "id": "face_suspicious",
+   "name": "Face: Suspicious",
+   "duration": 3.0,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 113,
+   "id": "face_eye_roll",
+   "name": "Face: Eye roll",
+   "duration": 2.4,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 114,
+   "id": "face_thinking",
+   "name": "Face: Thinking",
+   "duration": 3.12,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 115,
+   "id": "face_scheming",
+   "name": "Face: Scheming",
+   "duration": 2.7,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 116,
+   "id": "face_laugh",
+   "name": "Face: Laugh",
+   "duration": 1.1,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 117,
+   "id": "face_disgust",
+   "name": "Face: Disgust",
+   "duration": 2.2,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 118,
+   "id": "face_sleepy",
+   "name": "Face: Sleepy",
+   "duration": 3.1,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 119,
+   "id": "face_crying",
+   "name": "Face: Crying",
+   "duration": 1.9,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 120,
+   "id": "face_rage",
+   "name": "Face: Rage",
+   "duration": 1.08,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 121,
+   "id": "face_look_around",
+   "name": "Face: Look around",
+   "duration": 2.42,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 122,
+   "id": "face_proud",
+   "name": "Face: Proud",
+   "duration": 2.72,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  },
+  {
+   "index": 123,
+   "id": "face_worried",
+   "name": "Face: Worried",
+   "duration": 2.42,
+   "nodes": [
+    "eyes_open",
+    "eyes_shut",
+    "eyes_x",
+    "eyes_wide",
+    "eyes_squint",
+    "eyes_left",
+    "eyes_right",
+    "eyes_up",
+    "brows_normal",
+    "brows_angry",
+    "brows_raised",
+    "brows_worried",
+    "mouth_flat",
+    "mouth_grin",
+    "mouth_open",
+    "mouth_grit",
+    "mouth_pout",
+    "mouth_sad",
+    "mouth_o",
+    "mouth_smirk",
+    "mouth_tongue",
+    "mouth_frown",
+    "mouth_wavy"
+   ]
+  }
+ ]
+}

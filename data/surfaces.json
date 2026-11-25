@@ -1,0 +1,145 @@
+{
+  "models/scene_all.glb": {
+    "b4805e": "stubble",
+    "704626": "hair",
+    "304e96": "cloth",
+    "223870": "cloth",
+    "ce282c": "cloth",
+    "961a20": "cloth"
+  },
+  "sets/diner.glb": {
+    "ff5a96": "glow"
+  },
+  "sets/night.glb": {
+    "ffd66e": "glow",
+    "f0ecd2": "glow"
+  },
+  "sets/hospital.glb": {
+    "28965a": "glow"
+  },
+  "sets/newsroom.glb": {
+    "5aa0dc": "glow"
+  },
+  "models/rep_beard.glb": {
+    "5c6068": "cloth",
+    "787c84": "cloth",
+    "261c18": "hair"
+  },
+  "models/agent_bun.glb": {
+    "261c18": "hair",
+    "121216": "cloth"
+  },
+  "models/agent_buzz.glb": {
+    "704626": "hair",
+    "121216": "cloth"
+  },
+  "models/agent_shaved.glb": {
+    "70462d": "hair",
+    "121216": "cloth"
+  },
+  "models/cat.glb": {
+    "9696a0": "hair"
+  },
+  "models/dog.glb": {
+    "ce9648": "hair"
+  },
+  "models/donkey.glb": {
+    "8e8076": "hair",
+    "2c56a8": "cloth"
+  },
+  "models/executive.glb": {
+    "1a1a1e": "hair",
+    "261c18": "stubble",
+    "466496": "cloth",
+    "121216": "cloth"
+  },
+  "models/judge.glb": {
+    "b0b0b6": "hair",
+    "34343c": "cloth",
+    "1a1a1e": "cloth"
+  },
+  "models/plainclothes.glb": {
+    "261c18": "hair",
+    "b4805e": "stubble",
+    "54341e": "cloth",
+    "466496": "cloth"
+  },
+  "models/president.glb": {
+    "e2be6e": "hair",
+    "ba944e": "hair",
+    "20387c": "cloth",
+    "2c4a9c": "cloth"
+  },
+  "models/rally_hat.glb": {
+    "beaa78": "cloth",
+    "96845a": "cloth",
+    "f8f8f6": "cloth"
+  },
+  "models/rep_cream.glb": {
+    "261c18": "stubble",
+    "cec4ac": "cloth"
+  },
+  "models/rep_ginger.glb": {
+    "c4602c": "hair",
+    "daac8e": "hair",
+    "145a3a": "cloth",
+    "287846": "cloth"
+  },
+  "models/rep_open_collar.glb": {
+    "704626": "hair",
+    "402616": "hair",
+    "303e68": "cloth",
+    "1e2848": "cloth"
+  },
+  "models/reporter.glb": {
+    "186060": "cloth",
+    "5c5c68": "cloth"
+  },
+  "models/representative.glb": {
+    "261c18": "hair",
+    "5c1626": "cloth",
+    "3e4048": "cloth"
+  },
+  "models/rhino.glb": {
+    "96969e": "hair",
+    "242e52": "cloth"
+  },
+  "models/senator.glb": {
+    "b0b0b6": "hair",
+    "2c2e34": "cloth",
+    "3e4048": "cloth"
+  },
+  "models/senator_bob.glb": {
+    "dedee4": "hair",
+    "3a465c": "cloth"
+  },
+  "models/senator_glasses.glb": {
+    "e8e8e4": "hair",
+    "96969c": "stubble",
+    "2c2e34": "cloth",
+    "3e4048": "cloth"
+  },
+  "models/senator_plum.glb": {
+    "261c18": "hair",
+    "b0b0b6": "hair",
+    "4a2c62": "cloth",
+    "623c80": "cloth"
+  },
+  "models/senator_tan.glb": {
+    "261c18": "hair",
+    "b0b0b6": "hair",
+    "8c7656": "cloth",
+    "b09670": "cloth"
+  },
+  "models/staffer.glb": {
+    "704626": "hair",
+    "8aa8c8": "cloth",
+    "b0966c": "cloth"
+  },
+  "models/vice_president.glb": {
+    "dedee4": "hair",
+    "b6b6c0": "hair",
+    "1a1a1e": "cloth",
+    "121216": "cloth"
+  }
+}

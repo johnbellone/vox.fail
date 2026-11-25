@@ -1,0 +1,300 @@
+{
+ "characters": [
+  {
+   "id": "scene_all",
+   "name": "Lead",
+   "group": "Cast",
+   "model": "models/scene_all.glb",
+   "portrait": "portraits/scene_all.png",
+   "about": ""
+  },
+  {
+   "id": "agent_bun",
+   "name": "Agent (bun)",
+   "group": "Cast",
+   "model": "models/agent_bun.glb",
+   "portrait": "portraits/agent_bun.png",
+   "about": "Secret Service agent: same suit, sunglasses and earpiece, hair in a tight bun."
+  },
+  {
+   "id": "agent_buzz",
+   "name": "Agent (buzz cut)",
+   "group": "Cast",
+   "model": "models/agent_buzz.glb",
+   "portrait": "portraits/agent_buzz.png",
+   "about": "Secret Service agent: black suit, white shirt, black tie, red lapel pin, sunglasses, earpiece with coil, buzz cut."
+  },
+  {
+   "id": "agent_shaved",
+   "name": "Agent (shaved head)",
+   "group": "Cast",
+   "model": "models/agent_shaved.glb",
+   "portrait": "portraits/agent_shaved.png",
+   "about": "Secret Service agent: same suit, sunglasses and earpiece, shaved head."
+  },
+  {
+   "id": "executive",
+   "name": "Business executive",
+   "group": "Cast",
+   "model": "models/executive.glb",
+   "portrait": "portraits/executive.png",
+   "about": "Tech-style executive: black MAGA cap, black T-shirt under a black suit jacket, jeans, black sneakers, silver glasses, short goatee, watch. Not based on anyone."
+  },
+  {
+   "id": "judge",
+   "name": "Judge",
+   "group": "Cast",
+   "model": "models/judge.glb",
+   "portrait": "portraits/judge.png",
+   "about": "Black robe with pleats and wide sleeves, white collar, maroon tie, glasses, grey hair thinning on top."
+  },
+  {
+   "id": "officer",
+   "name": "Officer",
+   "group": "Cast",
+   "model": "models/officer.glb",
+   "portrait": "portraits/officer.png",
+   "about": "Capitol-style police officer: peaked cap, duty belt with radio, gold badge, POLICE on the back."
+  },
+  {
+   "id": "plainclothes",
+   "name": "Plain-clothes officer",
+   "group": "Cast",
+   "model": "models/plainclothes.glb",
+   "portrait": "portraits/plainclothes.png",
+   "about": "Undercover detective: brown leather jacket over a grey T-shirt, jeans, badge on the belt, short dark hair and mustache."
+  },
+  {
+   "id": "president",
+   "name": "President",
+   "group": "Cast",
+   "model": "models/president.glb",
+   "portrait": "portraits/president.png",
+   "about": "Fictional president: royal-blue suit, gold tie, flag pin, short blonde hair, clean-shaven. Not based on any real president."
+  },
+  {
+   "id": "rally_hat",
+   "name": "Rally-goer (bucket hat)",
+   "group": "Cast",
+   "model": "models/rally_hat.glb",
+   "portrait": "portraits/rally_hat.png",
+   "about": "Stars-and-stripes shirt, khaki shorts with tube socks, white beard, sunglasses, bucket hat."
+  },
+  {
+   "id": "rally_sign",
+   "name": "Rally-goer (sign)",
+   "group": "Cast",
+   "model": "models/rally_sign.glb",
+   "portrait": "portraits/rally_sign.png",
+   "about": "Flag-print T-shirt, jeans, white sneakers, navy USA cap with a blonde ponytail through the back; waves a sign."
+  },
+  {
+   "id": "reporter",
+   "name": "Reporter",
+   "group": "Cast",
+   "model": "models/reporter.glb",
+   "portrait": "portraits/reporter.png",
+   "about": "TV reporter: teal blazer, press badge on a lanyard, black bob with bangs, carries a microphone."
+  },
+  {
+   "id": "representative",
+   "name": "Representative",
+   "group": "Cast",
+   "model": "models/representative.glb",
+   "portrait": "portraits/representative.png",
+   "about": "House member: burgundy blazer, gold member pin and earrings, full curly hair. Not based on anyone."
+  },
+  {
+   "id": "rep_beard",
+   "name": "Representative (beard)",
+   "group": "Cast",
+   "model": "models/rep_beard.glb",
+   "portrait": "portraits/rep_beard.png",
+   "about": "Grey suit, purple tie, short black hair and full trimmed beard. Not based on anyone."
+  },
+  {
+   "id": "rep_cream",
+   "name": "Representative (cream blazer)",
+   "group": "Cast",
+   "model": "models/rep_cream.glb",
+   "portrait": "portraits/rep_cream.png",
+   "about": "Cream skirt suit over a navy top, long straight black hair. Not based on anyone."
+  },
+  {
+   "id": "rep_open_collar",
+   "name": "Representative (open collar)",
+   "group": "Cast",
+   "model": "models/rep_open_collar.glb",
+   "portrait": "portraits/rep_open_collar.png",
+   "about": "Navy blazer, open-collar blue shirt, no tie, brown quiff. Not based on anyone."
+  },
+  {
+   "id": "rep_ginger",
+   "name": "Representative (ponytail)",
+   "group": "Cast",
+   "model": "models/rep_ginger.glb",
+   "portrait": "portraits/rep_ginger.png",
+   "about": "Green blazer, white blouse, copper-red ponytail. Not based on anyone."
+  },
+  {
+   "id": "riot_a",
+   "name": "Riot officer A",
+   "group": "Cast",
+   "model": "models/riot_a.glb",
+   "portrait": "portraits/riot_a.png",
+   "about": "Riot officer: black helmet with clear visor and neck guard, chest and back plates, shoulder pads, knee and shin guards, gloves, POLICE on the back."
+  },
+  {
+   "id": "riot_b",
+   "name": "Riot officer B",
+   "group": "Cast",
+   "model": "models/riot_b.glb",
+   "portrait": "portraits/riot_b.png",
+   "about": "Riot officer, second face under the same gear."
+  },
+  {
+   "id": "senator",
+   "name": "Senator",
+   "group": "Cast",
+   "model": "models/senator.glb",
+   "portrait": "portraits/senator.png",
+   "about": "Generic legislator: charcoal suit, blue tie, flag pin, silver side-parted hair. Not based on anyone."
+  },
+  {
+   "id": "senator_glasses",
+   "name": "Senator (glasses)",
+   "group": "Cast",
+   "model": "models/senator_glasses.glb",
+   "portrait": "portraits/senator_glasses.png",
+   "about": "Charcoal suit, green tie, wire glasses, thinning white hair. Not based on anyone."
+  },
+  {
+   "id": "senator_plum",
+   "name": "Senator (plum suit)",
+   "group": "Cast",
+   "model": "models/senator_plum.glb",
+   "portrait": "portraits/senator_plum.png",
+   "about": "Plum pantsuit, gold pin, short natural hair with grey flecks. Not based on anyone."
+  },
+  {
+   "id": "senator_bob",
+   "name": "Senator (silver bob)",
+   "group": "Cast",
+   "model": "models/senator_bob.glb",
+   "portrait": "portraits/senator_bob.png",
+   "about": "Slate skirt suit, silver brooch, silver chin-length bob. Not based on anyone."
+  },
+  {
+   "id": "senator_tan",
+   "name": "Senator (tan suit)",
+   "group": "Cast",
+   "model": "models/senator_tan.glb",
+   "portrait": "portraits/senator_tan.png",
+   "about": "Tan suit, brown tie, close-cropped black hair greying at the temples. Not based on anyone."
+  },
+  {
+   "id": "staffer",
+   "name": "Staffer",
+   "group": "Cast",
+   "model": "models/staffer.glb",
+   "portrait": "portraits/staffer.png",
+   "about": "Overworked Hill staffer: rolled sleeves, loose off-centre tie, red lanyard and ID badge, chinos, cowlick."
+  },
+  {
+   "id": "vice_president",
+   "name": "Vice President",
+   "group": "Cast",
+   "model": "models/vice_president.glb",
+   "portrait": "portraits/vice_president.png",
+   "about": "Fictional vice president: black suit, white collar, gold lapel pin, silver side-swept short hair. Not based on any real vice president."
+  },
+  {
+   "id": "roasted_army",
+   "name": "Army",
+   "group": "Roast",
+   "model": "models/roasted_army.glb",
+   "portrait": "portraits/roasted_army.png",
+   "about": ""
+  },
+  {
+   "id": "roasted_cook",
+   "name": "Cook",
+   "group": "Roast",
+   "model": "models/roasted_cook.glb",
+   "portrait": "portraits/roasted_cook.png",
+   "about": ""
+  },
+  {
+   "id": "roasted_garbage",
+   "name": "Garbage",
+   "group": "Roast",
+   "model": "models/roasted_garbage.glb",
+   "portrait": "portraits/roasted_garbage.png",
+   "about": ""
+  },
+  {
+   "id": "roasted_medic",
+   "name": "Medic",
+   "group": "Roast",
+   "model": "models/roasted_medic.glb",
+   "portrait": "portraits/roasted_medic.png",
+   "about": ""
+  },
+  {
+   "id": "roasted_miami",
+   "name": "Miami tourist",
+   "group": "Roast",
+   "model": "models/roasted_miami.glb",
+   "portrait": "portraits/roasted_miami.png",
+   "about": ""
+  },
+  {
+   "id": "roasted_riot",
+   "name": "Riot",
+   "group": "Roast",
+   "model": "models/roasted_riot.glb",
+   "portrait": "portraits/roasted_riot.png",
+   "about": ""
+  },
+  {
+   "id": "cat",
+   "name": "Cat",
+   "group": "Animals",
+   "model": "models/cat.glb",
+   "portrait": "portraits/cat.png",
+   "about": ""
+  },
+  {
+   "id": "dog",
+   "name": "Dog",
+   "group": "Animals",
+   "model": "models/dog.glb",
+   "portrait": "portraits/dog.png",
+   "about": ""
+  },
+  {
+   "id": "donkey",
+   "name": "Donkey",
+   "group": "Animals",
+   "model": "models/donkey.glb",
+   "portrait": "portraits/donkey.png",
+   "about": ""
+  },
+  {
+   "id": "peanut",
+   "name": "Peanut",
+   "group": "Animals",
+   "model": "models/peanut.glb",
+   "portrait": "portraits/peanut.png",
+   "about": ""
+  },
+  {
+   "id": "rhino",
+   "name": "Rhino",
+   "group": "Animals",
+   "model": "models/rhino.glb",
+   "portrait": "portraits/rhino.png",
+   "about": ""
+  }
+ ]
+}

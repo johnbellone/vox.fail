@@ -1,0 +1,1692 @@
+{
+ "characters": [
+  {
+   "id": "officer",
+   "name": "Officer",
+   "model": "models/officer.glb",
+   "vox": "vox/officer.vox",
+   "bytes": 2051592,
+   "note": "Capitol-style police officer: peaked cap, duty belt with radio, gold badge, POLICE on the back.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "escort",
+     "name": "Escort walk",
+     "fps": 8,
+     "frames": 6,
+     "duration": 0.75,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "halt",
+     "name": "Halt",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "HALT!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "HALT!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "radio",
+     "name": "Radio check",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 103,
+     "id": "arrest",
+     "name": "Arrest",
+     "fps": 5,
+     "frames": 4,
+     "duration": 0.8,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.4,
+       "text": "CUFFED",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "judge",
+   "name": "Judge",
+   "model": "models/judge.glb",
+   "vox": "vox/judge.vox",
+   "bytes": 2077376,
+   "note": "Black robe with pleats and wide sleeves, white collar, maroon tie, glasses, grey hair thinning on top.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "gavel",
+     "name": "Gavel strike",
+     "fps": 6,
+     "frames": 4,
+     "duration": 0.667,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "ORDER!",
+       "bubble": null
+      },
+      {
+       "frame": 3,
+       "time": 0.5,
+       "text": "ORDER!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "sentence",
+     "name": "Sentence",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "GUILTY!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "GUILTY!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "deliberate",
+     "name": "Deliberate",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "senator",
+   "name": "Senator",
+   "model": "models/senator.glb",
+   "vox": "vox/senator.vox",
+   "bytes": 2010532,
+   "note": "Generic legislator: charcoal suit, blue tie, flag pin, silver side-parted hair. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "speech",
+     "name": "Floor speech",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "handshake",
+     "name": "Handshake",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "no_comment",
+     "name": "No comment",
+     "fps": 6,
+     "frames": 6,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.167,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "NO COMMENT",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "reporter",
+   "name": "Reporter",
+   "model": "models/reporter.glb",
+   "vox": "vox/reporter.vox",
+   "bytes": 2037348,
+   "note": "TV reporter: teal blazer, press badge on a lanyard, black bob with bangs, carries a microphone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "report",
+     "name": "Live report",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "BREAKING",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "BREAKING",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "question",
+     "name": "Shout a question",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "SENATOR?",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "SENATOR?",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "notes",
+     "name": "Take notes",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "rally_sign",
+   "name": "Rally-goer (sign)",
+   "model": "models/rally_sign.glb",
+   "vox": "vox/rally_sign.vox",
+   "bytes": 2051216,
+   "note": "Flag-print T-shirt, jeans, white sneakers, navy USA cap with a blonde ponytail through the back; waves a sign.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "sign_wave",
+     "name": "Sign wave",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "USA!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "USA!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "sign_march",
+     "name": "Sign march",
+     "fps": 8,
+     "frames": 6,
+     "duration": 0.75,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "rally_hat",
+   "name": "Rally-goer (bucket hat)",
+   "model": "models/rally_hat.glb",
+   "vox": "vox/rally_hat.vox",
+   "bytes": 2041252,
+   "note": "Stars-and-stripes shirt, khaki shorts with tube socks, white beard, sunglasses, bucket hat.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "fist_pump",
+     "name": "Fist pump",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "WOO!",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.5,
+       "text": "WOO!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "selfie_crowd",
+     "name": "Crowd selfie",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "representative",
+   "name": "Representative",
+   "model": "models/representative.glb",
+   "vox": "vox/representative.vox",
+   "bytes": 2086796,
+   "note": "House member: burgundy blazer, gold member pin and earrings, full curly hair. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "floor_remarks",
+     "name": "Floor remarks",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "objection",
+     "name": "Objection",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "OBJECTION!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "OBJECTION!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "vote",
+     "name": "Cast vote",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.667,
+       "text": "AYE",
+       "bubble": null
+      },
+      {
+       "frame": 3,
+       "time": 1.0,
+       "text": "AYE",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "town_hall",
+     "name": "Town hall",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "staffer",
+   "name": "Staffer",
+   "model": "models/staffer.glb",
+   "vox": "vox/staffer.vox",
+   "bytes": 2121856,
+   "note": "Overworked Hill staffer: rolled sleeves, loose off-centre tie, red lanyard and ID badge, chinos, cowlick.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "folder_sprint",
+     "name": "Folder sprint",
+     "fps": 14,
+     "frames": 6,
+     "duration": 0.429,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "coffee_run",
+     "name": "Coffee run",
+     "fps": 9,
+     "frames": 6,
+     "duration": 0.667,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "whisper",
+     "name": "Whisper",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "PSST",
+       "bubble": "whisper"
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "PSST",
+       "bubble": "whisper"
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "phone_call",
+     "name": "Phone call",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "ON IT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.667,
+       "text": "ON IT",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "president",
+   "name": "President",
+   "model": "models/president.glb",
+   "vox": "vox/president.vox",
+   "bytes": 2210312,
+   "note": "Fictional president: royal-blue suit, gold tie, flag pin, short blonde hair, clean-shaven. Not based on any real president.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "address",
+     "name": "Address the nation",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "MY FELLOW",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "AMERICANS",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "sign_bill",
+     "name": "Sign the bill",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "salute",
+     "name": "Salute",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 103,
+     "id": "stair_wave",
+     "name": "Wave from the stairs",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "executive",
+   "name": "Business executive",
+   "model": "models/executive.glb",
+   "vox": "vox/executive.vox",
+   "bytes": 2203740,
+   "note": "Tech-style executive: black MAGA cap, black T-shirt under a black suit jacket, jeans, black sneakers, silver glasses, short goatee, watch. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "keynote",
+     "name": "Keynote",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "DISRUPT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.667,
+       "text": "SCALE IT",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "walk_talk",
+     "name": "Walk and talk",
+     "fps": 9,
+     "frames": 6,
+     "duration": 0.667,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "SHIP IT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.111,
+       "text": "SHIP IT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.222,
+       "text": "SHIP IT",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "check_watch",
+     "name": "Check watch",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 103,
+     "id": "deal",
+     "name": "Close the deal",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "DEAL",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "agent_buzz",
+   "name": "Agent (buzz cut)",
+   "model": "models/agent_buzz.glb",
+   "vox": "vox/agent_buzz.vox",
+   "bytes": 2018120,
+   "note": "Secret Service agent: black suit, white shirt, black tie, red lapel pin, sunglasses, earpiece with coil, buzz cut.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "flank_walk",
+     "name": "Flank walk",
+     "fps": 8,
+     "frames": 6,
+     "duration": 0.75,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "post",
+     "name": "Post stance",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "earpiece",
+     "name": "Earpiece",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "COPY THAT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "COPY THAT",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "clear_path",
+     "name": "Clear the path",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "MOVE BACK",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "MOVE BACK",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 104,
+     "id": "shield",
+     "name": "Shield the principal",
+     "fps": 5,
+     "frames": 4,
+     "duration": 0.8,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "STAY BACK",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.4,
+       "text": "STAY BACK",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "agent_shaved",
+   "name": "Agent (shaved head)",
+   "model": "models/agent_shaved.glb",
+   "vox": "vox/agent_shaved.vox",
+   "bytes": 2016904,
+   "note": "Secret Service agent: same suit, sunglasses and earpiece, shaved head.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "flank_walk",
+     "name": "Flank walk",
+     "fps": 8,
+     "frames": 6,
+     "duration": 0.75,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "post",
+     "name": "Post stance",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "earpiece",
+     "name": "Earpiece",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "COPY THAT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "COPY THAT",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "clear_path",
+     "name": "Clear the path",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "MOVE BACK",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "MOVE BACK",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 104,
+     "id": "shield",
+     "name": "Shield the principal",
+     "fps": 5,
+     "frames": 4,
+     "duration": 0.8,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "STAY BACK",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.4,
+       "text": "STAY BACK",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "agent_bun",
+   "name": "Agent (bun)",
+   "model": "models/agent_bun.glb",
+   "vox": "vox/agent_bun.vox",
+   "bytes": 2020116,
+   "note": "Secret Service agent: same suit, sunglasses and earpiece, hair in a tight bun.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "flank_walk",
+     "name": "Flank walk",
+     "fps": 8,
+     "frames": 6,
+     "duration": 0.75,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "post",
+     "name": "Post stance",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "earpiece",
+     "name": "Earpiece",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "COPY THAT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "COPY THAT",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "clear_path",
+     "name": "Clear the path",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "MOVE BACK",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "MOVE BACK",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 104,
+     "id": "shield",
+     "name": "Shield the principal",
+     "fps": 5,
+     "frames": 4,
+     "duration": 0.8,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "STAY BACK",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.4,
+       "text": "STAY BACK",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "vice_president",
+   "name": "Vice President",
+   "model": "models/vice_president.glb",
+   "vox": "vox/vice_president.vox",
+   "bytes": 2119012,
+   "note": "Fictional vice president: black suit, white collar, gold lapel pin, silver side-swept short hair. Not based on any real vice president.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "tie_break",
+     "name": "Tie-breaking vote",
+     "fps": 6,
+     "frames": 4,
+     "duration": 0.667,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "AYE",
+       "bubble": null
+      },
+      {
+       "frame": 3,
+       "time": 0.5,
+       "text": "AYE",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "oath",
+     "name": "Oath",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "rope_line",
+     "name": "Rope line",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": []
+    },
+    {
+     "index": 103,
+     "id": "photo_op",
+     "name": "Photo op",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "plainclothes",
+   "name": "Plain-clothes officer",
+   "model": "models/plainclothes.glb",
+   "vox": "vox/plainclothes.vox",
+   "bytes": 2084216,
+   "note": "Undercover detective: brown leather jacket over a grey T-shirt, jeans, badge on the belt, short dark hair and mustache.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "badge_flash",
+     "name": "Badge flash",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "POLICE!",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.5,
+       "text": "POLICE!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 101,
+     "id": "blend_in",
+     "name": "Blend in",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "tail",
+     "name": "Tail a suspect",
+     "fps": 6,
+     "frames": 6,
+     "duration": 1.0,
+     "dialogue": []
+    },
+    {
+     "index": 103,
+     "id": "call_in",
+     "name": "Call it in",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "ON THE MOVE",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.333,
+       "text": "ON THE MOVE",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "riot_a",
+   "name": "Riot officer A",
+   "model": "models/riot_a.glb",
+   "vox": "vox/riot_a.vox",
+   "bytes": 2185656,
+   "note": "Riot officer: black helmet with clear visor and neck guard, chest and back plates, shoulder pads, knee and shin guards, gloves, POLICE on the back.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "shield_line",
+     "name": "Shield line",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "shield_advance",
+     "name": "Shield advance",
+     "fps": 7,
+     "frames": 6,
+     "duration": 0.857,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "MOVE BACK",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.143,
+       "text": "MOVE BACK",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.286,
+       "text": "MOVE BACK",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "shield_bash",
+     "name": "Shield bash",
+     "fps": 8,
+     "frames": 4,
+     "duration": 0.5,
+     "dialogue": []
+    },
+    {
+     "index": 103,
+     "id": "hold_line",
+     "name": "Hold the line",
+     "fps": 6,
+     "frames": 4,
+     "duration": 0.667,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "HOLD!",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "riot_b",
+   "name": "Riot officer B",
+   "model": "models/riot_b.glb",
+   "vox": "vox/riot_b.vox",
+   "bytes": 2185656,
+   "note": "Riot officer, second face under the same gear.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "shield_line",
+     "name": "Shield line",
+     "fps": 2,
+     "frames": 4,
+     "duration": 2.0,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "shield_advance",
+     "name": "Shield advance",
+     "fps": 7,
+     "frames": 6,
+     "duration": 0.857,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "MOVE BACK",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.143,
+       "text": "MOVE BACK",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.286,
+       "text": "MOVE BACK",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "shield_bash",
+     "name": "Shield bash",
+     "fps": 8,
+     "frames": 4,
+     "duration": 0.5,
+     "dialogue": []
+    },
+    {
+     "index": 103,
+     "id": "hold_line",
+     "name": "Hold the line",
+     "fps": 6,
+     "frames": 4,
+     "duration": 0.667,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "HOLD!",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "senator_bob",
+   "name": "Senator (silver bob)",
+   "model": "models/senator_bob.glb",
+   "vox": "vox/senator_bob.vox",
+   "bytes": 2007652,
+   "note": "Slate skirt suit, silver brooch, silver chin-length bob. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "speech",
+     "name": "Floor speech",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "handshake",
+     "name": "Handshake",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "no_comment",
+     "name": "No comment",
+     "fps": 6,
+     "frames": 6,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.167,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "NO COMMENT",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "senator_tan",
+   "name": "Senator (tan suit)",
+   "model": "models/senator_tan.glb",
+   "vox": "vox/senator_tan.vox",
+   "bytes": 2008856,
+   "note": "Tan suit, brown tie, close-cropped black hair greying at the temples. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "speech",
+     "name": "Floor speech",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "handshake",
+     "name": "Handshake",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "no_comment",
+     "name": "No comment",
+     "fps": 6,
+     "frames": 6,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.167,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "NO COMMENT",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "senator_glasses",
+   "name": "Senator (glasses)",
+   "model": "models/senator_glasses.glb",
+   "vox": "vox/senator_glasses.vox",
+   "bytes": 2015856,
+   "note": "Charcoal suit, green tie, wire glasses, thinning white hair. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "speech",
+     "name": "Floor speech",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "handshake",
+     "name": "Handshake",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "no_comment",
+     "name": "No comment",
+     "fps": 6,
+     "frames": 6,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.167,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "NO COMMENT",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "senator_plum",
+   "name": "Senator (plum suit)",
+   "model": "models/senator_plum.glb",
+   "vox": "vox/senator_plum.vox",
+   "bytes": 2024376,
+   "note": "Plum pantsuit, gold pin, short natural hair with grey flecks. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "speech",
+     "name": "Floor speech",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "handshake",
+     "name": "Handshake",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": []
+    },
+    {
+     "index": 102,
+     "id": "no_comment",
+     "name": "No comment",
+     "fps": 6,
+     "frames": 6,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.167,
+       "text": "NO COMMENT",
+       "bubble": null
+      },
+      {
+       "frame": 2,
+       "time": 0.333,
+       "text": "NO COMMENT",
+       "bubble": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rep_open_collar",
+   "name": "Representative (open collar)",
+   "model": "models/rep_open_collar.glb",
+   "vox": "vox/rep_open_collar.vox",
+   "bytes": 2086780,
+   "note": "Navy blazer, open-collar blue shirt, no tie, brown quiff. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "floor_remarks",
+     "name": "Floor remarks",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "objection",
+     "name": "Objection",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "OBJECTION!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "OBJECTION!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "vote",
+     "name": "Cast vote",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.667,
+       "text": "AYE",
+       "bubble": null
+      },
+      {
+       "frame": 3,
+       "time": 1.0,
+       "text": "AYE",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "town_hall",
+     "name": "Town hall",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "rep_ginger",
+   "name": "Representative (ponytail)",
+   "model": "models/rep_ginger.glb",
+   "vox": "vox/rep_ginger.vox",
+   "bytes": 2086356,
+   "note": "Green blazer, white blouse, copper-red ponytail. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "floor_remarks",
+     "name": "Floor remarks",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "objection",
+     "name": "Objection",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "OBJECTION!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "OBJECTION!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "vote",
+     "name": "Cast vote",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.667,
+       "text": "AYE",
+       "bubble": null
+      },
+      {
+       "frame": 3,
+       "time": 1.0,
+       "text": "AYE",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "town_hall",
+     "name": "Town hall",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "rep_beard",
+   "name": "Representative (beard)",
+   "model": "models/rep_beard.glb",
+   "vox": "vox/rep_beard.vox",
+   "bytes": 2087864,
+   "note": "Grey suit, purple tie, short black hair and full trimmed beard. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "floor_remarks",
+     "name": "Floor remarks",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "objection",
+     "name": "Objection",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "OBJECTION!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "OBJECTION!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "vote",
+     "name": "Cast vote",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.667,
+       "text": "AYE",
+       "bubble": null
+      },
+      {
+       "frame": 3,
+       "time": 1.0,
+       "text": "AYE",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "town_hall",
+     "name": "Town hall",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  },
+  {
+   "id": "rep_cream",
+   "name": "Representative (cream blazer)",
+   "model": "models/rep_cream.glb",
+   "vox": "vox/rep_cream.vox",
+   "bytes": 2083464,
+   "note": "Cream skirt suit over a navy top, long straight black hair. Not based on anyone.",
+   "own_clips": [
+    {
+     "index": 100,
+     "id": "floor_remarks",
+     "name": "Floor remarks",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    },
+    {
+     "index": 101,
+     "id": "objection",
+     "name": "Objection",
+     "fps": 4,
+     "frames": 4,
+     "duration": 1.0,
+     "dialogue": [
+      {
+       "frame": 0,
+       "time": 0.0,
+       "text": "OBJECTION!",
+       "bubble": null
+      },
+      {
+       "frame": 1,
+       "time": 0.25,
+       "text": "OBJECTION!",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 102,
+     "id": "vote",
+     "name": "Cast vote",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": [
+      {
+       "frame": 2,
+       "time": 0.667,
+       "text": "AYE",
+       "bubble": null
+      },
+      {
+       "frame": 3,
+       "time": 1.0,
+       "text": "AYE",
+       "bubble": null
+      }
+     ]
+    },
+    {
+     "index": 103,
+     "id": "town_hall",
+     "name": "Town hall",
+     "fps": 3,
+     "frames": 4,
+     "duration": 1.333,
+     "dialogue": []
+    }
+   ]
+  }
+ ],
+ "note": "All characters share the lead rig. Clips 0-99 match the lead (character only, no props; 68-99 are combat); clips 100+ are each character's own, with props."
+}

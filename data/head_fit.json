@@ -1,0 +1,261 @@
+{
+ "agent_bun.glb": {
+  "top": 0.6,
+  "width": 0.75,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "agent_buzz.glb": {
+  "top": 0.55,
+  "width": 0.75,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "agent_shaved.glb": {
+  "top": 0.5,
+  "width": 0.75,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "cat.glb": {
+  "top": 0.5,
+  "width": 1.0,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.04
+ },
+ "dog.glb": {
+  "top": 0.55,
+  "width": 0.8,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.03
+ },
+ "donkey.glb": {
+  "top": 0.65,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.03
+ },
+ "executive.glb": {
+  "top": 0.7,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "judge.glb": {
+  "top": 0.55,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "officer.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "peanut.glb": {
+  "top": 0.7,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "plainclothes.glb": {
+  "top": 0.55,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "president.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "rally_hat.glb": {
+  "top": 0.45,
+  "width": 0.8,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "rally_sign.glb": {
+  "top": 0.625,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "rep_beard.glb": {
+  "top": 0.55,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "rep_cream.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "rep_ginger.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "rep_open_collar.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "reporter.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "representative.glb": {
+  "top": 0.6,
+  "width": 0.8,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "rhino.glb": {
+  "top": 0.55,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.02
+ },
+ "riot_a.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "riot_b.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "roasted_army.glb": {
+  "top": 0.65,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "roasted_cook.glb": {
+  "top": 0.75,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "roasted_garbage.glb": {
+  "top": 0.65,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "roasted_medic.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "roasted_miami.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "roasted_riot.glb": {
+  "top": 0.7,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "scene_all.glb": {
+  "top": 0.675,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "senator.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "senator_bob.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "senator_glasses.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "senator_plum.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "senator_tan.glb": {
+  "top": 0.55,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "staffer.glb": {
+  "top": 0.65,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ },
+ "vice_president.glb": {
+  "top": 0.6,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
+ }
+}

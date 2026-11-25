@@ -1,0 +1,12 @@
+[package]
+name = "warren-core"
+version = "0.1.0"
+edition = "2024"
+description = "Warren's shared rules: block chunks, edits and their checks, raycasts, levels and the world wire format. No Bevy, so the app, the server and (later) pocket worlds all run the same code."
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+postcard = { version = "1", features = ["use-std"] }
+ed25519-dalek = "2"
+base64 = "0.22"
