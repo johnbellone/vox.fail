@@ -36,30 +36,7 @@ use bevy::{
 pub const CORNER_AO: f32 = 0.75;
 pub const ROUGHNESS: f32 = 0.5;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Level {
-    Low,
-    Medium,
-    High,
-}
-
-impl Level {
-    pub fn name(self) -> &'static str {
-        match self {
-            Level::Low => "low",
-            Level::Medium => "medium",
-            Level::High => "high",
-        }
-    }
-    pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "low" => Level::Low,
-            "medium" | "med" => Level::Medium,
-            "high" => Level::High,
-            _ => return None,
-        })
-    }
-}
+pub use warren_world::{FillLight, KeyLight, Level, RimLight};
 
 #[derive(Resource)]
 pub struct Studio {
@@ -401,15 +378,6 @@ pub enum Cue {
     Sub,
     BigHit,
 }
-
-#[derive(Component)]
-pub struct KeyLight;
-
-#[derive(Component)]
-pub struct FillLight;
-
-#[derive(Component)]
-pub struct RimLight;
 
 /// The sweeping raid light, the singing spotlight, and the flash (camera flashes, hits).
 #[derive(Component)]

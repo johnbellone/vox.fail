@@ -1,0 +1,21 @@
+[package]
+name = "warren-world"
+version = "0.1.0"
+edition = "2024"
+description = "A Warren world on screen: blocks, sky and weather, portals, the link to a world server, walking and building. Shared by the desktop app and the player client (desktop and browser)."
+
+[dependencies]
+bevy = "0.19.1"
+warren-core = { path = "../core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["use-std"] }
+png = "0.18"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite = { version = "0.27", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["WebSocket", "BinaryType", "MessageEvent", "CloseEvent"] }

@@ -1,0 +1,47 @@
+name: Visual tests
+
+# Renders a fixed set of characters and sets with the app's snapshot mode and compares them with
+# testdata/visual/ref/ (tools/visual_test.py). Runs on Linux with Mesa's software Vulkan, so the
+# references must be made the same way: run this workflow with "update" ticked, download the
+# "visual-report" artifact and commit its pictures as the new references.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      update:
+        description: "Make new reference pictures instead of comparing"
+        type: boolean
+        default: false
+
+jobs:
+  visual:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            mesa-vulkan-drivers xvfb python3-pil
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release
+      - name: Render and compare
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: |
+          xvfb-run -s "-screen 0 1600x1000x24" python3 tools/visual_test.py ${{ inputs.update && '--update' || '' }}
+      - name: Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-report
+          path: |
+            testdata/visual/out/
+            testdata/visual/ref/

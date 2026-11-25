@@ -696,6 +696,32 @@ A Warren world is a shared block space that stays: what people build is kept.
    `http://<server>:7780/` says who's in.
 2. **Join:** `block_avatar --world ws://<server>:7780 --name Sam`.
 
+### Play Warren from a web page
+
+Players sign in on a web page, make their character there, and walk into the Void in the
+browser, or download the desktop client.
+
+1. **Run the directory** (accounts, characters, the pages):
+   `cargo run --release -p warren-directory -- --listen 0.0.0.0:7700`. It makes a signing key
+   the first time (`directory.key`) and writes its public half to `directory.key.pub`.
+2. **Run the Void so it checks sign-ins:**
+   `warren-server --listen 0.0.0.0:7780 --db void.db --directory-key directory.key.pub`
+   (add `--guests` to let people in without signing in, as guests).
+3. **Build the browser client once:** `tools/build_web.sh` (puts it in `web/pkg`; needs the
+   wasm32 target and wasm-bindgen-cli, see the script).
+4. Open `http://<server>:7700/`: **New account**, pick who you are (37 characters) and what
+   you wear (a hat, something on your face, something in your hand, seen on a turntable),
+   **Save character**, then **Enter the Void**. The browser needs WebGPU (current Chrome,
+   Edge, Safari and Firefox have it).
+
+**Desktop instead:** copy your launch code on the start page and run
+`warren-client --token <code>` (`--world ws://host:7780/ws` for another server). The code
+lasts a day. List downloads on the page with
+`--download "Windows=https://…/warren-client.zip"`.
+
+Worlds on the page come from `--world "The Void=:7780"` (repeatable; `:7780` is the page's own
+host). Behind HTTPS, add `--secure` and serve worlds as `wss://`.
+
 **Moving and building:** the camera looks down from above at an angle, like Diablo. **Left
 click** (or hold) walks to where you point, **WASD** walk too, the **wheel** zooms in and out,
 **Q**/**E** turn the view, **Space** jumps, **F** flies. **Right click** puts a block where you

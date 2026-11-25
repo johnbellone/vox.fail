@@ -1,0 +1,9 @@
+target/
+*.db
+*.db-*
+*.log
+directory.key
+directory.key.pub
+web/pkg/
+gags.txt
+testdata/visual/out/

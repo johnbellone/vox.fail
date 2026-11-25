@@ -3,32 +3,7 @@
 
 use super::*;
 
-/// Face parts every character carries as children of `Head`, toggled by scale.
-pub(crate) const FACE_PARTS: [&str; 23] = [
-    "eyes_open",
-    "eyes_shut",
-    "eyes_x",
-    "eyes_wide",
-    "eyes_squint",
-    "eyes_left",
-    "eyes_right",
-    "eyes_up",
-    "brows_normal",
-    "brows_angry",
-    "brows_raised",
-    "brows_worried",
-    "mouth_flat",
-    "mouth_grin",
-    "mouth_open",
-    "mouth_grit",
-    "mouth_pout",
-    "mouth_sad",
-    "mouth_o",
-    "mouth_smirk",
-    "mouth_tongue",
-    "mouth_frown",
-    "mouth_wavy",
-];
+pub(crate) use warren_world::pose::FACE_PARTS;
 /// Gestures on F1-F8, looked up by clip name; missing ones are skipped. F9-F12 play the
 /// character's own clips (the ones after the 100 shared clips).
 pub(crate) const GESTURES: [&str; 8] = [

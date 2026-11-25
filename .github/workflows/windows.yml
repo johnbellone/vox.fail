@@ -1,0 +1,46 @@
+name: Windows build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        run: cargo build --release
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $ver = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.1.0' }
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /DVERSION=$ver installer\block-avatar.nsi
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory portable | Out-Null
+          Copy-Item target\release\block_avatar.exe, README.md portable\
+          Copy-Item -Recurse assets portable\assets
+          Compress-Archive portable\* Block-Avatar-portable.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: block-avatar-windows
+          path: |
+            installer/Block-Avatar-Setup-*.exe
+            Block-Avatar-portable.zip
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            installer/Block-Avatar-Setup-*.exe
+            Block-Avatar-portable.zip

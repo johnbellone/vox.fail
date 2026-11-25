@@ -281,7 +281,9 @@ impl Directory {
             .route_service("/play", ServeFile::new(web.join("play.html")))
             .nest_service("/assets", ServeDir::new(assets))
             .nest_service("/data", ServeDir::new(data))
-            .fallback_service(ServeDir::new(web))
+            // the browser client is big: served pre-compressed when tools/build_web.sh made the
+            // .br / .gz files
+            .fallback_service(ServeDir::new(web).precompressed_br().precompressed_gzip())
             .layer(axum::middleware::from_fn(headers))
             .with_state(self.clone())
     }
