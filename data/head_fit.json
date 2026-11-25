@@ -257,5 +257,12 @@
   "front": 0.306,
   "eye_y": 0.25,
   "mouth_y": 0.07
+ },
+ "blue.glb": {
+  "top": 0.55,
+  "width": 0.9,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.03
  }
 }

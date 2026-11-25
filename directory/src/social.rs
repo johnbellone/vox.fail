@@ -322,6 +322,7 @@ impl Directory {
                         }
                     }
                     let Some(a) = made else { return failed("busy") };
+                    self.welcome(&tx, a);
                     a
                 }
             };

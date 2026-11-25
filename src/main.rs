@@ -328,6 +328,8 @@ fn find_models() -> Vec<(String, String)> {
         .map(|n| {
             let label = if n == "scene_all.glb" {
                 "Lead".to_string()
+            } else if n == "blue.glb" {
+                "Blue".to_string()
             } else {
                 let stem = n.trim_end_matches(".glb").replace('_', " ");
                 let mut c = stem.chars();
@@ -338,7 +340,8 @@ fn find_models() -> Vec<(String, String)> {
             (label, format!("models/{n}"))
         })
         .collect();
-    v.sort_by(|a, b| (a.0 != "Lead", &a.0).cmp(&(b.0 != "Lead", &b.0)));
+    // Blue, the main character, first: who a first run starts as
+    v.sort_by(|a, b| (a.0 != "Blue", &a.0).cmp(&(b.0 != "Blue", &b.0)));
     v
 }
 

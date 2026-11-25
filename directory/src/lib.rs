@@ -2,6 +2,10 @@
 //!
 //! - Accounts: signed in with Steam or Discord ([`social`]), or a name and a password
 //!   (Argon2id). A web session is a random cookie; the database keeps only its SHA-256.
+//! - What players hold and do ([`game`]): authority (the currency every world shares, earned by
+//!   playing and spent on feats), world currencies, the ledger, the inventory, plots, portals
+//!   and raids; and the reports world servers send.
+//! - Friends, groups and raid parties ([`people`]).
 //! - Characters: one per account for now: which model, and what they wear (a hat, something
 //!   on the face, something in the hand), from `data/characters.json` and
 //!   `data/wardrobe.json`.
@@ -42,6 +46,8 @@ use sha2::{Digest, Sha256};
 use tower_http::services::{ServeDir, ServeFile};
 use vox_core::auth::{self, Character, Claims, SigningKey};
 
+pub mod game;
+pub mod people;
 pub mod social;
 pub use social::{Discord, Sites, Social, name_from};
 
@@ -55,6 +61,8 @@ const WINDOW: Duration = Duration::from_secs(300);
 /// A world people can go to.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorldInfo {
+    /// what its server calls it (`vox-server --name void`): how its reports are matched up
+    pub id: String,
     pub name: String,
     /// its WebSocket address (`ws://host:7780/ws`; `:7780` = this host, that port)
     pub url: String,
@@ -82,6 +90,32 @@ pub struct Config {
     pub behind_proxy: bool,
     /// signing in with Steam and Discord
     pub social: Social,
+    /// what world servers show to report to the directory and fetch their rules (plots,
+    /// portals); None: no reports
+    pub world_secret: Option<String>,
+    /// least time between one world's reports, s (60 in production; 0 in tests)
+    pub report_every: u64,
+}
+
+impl WorldInfo {
+    /// A world from `id=Name=address` or `Name=address` (its id then its name in lower case,
+    /// without "the", spaces as dashes: "The Void" is `void`).
+    pub fn parse(spec: &str) -> Option<WorldInfo> {
+        let parts: Vec<&str> = spec.splitn(3, '=').map(str::trim).collect();
+        let (id, name, url) = match parts[..] {
+            [id, name, url] => (id.to_string(), name, url),
+            [name, url] => (world_id(name), name, url),
+            _ => return None,
+        };
+        (!id.is_empty() && !name.is_empty() && !url.is_empty()).then(|| WorldInfo { id, name: name.into(), url: url.into(), about: String::new() })
+    }
+}
+
+/// "The Void" → `void`, "Ember Isles" → `ember-isles`.
+pub fn world_id(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    let lower = lower.strip_prefix("the ").unwrap_or(&lower);
+    lower.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join("-")
 }
 
 /// Who you can be and what you can wear.
@@ -143,6 +177,8 @@ struct Inner {
     behind_proxy: bool,
     social: Social,
     http: reqwest::Client,
+    world_secret: Option<String>,
+    report_every: u64,
     tries: Mutex<HashMap<String, (u32, Instant)>>,
     /// a password hash checked when a name doesn't exist, so failing takes as long either way
     dummy: String,
@@ -257,7 +293,52 @@ impl Directory {
              CREATE TABLE IF NOT EXISTS identities (
                  site TEXT NOT NULL, subject TEXT NOT NULL, account INTEGER NOT NULL,
                  created INTEGER NOT NULL, PRIMARY KEY (site, subject));
-             CREATE INDEX IF NOT EXISTS identities_account ON identities (account);",
+             CREATE INDEX IF NOT EXISTS identities_account ON identities (account);
+             CREATE TABLE IF NOT EXISTS currencies (
+                 code TEXT PRIMARY KEY, name TEXT NOT NULL, world TEXT UNIQUE, issuer INTEGER,
+                 supply INTEGER NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS balances (
+                 account INTEGER NOT NULL, currency TEXT NOT NULL, amount INTEGER NOT NULL,
+                 PRIMARY KEY (account, currency));
+             CREATE TABLE IF NOT EXISTS ledger (
+                 id INTEGER PRIMARY KEY, at INTEGER NOT NULL, currency TEXT NOT NULL, src INTEGER,
+                 dst INTEGER, amount INTEGER NOT NULL, memo TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS ledger_src ON ledger (src);
+             CREATE INDEX IF NOT EXISTS ledger_dst ON ledger (dst);
+             CREATE TABLE IF NOT EXISTS items (
+                 id INTEGER PRIMARY KEY, account INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
+                 world TEXT, ref INTEGER, detail TEXT NOT NULL, acquired INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS items_account ON items (account);
+             CREATE TABLE IF NOT EXISTS world_owners (world TEXT PRIMARY KEY, account INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS world_state (
+                 world TEXT PRIMARY KEY, spawn TEXT NOT NULL, level TEXT NOT NULL, reported INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS whereabouts (
+                 account INTEGER NOT NULL, world TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,
+                 at INTEGER NOT NULL, PRIMARY KEY (account, world));
+             CREATE TABLE IF NOT EXISTS activity (
+                 account INTEGER PRIMARY KEY, minutes INTEGER NOT NULL, edits INTEGER NOT NULL,
+                 day INTEGER NOT NULL, earned INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS plots (
+                 id INTEGER PRIMARY KEY, world TEXT NOT NULL, owner INTEGER NOT NULL, x0 INTEGER NOT NULL,
+                 z0 INTEGER NOT NULL, x1 INTEGER NOT NULL, z1 INTEGER NOT NULL, grp INTEGER, created INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS plots_world ON plots (world);
+             CREATE TABLE IF NOT EXISTS portals (
+                 id INTEGER PRIMARY KEY, world TEXT NOT NULL, owner INTEGER NOT NULL, plot INTEGER NOT NULL,
+                 x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, axis TEXT NOT NULL, dest TEXT NOT NULL,
+                 created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS friends (
+                 a INTEGER NOT NULL, b INTEGER NOT NULL, since INTEGER NOT NULL, PRIMARY KEY (a, b));
+             CREATE TABLE IF NOT EXISTS friend_requests (
+                 src INTEGER NOT NULL, dst INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (src, dst));
+             CREATE TABLE IF NOT EXISTS crews (
+                 id INTEGER PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, leader INTEGER NOT NULL,
+                 target TEXT, started INTEGER, ends INTEGER, together INTEGER NOT NULL DEFAULT 0,
+                 done INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS crew_members (
+                 crew INTEGER NOT NULL, account INTEGER NOT NULL, joined INTEGER NOT NULL, PRIMARY KEY (crew, account));
+             CREATE TABLE IF NOT EXISTS crew_invites (
+                 crew INTEGER NOT NULL, account INTEGER NOT NULL, by INTEGER NOT NULL, at INTEGER NOT NULL,
+                 PRIMARY KEY (crew, account));",
         )
         .map_err(|e| e.to_string())?;
         let catalogue = Catalogue::load(&cfg.data);
@@ -275,6 +356,8 @@ impl Directory {
                 behind_proxy: cfg.behind_proxy,
                 social: cfg.social,
                 http: social::http(),
+                world_secret: cfg.world_secret.filter(|s| !s.trim().is_empty()),
+                report_every: cfg.report_every,
                 tries: Mutex::new(HashMap::new()),
                 dummy: Argon2::default()
                     .hash_password(random_hex(16).as_bytes(), &salt())
@@ -283,6 +366,34 @@ impl Directory {
             }),
             Arc::new((cfg.web, cfg.assets, cfg.data)),
         ))
+    }
+
+    /// Make `name` the owner of world `world` (they can then issue its currency).
+    pub fn own_world(&self, world: &str, name: &str) -> Result<String, String> {
+        let w = self.0.worlds.iter().find(|w| w.id == world).ok_or_else(|| format!("there's no world {world} (worlds: {})", self.world_ids()))?;
+        let db = self.0.db.lock().unwrap();
+        let (id, name) = people::named(&db, name).map_err(|e| e.1)?;
+        db.execute(
+            "INSERT INTO world_owners (world, account) VALUES (?1, ?2) ON CONFLICT(world) DO UPDATE SET account = ?2",
+            params![world, id as i64],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(format!("{name} owns {}", w.name))
+    }
+
+    /// Give `name` some authority (from the operators).
+    pub fn grant(&self, name: &str, amount: i64, memo: &str) -> Result<String, String> {
+        if amount <= 0 {
+            return Err("grant at least 1".into());
+        }
+        let db = self.0.db.lock().unwrap();
+        let (id, name) = people::named(&db, name).map_err(|e| e.1)?;
+        game::mint(&db, id, game::AUTH, amount, memo).map_err(|e| e.to_string())?;
+        Ok(format!("{name} has {} authority", game::balance(&db, id, game::AUTH)))
+    }
+
+    fn world_ids(&self) -> String {
+        self.0.worlds.iter().map(|w| w.id.as_str()).collect::<Vec<_>>().join(", ")
     }
 
     /// The public half of the signing key, as hex: give it to world servers.
@@ -302,6 +413,26 @@ impl Directory {
             .route("/api/token", post(token))
             .route("/api/worlds", get(worlds))
             .route("/api/key", get(key))
+            .route("/api/wallet", get(game::wallet))
+            .route("/api/send", post(game::send))
+            .route("/api/inventory", get(game::inventory))
+            .route("/api/feats", get(game::feats))
+            .route("/api/feats/plot", post(game::claim_plot))
+            .route("/api/feats/portal", post(game::open_portal))
+            .route("/api/feats/currency", post(game::issue_currency))
+            .route("/api/feats/raid", post(game::start_raid))
+            .route("/api/plots/share", post(game::share_plot))
+            .route("/api/plots/release", post(game::release_plot))
+            .route("/api/people", get(people::people))
+            .route("/api/friends", post(people::befriend))
+            .route("/api/friends/answer", post(people::answer_friend))
+            .route("/api/friends/remove", post(people::unfriend))
+            .route("/api/crews", post(people::new_crew))
+            .route("/api/crews/invite", post(people::invite))
+            .route("/api/crews/answer", post(people::answer_invite))
+            .route("/api/crews/leave", post(people::leave))
+            .route("/api/world/report", post(game::report))
+            .route("/api/world/{id}/rules", get(game::rules))
             .route("/auth/steam", get(social::steam_start))
             .route("/auth/steam/return", get(social::steam_return))
             .route("/auth/discord", get(social::discord_start))
@@ -309,6 +440,8 @@ impl Directory {
             .route_service("/", ServeFile::new(web.join("index.html")))
             .route_service("/create", ServeFile::new(web.join("create.html")))
             .route_service("/play", ServeFile::new(web.join("play.html")))
+            .route_service("/inventory", ServeFile::new(web.join("inventory.html")))
+            .route_service("/friends", ServeFile::new(web.join("friends.html")))
             .nest_service("/assets", ServeDir::new(assets))
             .nest_service("/data", ServeDir::new(data))
             // the browser client is big: served pre-compressed when tools/build_web.sh made the
@@ -452,7 +585,11 @@ async fn signup(
     let id = {
         let db = d.0.db.lock().unwrap();
         match db.execute("INSERT INTO accounts (name, pass, created) VALUES (?1, ?2, ?3)", params![name, hash, now() as i64]) {
-            Ok(_) => db.last_insert_rowid() as u64,
+            Ok(_) => {
+                let id = db.last_insert_rowid() as u64;
+                d.welcome(&db, id);
+                id
+            }
             Err(_) => return Err(ApiError(StatusCode::CONFLICT, "that name is taken".into())),
         }
     };

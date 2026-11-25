@@ -10,6 +10,12 @@
 //!
 //! The rules (bounds, palette, reach, rate) are vox-core's, so the app predicts edits
 //! with the same checks the server makes.
+//!
+//! With a directory (`directory_url` and `world_secret`), the world reports each minute who
+//! is there (signed-in players: where they stand, how many blocks they placed), which is how
+//! players earn authority and raids are won, and fetches its rules every half minute: the
+//! plots players claimed (only their builders may change blocks inside one) and the portals
+//! they opened (added to the settings new arrivals get).
 
 use std::{
     collections::{HashMap, HashSet},
@@ -72,6 +78,14 @@ pub struct Config {
     pub directory: Option<vox_core::auth::VerifyingKey>,
     /// with a directory: also let people in without signing in, as guests
     pub guests: bool,
+    /// the level it was made from (`void`), which portals to it show as their echo
+    pub level: String,
+    /// the directory to report to and take plots and portals from (`http://127.0.0.1:7700`),
+    /// with the secret it shares with its worlds
+    pub directory_url: Option<String>,
+    pub world_secret: Option<String>,
+    pub report_every: Duration,
+    pub rules_every: Duration,
 }
 
 impl Config {
@@ -88,6 +102,11 @@ impl Config {
             flush_every: Duration::from_secs(3),
             directory: None,
             guests: false,
+            level: String::new(),
+            directory_url: None,
+            world_secret: None,
+            report_every: Duration::from_secs(60),
+            rules_every: Duration::from_secs(30),
         }
     }
 }
@@ -113,7 +132,38 @@ enum Event {
     Leave { conn: u64 },
     Tick,
     Status(oneshot::Sender<Status>),
+    /// who's here for the directory (and start counting edits again)
+    Report(oneshot::Sender<serde_json::Value>),
+    /// the directory's plots and portals
+    Rules(Vec<Plot>, Vec<serde_json::Value>),
     Shutdown,
+}
+
+/// A claimed area (all heights): only its builders' accounts may change blocks inside.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Plot {
+    pub x0: i32,
+    pub z0: i32,
+    pub x1: i32,
+    pub z1: i32,
+    pub builders: Vec<u64>,
+}
+
+impl Plot {
+    fn from_json(v: &serde_json::Value) -> Option<Plot> {
+        let i = |k: &str| v.get(k)?.as_i64().map(|n| n as i32);
+        Some(Plot {
+            x0: i("x0")?,
+            z0: i("z0")?,
+            x1: i("x1")?,
+            z1: i("z1")?,
+            builders: v.get("builders")?.as_array()?.iter().filter_map(|b| b.as_u64()).collect(),
+        })
+    }
+
+    fn holds(&self, cell: [i32; 3]) -> bool {
+        (self.x0..self.x1).contains(&cell[0]) && (self.z0..self.z1).contains(&cell[2])
+    }
 }
 
 /// A running world. Clone it freely; [`Server::shutdown`] saves and stops it.
@@ -130,6 +180,10 @@ impl Server {
     /// Open (or create) the world and start its thread. Call from inside a tokio runtime.
     pub fn start(cfg: Config) -> Result<Server, String> {
         let gate = Arc::new((cfg.directory, cfg.guests));
+        let link = match (&cfg.directory_url, &cfg.world_secret) {
+            (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone(), cfg.report_every, cfg.rules_every)),
+            _ => None,
+        };
         let state = WorldState::open(cfg)?;
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
@@ -145,6 +199,9 @@ impl Server {
                 }
             }
         });
+        if let Some(link) = link {
+            tokio::spawn(directory_link(tx.clone(), link));
+        }
         Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)) })
     }
 
@@ -272,6 +329,57 @@ async fn run_connection(server: Server, socket: WebSocket) {
     let _ = writer.await;
 }
 
+/// Talking to the directory: rules every `rules_every`, a report every `report_every`. A
+/// directory that's down is tried again next time; the world goes on meanwhile.
+async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world, report_every, rules_every): (String, String, String, Duration, Duration)) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(10)).build() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("no link to the directory: {e}"),
+    };
+    let mut next_report = Instant::now() + report_every;
+    let mut next_rules = Instant::now();
+    let mut said = false;
+    loop {
+        if Instant::now() >= next_rules {
+            next_rules = Instant::now() + rules_every;
+            let got = http.get(format!("{url}/api/world/{world}/rules")).bearer_auth(&secret).send().await;
+            match got {
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(v) = r.json::<serde_json::Value>().await {
+                        let plots = v["plots"].as_array().map(|a| a.iter().filter_map(Plot::from_json).collect()).unwrap_or_default();
+                        let portals = v["portals"].as_array().cloned().unwrap_or_default();
+                        if tx.send(Event::Rules(plots, portals)).await.is_err() {
+                            return;
+                        }
+                        said = false;
+                    }
+                }
+                Ok(r) if !said => {
+                    eprintln!("the directory said {} to this world ({world}): check --directory-url, --name and VOX_WORLD_SECRET", r.status());
+                    said = true;
+                }
+                Err(e) if !said => {
+                    eprintln!("can't reach the directory at {url}: {e}");
+                    said = true;
+                }
+                _ => {}
+            }
+        }
+        if Instant::now() >= next_report {
+            next_report = Instant::now() + report_every;
+            let (rtx, rrx) = oneshot::channel();
+            if tx.send(Event::Report(rtx)).await.is_err() {
+                return;
+            }
+            if let Ok(body) = rrx.await {
+                let _ = http.post(format!("{url}/api/world/report")).bearer_auth(&secret).json(&body).send().await;
+            }
+        }
+        let wake = next_rules.min(next_report);
+        tokio::time::sleep(wake.saturating_duration_since(Instant::now()).max(Duration::from_millis(20))).await;
+    }
+}
+
 struct Player {
     id: u32,
     name: String,
@@ -280,8 +388,9 @@ struct Player {
     at: Option<[f32; 3]>,
     bucket: Bucket,
     /// their directory account, when signed in
-    #[allow(dead_code)]
     account: Option<u64>,
+    /// blocks they placed since the last report
+    placed: u32,
 }
 
 struct WorldState {
@@ -302,6 +411,9 @@ struct WorldState {
     weather: Weather,
     weather_at: Instant,
     keyframe_at: Instant,
+    /// claimed plots and player-opened portals, from the directory
+    plots: Vec<Plot>,
+    portals: Vec<serde_json::Value>,
 }
 
 /// Steps and keyframes of the weather, s.
@@ -403,6 +515,8 @@ impl WorldState {
             weather,
             weather_at: Instant::now(),
             keyframe_at: Instant::now(),
+            plots: Vec::new(),
+            portals: Vec::new(),
         };
         if fresh {
             s.flush()?;
@@ -438,6 +552,24 @@ impl WorldState {
                         blocks: self.world.count(),
                         seq: self.seq,
                     });
+                }
+                Event::Report(reply) => {
+                    let players: Vec<serde_json::Value> = self
+                        .players
+                        .values_mut()
+                        .filter_map(|p| {
+                            let a = p.account?;
+                            let placed = std::mem::take(&mut p.placed);
+                            Some(serde_json::json!({ "account": a, "at": p.at, "edits": placed }))
+                        })
+                        .collect();
+                    let _ = reply.send(serde_json::json!({
+                        "world": self.cfg.name, "level": self.cfg.level, "spawn": self.spawn, "players": players,
+                    }));
+                }
+                Event::Rules(plots, portals) => {
+                    self.plots = plots;
+                    self.portals = portals;
                 }
                 Event::Shutdown => break,
             }
@@ -534,7 +666,7 @@ impl WorldState {
                 block_size: self.cfg.block_size,
                 bounds: self.cfg.bounds,
                 spawn: self.spawn,
-                settings: self.settings.clone(),
+                settings: self.settings_now(),
                 name: name.clone(),
             },
         );
@@ -553,7 +685,21 @@ impl WorldState {
         self.broadcast(&ToClient::Joined { player: id, name: name.clone(), avatar: avatar.clone() }, None);
         eprintln!("{name} joined ({} here)", self.players.len() + 1);
         let bucket = Bucket::new(self.cfg.edit_rate, self.cfg.edit_rate);
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: None, bucket, account });
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: None, bucket, account, placed: 0 });
+    }
+
+    /// The settings a new arrival gets: the world's own, with the portals players opened.
+    fn settings_now(&self) -> String {
+        if self.portals.is_empty() {
+            return self.settings.clone();
+        }
+        let mut s: serde_json::Value = serde_json::from_str(&self.settings).unwrap_or_else(|_| serde_json::json!({}));
+        let Some(obj) = s.as_object_mut() else { return self.settings.clone() };
+        let list = obj.entry("portals").or_insert_with(|| serde_json::json!([]));
+        if let Some(a) = list.as_array_mut() {
+            a.extend(self.portals.iter().cloned());
+        }
+        s.to_string()
     }
 
     fn leave(&mut self, conn: u64) {
@@ -597,9 +743,17 @@ impl WorldState {
                 let checked = if !p.bucket.take(now) {
                     Err(Why::TooFast)
                 } else {
-                    // the world's own checks first (bounds, palette), then reach
+                    // the world's own checks first (bounds, palette), then reach, then plots
+                    let account = p.account;
+                    let claimed = self.plots.iter().any(|pl| pl.holds(cell) && !account.is_some_and(|a| pl.builders.contains(&a)));
                     self.world.check(cell, block).and_then(|_| {
-                        if within_reach(p.at, cell) { self.world.edit(cell, block) } else { Err(Why::TooFar) }
+                        if !within_reach(p.at, cell) {
+                            Err(Why::TooFar)
+                        } else if claimed {
+                            Err(Why::Claimed)
+                        } else {
+                            self.world.edit(cell, block)
+                        }
                     })
                 };
                 match checked {
@@ -609,6 +763,9 @@ impl WorldState {
                         }
                     }
                     Ok(old) => {
+                        if block != 0 {
+                            p.placed = p.placed.saturating_add(1);
+                        }
                         self.seq += 1;
                         let a = Applied { seq: self.seq, player: p.id, id, cell, block };
                         self.log.push((self.seq, now_unix(), p.name.clone(), cell, old, block));

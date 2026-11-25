@@ -18,11 +18,13 @@ async fn serve() -> (Directory, String) {
         web: root().join("web"),
         assets: root().join("assets"),
         data: root().join("data"),
-        worlds: vec![WorldInfo { name: "The Void".into(), url: ":7780".into(), about: String::new() }],
+        worlds: vec![WorldInfo { id: "void".into(), name: "The Void".into(), url: ":7780".into(), about: String::new() }],
         secure_cookies: false,
         downloads: vec![],
         behind_proxy: false,
         social: Default::default(),
+        world_secret: None,
+        report_every: 0,
     };
     let d = Directory::open(cfg).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

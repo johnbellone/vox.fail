@@ -99,6 +99,8 @@ async fn serve() -> (Directory, String, Sites) {
             discord: Some(Discord { client_id: "app".into(), client_secret: "shh".into() }),
             sites: sites.clone(),
         },
+        world_secret: None,
+        report_every: 0,
     };
     let d = Directory::open(cfg).unwrap();
     let app = d.router().into_make_service_with_connect_info::<std::net::SocketAddr>();

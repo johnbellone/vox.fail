@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vox</title>
-<meta name="description" content="A shared world built from blocks. Sign in, make your character and walk into the Void.">
+<meta name="description" content="A shared world built from blocks. Sign in, make your character, walk into the Void, earn authority and raid other worlds with your friends.">
 <link rel="icon" href="/assets/icon.png">
 <link rel="stylesheet" href="/vox.css">
 <script type="module" src="/index.js"></script>
@@ -17,6 +17,7 @@
       <h1 class="wordmark">VOX</h1>
       <p class="lede">A world built from blocks, shared with everyone in it. What you build stays.</p>
       <p class="quiet">Everyone arrives in the Void: a bright floor that goes on for ever, a circle of pale pillars, and doorways that open onto other places as you walk up to them.</p>
+      <p class="quiet">Time spent building earns authority, the standing every world recognises. Spend it on feats: claim a plot that only you and your group can build in, open a portal to another world, give a world you own its own coin, or lead your friends on a raid.</p>
     </section>
 
     <section class="slab" id="door" aria-live="polite">
@@ -60,6 +61,10 @@
         <div class="stack">
           <a class="button" id="enter" href="/play">Enter the Void</a>
           <a class="button plain" id="change" href="/create">Change your character</a>
+        </div>
+        <div class="row" style="justify-content:center;gap:4px 22px">
+          <a class="button plain" href="/inventory"><span id="auth-n"></span>Inventory</a>
+          <a class="button plain" href="/friends">Friends and raids</a>
         </div>
         <div class="download">
           <h3>Play on your desktop</h3>

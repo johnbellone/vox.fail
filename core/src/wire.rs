@@ -13,7 +13,7 @@ use crate::world::{Bounds, Cell, ChunkKey, Why};
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever these messages change in a way old players can't read.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ToServer {

@@ -1,12 +1,12 @@
 {
  "characters": [
   {
-   "id": "scene_all",
-   "name": "Lead",
-   "group": "Cast",
-   "model": "models/scene_all.glb",
-   "portrait": "portraits/scene_all.png",
-   "about": ""
+   "id": "blue",
+   "name": "Blue",
+   "group": "Main",
+   "model": "models/blue.glb",
+   "portrait": "portraits/blue.png",
+   "about": "Vox's main character: an American pit bull terrier with a blue nose, a blue-grey coat, white blaze, chest and paws, rose ears and an orange collar."
   },
   {
    "id": "agent_bun",
@@ -47,6 +47,14 @@
    "model": "models/judge.glb",
    "portrait": "portraits/judge.png",
    "about": "Black robe with pleats and wide sleeves, white collar, maroon tie, glasses, grey hair thinning on top."
+  },
+  {
+   "id": "scene_all",
+   "name": "Lead",
+   "group": "Cast",
+   "model": "models/scene_all.glb",
+   "portrait": "portraits/scene_all.png",
+   "about": ""
   },
   {
    "id": "officer",

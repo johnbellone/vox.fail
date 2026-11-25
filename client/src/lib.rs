@@ -105,7 +105,7 @@ pub fn app(start: Start, assets: String) -> App {
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
     .insert_resource(world::WorldClient::new(Some(start.url.clone()), start.name.clone()).with_token(start.token.clone()))
     .insert_resource(WorldRender { level, shadows: true, outdoors: false, env_maps: !cfg!(target_arch = "wasm32") })
-    .insert_resource(LocalAvatar { model: start.model.clone(), fallback: "models/reporter.glb".into(), ..default() })
+    .insert_resource(LocalAvatar { model: start.model.clone(), fallback: "models/blue.glb".into(), ..default() })
     .insert_resource(start)
     .init_resource::<Me>()
     .init_resource::<outdoors::Outdoors>()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the animal avatars (peanut, dog, cat, rhino, donkey) on the shared block rig.
+"""Build the animal avatars (Blue the pit bull, peanut, dog, cat, rhino, donkey) on the shared block rig.
 
 Starts from the lead's prop-free rig (assets/models/variants/character_rigged.glb) so every character
 keeps the same node tree, the 100 body clips, the 24 face clips and the swappable face parts. Each
@@ -288,6 +288,46 @@ def dog():
                 tail_sway=dict(axis="y", amp=28, period=0.36), note="Golden-furred dog: cream muzzle and paws, floppy brown ears, red bandana with a gold tag.")
 
 
+def blue():
+    """Blue: an American pit bull terrier with a blue nose, a blue-grey coat and white markings. Vox's
+    main character."""
+    coat, shade, white, nose, collar, ring = (92, 104, 124), (70, 80, 98), (240, 240, 236), (52, 58, 70), (214, 112, 38), (200, 204, 210)
+
+    def torso(t):
+        t.paint(lambda x, y, z: z == 3 and -3 <= x <= 2 and y <= 9, white)            # white chest
+        t.paint(lambda x, y, z: z == 3 and -1 <= x <= 0 and y <= 10, white)
+        t.paint(lambda x, y, z: z == -3 and abs(x + 0.5) <= 2 and y >= 4, shade)      # darker along the back
+        t.box(-5, 5, 9, 11, -3, 4, collar)                                            # orange collar
+        t.box(-1, 1, 7, 9, 4, 5, ring)                                                # its tag
+
+    def arm(side, ua, la):
+        ua.paint(lambda x, y, z: y == -1, shade)
+        la.paint(lambda x, y, z: y <= -4, white)                                      # white paws
+
+    def leg(side, ul, ll):
+        if side == "L":
+            ll.paint(lambda x, y, z: y <= -5, white)                                  # one white back paw
+
+    p = standard_body(coat, torso, arm, leg, white)
+    h = head_base(coat)
+    h.box(-8, -7, 0, 7, -4, 4, coat).box(7, 8, 0, 7, -4, 4, coat)                    # broad cheeks
+    h.box(-4, 4, -1, 3, 6, 9, coat).bevel(-4, 4, -1, 3, 6, 9, "top")                  # wide, short muzzle
+    h.paint(lambda x, y, z: z >= 6 and y <= 0, white)                                  # white jaw
+    h.box(-2, 2, 2, 4, 8, 10, nose).box(-1, 1, 3, 4, 9, 10, (88, 96, 112))          # the blue nose, a highlight on top
+    h.paint(lambda x, y, z: z == 5 and -1 <= x <= 0 and 3 <= y <= 10, white)          # blaze up the forehead
+    h.paint(lambda x, y, z: z >= 6 and -1 <= x <= 0 and y >= 2 and (x, y, z) in h.v and h.v[(x, y, z)] == coat, white)
+    h.paint(lambda x, y, z: z >= 6 and 1 <= y and abs(x + 0.5) >= 1.5, (124, 134, 152))  # a paler muzzle
+    for x0, x1, tip in ((-9, -6, -9), (6, 9, 8)):                                        # rose ears: small, high, folded out and back
+        h.box(x0, x1, 11, 12, -3, 0, shade).box(x0, x1, 10, 11, -3, -1, shade)
+        h.box(tip, tip + 1, 9, 10, -3, -1, shade)
+    p["Head"] = h
+    tail = Vox().box(-1, 1, 0, 2, -2, 0, coat).box(-1, 1, 1, 3, -3, -2, coat).box(0, 1, 2, 4, -4, -3, coat).box(0, 1, 3, 5, -5, -4, shade)
+    p["Tail"] = tail
+    return dict(name="blue", label="Blue", parts=p, mouth=(0, -0.04, 0.15), tail_at=(0.0, 0.12, -0.15),
+                tail_sway=dict(axis="y", amp=32, period=0.34),
+                note="American pit bull terrier with a blue nose: blue-grey coat, white blaze, chest and paws, rose ears, orange collar. Vox's main character.")
+
+
 def cat():
     fur, stripe, white, pink = (150, 150, 160), (92, 92, 104), (244, 242, 236), (238, 150, 160)
 
@@ -458,7 +498,7 @@ def env(t, a, b, ramp=0.15):
 def clips_for(name):
     """Each clip: (name, duration, pose(t) -> {joint: (x,y,z) degrees, '_hip': (x,y,z) metres offset, 'Tail': deg}, face(t))"""
     C = []
-    if name == "dog":
+    if name in ("dog", "blue"):
         C.append(("Tail wag", 1.2, lambda t: {"Hips": (0, 0, osc(t, 0.4, 4)), "Head": (0, 0, 10 + osc(t, 0.4, -4)), "Tail": osc(t, 0.2, 45),
                                               "_hip": (0, abs(osc(t, 0.4, 0.015)), 0)},
                   lambda t: face("eyes_open", "brows_raised", "mouth_tongue")))
@@ -810,9 +850,9 @@ def main():
     j0, bin0 = load_glb(TEMPLATE)
     iv = j0["bufferViews"][j0["images"][0]["bufferView"]]
     pal_img = Image.open(io.BytesIO(bin0[iv.get("byteOffset", 0):iv.get("byteOffset", 0) + iv["byteLength"]]))
-    want = sys.argv[1:] or ["dog", "cat", "rhino", "donkey"]
+    want = sys.argv[1:] or ["blue", "dog", "cat", "rhino", "donkey"]
     report = []
-    for fn in (dog, cat, rhino, donkey):   # the peanut is built by build_roasted.py
+    for fn in (blue, dog, cat, rhino, donkey):   # the peanut is built by build_roasted.py
         spec = fn()
         if spec["name"] not in want:
             continue

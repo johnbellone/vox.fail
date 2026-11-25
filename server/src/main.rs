@@ -1,6 +1,10 @@
 //! Run a world: `vox-server [--listen 127.0.0.1:7780] [--db world.db] [--name void]
 //! [--seed data/levels/void.json] [--blocks data/blocks.json] [--max-players 100]
-//! [--directory-key <hex or file> [--guests]]`.
+//! [--directory-key <hex or file> [--guests]] [--directory-url http://127.0.0.1:7700]`.
+//!
+//! With `--directory-url` and `VOX_WORLD_SECRET` (the directory's too), the world reports who
+//! is in it each minute (so players earn authority, and raids are won) and takes the plots and
+//! portals players made at the directory. `--name` must be the world's id there.
 //!
 //! With `--directory-key`, players must sign in at the directory (vox-directory) and bring
 //! its token; they go by the name in it. `--guests` lets people in without one too.
@@ -27,6 +31,12 @@ async fn main() {
     // a new world starts as the void, the first world everyone enters
     let seed = arg("--seed").map(PathBuf::from).unwrap_or_else(|| data.join("levels/void.json"));
     cfg.seed = std::fs::read_to_string(&seed).ok();
+    cfg.level = seed.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    cfg.directory_url = arg("--directory-url");
+    cfg.world_secret = std::env::var("VOX_WORLD_SECRET").ok().filter(|s| !s.trim().is_empty());
+    if cfg.directory_url.is_some() && cfg.world_secret.is_none() {
+        eprintln!("--directory-url without VOX_WORLD_SECRET: not reporting to the directory");
+    }
     if let Some(n) = arg("--max-players").and_then(|v| v.parse().ok()) {
         cfg.max_players = n;
     }

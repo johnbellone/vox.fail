@@ -6,6 +6,14 @@
 //! On vox.fail (see deploy/): `--secure --behind-proxy --public-url https://vox.fail --steam
 //! --world "The Void=/w/7780/ws"`.
 //!
+//! Worlds: `--world "void=The Void=/w/7780/ws"` (the id is what the world's server calls it,
+//! `vox-server --name void`; with just `"The Void=…"` it's the name in lower case without
+//! "the"). World servers report who's there and fetch plots and portals with
+//! `VOX_WORLD_SECRET`, the same on both sides.
+//!
+//! Operators: `vox-directory --db … admin own-world void "Sam Hill"` makes Sam the Void's
+//! owner (who may issue its currency); `admin grant "Sam Hill" 50` gives authority.
+//!
 //! Signing in with Steam needs only `--steam` (and `--public-url`, where Steam sends people
 //! back); with `VOX_STEAM_KEY` (a Steam Web API key) in the environment, new accounts take
 //! their Steam name. Discord needs `VOX_DISCORD_CLIENT_ID` and `VOX_DISCORD_CLIENT_SECRET`
@@ -34,10 +42,10 @@ async fn main() {
     let public = vox_core::auth::public_hex(&key.verifying_key());
     let _ = std::fs::write(&pub_path, format!("{public}\n"));
     let pair = |s: &str| s.split_once('=').map(|(a, b)| (a.trim().to_string(), b.trim().to_string()));
-    let mut worlds: Vec<WorldInfo> =
-        all("--world").iter().filter_map(|w| pair(w)).map(|(name, url)| WorldInfo { name, url, about: String::new() }).collect();
+    let mut worlds: Vec<WorldInfo> = all("--world").iter().filter_map(|w| WorldInfo::parse(w)).collect();
     if worlds.is_empty() {
         worlds.push(WorldInfo {
+            id: "void".into(),
             name: "The Void".into(),
             url: ":7780".into(),
             about: "Where everyone arrives: a bright, endless floor in white fog.".into(),
@@ -62,9 +70,28 @@ async fn main() {
                 .map(|(client_id, client_secret)| Discord { client_id, client_secret }),
             sites: Default::default(),
         },
+        world_secret: env("VOX_WORLD_SECRET"),
+        report_every: 50,
     };
     let offered = cfg.social.offered();
     let dir = Directory::open(cfg).unwrap_or_else(|e| panic!("{e}"));
+    // jobs for the operators, on the same database: `vox-directory --db … admin own-world void "Sam"`
+    if let Some(i) = args.iter().position(|a| a == "admin") {
+        let rest = &args[i + 1..];
+        let done = match rest.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+            ["own-world", world, name] => dir.own_world(world, name),
+            ["grant", name, amount] => amount.parse().map_err(|_| "a whole number".to_string()).and_then(|a| dir.grant(name, a, "from the operators")),
+            _ => Err("admin own-world <world id> <player name> | admin grant <player name> <authority>".into()),
+        };
+        match done {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
     eprintln!("vox-directory on http://{listen}/ (public key {public}, in {})", pub_path.display());
     eprintln!("sign in with a password{}", offered.iter().map(|s| format!(", {s}")).collect::<String>());

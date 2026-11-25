@@ -344,3 +344,95 @@ async fn a_world_that_needs_sign_in() {
     let ToClient::Welcome { name, .. } = recv(&mut ws).await else { panic!("no welcome") };
     assert_eq!(name, "Bob (guest)");
 }
+
+#[tokio::test]
+async fn plots_portals_and_reports_with_a_directory() {
+    use std::sync::{Arc, Mutex};
+    use vox_core::auth::{self, Character, Claims};
+    // a stand-in directory: one plot (Ann's, account 7), one portal, and the reports it gets
+    let reports: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
+    let got = reports.clone();
+    let dir = axum::Router::new()
+        .route(
+            "/api/world/test/rules",
+            axum::routing::get(|h: axum::http::HeaderMap| async move {
+                if h.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer s3cret") {
+                    return axum::Json(serde_json::json!({}));
+                }
+                axum::Json(serde_json::json!({
+                    "plots": [{ "id": 1, "x0": 2, "z0": -2, "x1": 6, "z1": 2, "builders": [7] }],
+                    "portals": [{ "name": "The Yard (1)", "at": [0, 0, -6], "axis": "z", "size": [4, 6], "level": "yard",
+                                  "url": "/w/7781/ws", "arrive": [0.5, 0, 0.5], "yaw": 0 }],
+                }))
+            }),
+        )
+        .route(
+            "/api/world/report",
+            axum::routing::post(move |axum::Json(v): axum::Json<serde_json::Value>| {
+                let got = got.clone();
+                async move {
+                    got.lock().unwrap().push(v);
+                    "ok"
+                }
+            }),
+        );
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dir_url = format!("http://{}", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, dir).await.unwrap() });
+
+    let key = auth::key_from_seed([9; 32]);
+    let mut cfg = config(":memory:");
+    cfg.directory = Some(key.verifying_key());
+    cfg.level = "void".into();
+    cfg.directory_url = Some(dir_url);
+    cfg.world_secret = Some("s3cret".into());
+    cfg.report_every = Duration::from_millis(600);
+    cfg.rules_every = Duration::from_millis(100);
+    let (_server, url) = serve(cfg).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let enter = |account: u64, name: &'static str| {
+        let token = auth::sign(&Claims { account, name: name.into(), character: Character::default(), issued: now, expires: now + 60 }, &key);
+        let url = url.clone();
+        async move {
+            let (mut ws, _) = connect_async(&url).await.unwrap();
+            send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: vec![], token: Some(token) }).await;
+            let ToClient::Welcome { settings, spawn, .. } = recv(&mut ws).await else { panic!("no welcome") };
+            loop {
+                if let ToClient::Ready = recv(&mut ws).await {
+                    break;
+                }
+            }
+            send(&mut ws, &ToServer::Pose { at: spawn, blob: vec![] }).await;
+            (ws, settings)
+        }
+    };
+    let (mut ann, settings) = enter(7, "Ann").await;
+    let (mut bob, _) = enter(8, "Bob").await;
+    // the portal Ann opened at the directory is in the settings new arrivals get
+    let s: serde_json::Value = serde_json::from_str(&settings).unwrap();
+    assert_eq!(s["sky"], "void");
+    assert_eq!(s["portals"][0]["url"], "/w/7781/ws");
+    // Ann builds in her plot; Bob can't, but can outside it
+    send(&mut ann, &ToServer::Edit { id: 1, cell: [3, 0, 0], block: 2 }).await;
+    send(&mut bob, &ToServer::Edit { id: 1, cell: [4, 0, 0], block: 2 }).await;
+    send(&mut bob, &ToServer::Edit { id: 2, cell: [-3, 0, 0], block: 2 }).await;
+    let mut refused = None;
+    let mut applied = 0;
+    while refused.is_none() || applied < 2 {
+        match recv_event(&mut bob).await {
+            ToClient::Refused { id, why } => refused = Some((id, why)),
+            ToClient::Edits(e) => applied += e.len(),
+            _ => {}
+        }
+    }
+    assert_eq!(refused, Some((1, Why::Claimed)));
+    // the report: who's here, where, and the blocks each placed
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let r = reports.lock().unwrap().iter().find(|r| r["players"].as_array().is_some_and(|p| !p.is_empty())).cloned().expect("a report");
+    assert_eq!(r["world"], "test");
+    assert_eq!(r["level"], "void");
+    let mut placed: Vec<(u64, u64)> = r["players"].as_array().unwrap().iter().map(|p| (p["account"].as_u64().unwrap(), p["edits"].as_u64().unwrap())).collect();
+    placed.sort();
+    assert_eq!(placed, vec![(7, 1), (8, 1)]);
+}

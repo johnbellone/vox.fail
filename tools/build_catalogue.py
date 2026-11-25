@@ -14,8 +14,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 cast = {c["id"]: c for c in json.loads((ROOT / "data/cast_manifest.json").read_text())["characters"]}
-GROUPS = {"cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals"}
-NAMES = {"scene_all": "Lead", "peanut": "Peanut", "roasted_miami": "Miami tourist"}
+GROUPS = {"blue": "Main", "cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals"}
+NAMES = {"blue": "Blue", "scene_all": "Lead", "peanut": "Peanut", "roasted_miami": "Miami tourist"}
+
+# Vox's main character comes first, and is who a new player starts as
+MAIN = "blue"
+ABOUT = {"blue": "Vox's main character: an American pit bull terrier with a blue nose, a blue-grey coat, white blaze, chest and paws, rose ears and an orange collar."}
 
 chars = []
 for p in sorted((ROOT / "assets/portraits").glob("*.png")):
@@ -31,10 +35,10 @@ for p in sorted((ROOT / "assets/portraits").glob("*.png")):
         "group": group,
         "model": f"models/{cid}.glb",
         "portrait": f"portraits/{cid}.png",
-        "about": (c or {}).get("note", ""),
+        "about": ABOUT.get(cid) or (c or {}).get("note", ""),
     })
-order = {"Cast": 0, "Roast": 1, "Animals": 2}
-chars.sort(key=lambda c: (c["id"] != "scene_all", order[c["group"]], c["name"]))
+order = {"Main": -1, "Cast": 0, "Roast": 1, "Animals": 2}
+chars.sort(key=lambda c: (c["id"] != MAIN, order[c["group"]], c["name"]))
 
 src = (ROOT / "src/wardrobe.rs").read_text()
 body = src[src.index("pub const ITEMS"):]

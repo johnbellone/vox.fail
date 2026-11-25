@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventory · Vox</title>
+<link rel="icon" href="/assets/icon.png">
+<link rel="stylesheet" href="/vox.css">
+<script type="module" src="/inventory.js"></script>
+</head>
+<body>
+<div class="void" aria-hidden="true"><div class="moon great"></div><div class="moon red"></div><div class="moon cold"></div><div class="floor"></div></div>
+<main class="page">
+  <div class="top" id="top">
+    <p class="wordmark small"><a href="/">VOX</a></p>
+  </div>
+
+  <h1>Inventory</h1>
+  <div class="standing" id="standing">
+    <div>
+      <div class="count" id="authority">–</div>
+      <div class="what">authority</div>
+    </div>
+    <div>
+      <div class="small" id="today">Earned today</div>
+      <div class="meter" aria-hidden="true"><i id="today-bar" style="width:0%"></i></div>
+      <div class="note" id="how">Play in any world to earn more: time there and blocks you place both count.</div>
+    </div>
+  </div>
+
+  <div class="explorer">
+    <aside class="filters" aria-label="Show">
+      <div class="kinds" id="kinds" role="group" aria-label="What to show"></div>
+      <div>
+        <label for="world">World</label>
+        <select id="world"><option value="">Every world</option></select>
+      </div>
+      <div>
+        <label for="q">Find</label>
+        <input type="search" id="q" placeholder="By name">
+      </div>
+      <div>
+        <label for="sort">Order</label>
+        <select id="sort">
+          <option value="new">Newest first</option>
+          <option value="name">By name</option>
+          <option value="kind">By kind</option>
+        </select>
+      </div>
+    </aside>
+    <section aria-label="What you hold">
+      <div class="items" id="items"></div>
+      <p class="empty" id="empty" hidden>Nothing here yet.</p>
+    </section>
+    <aside class="slab detail" id="detail" aria-live="polite">
+      <p class="quiet">Pick something to see what it is and what you can do with it.</p>
+    </aside>
+  </div>
+
+  <div class="panels">
+    <section class="slab" aria-labelledby="feats-h">
+      <h2 id="feats-h">Feats</h2>
+      <p class="quiet">What authority is for. Feats happen where you last stood in a world, so go there first.</p>
+      <div id="feats"></div>
+    </section>
+    <section class="slab" aria-labelledby="ledger-h">
+      <h2 id="ledger-h">Ledger</h2>
+      <p class="quiet">Every coin and every point of authority you've earned, spent, sent or been sent.</p>
+      <ul class="ledger" id="ledger"></ul>
+    </section>
+  </div>
+</main>
+</body>
+</html>

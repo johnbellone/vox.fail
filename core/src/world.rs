@@ -178,6 +178,8 @@ pub enum Why {
     TooFar,
     /// too many edits too fast
     TooFast,
+    /// inside someone's plot (claimed at the directory) that you can't build in
+    Claimed,
 }
 
 impl std::fmt::Display for Why {
@@ -188,6 +190,7 @@ impl std::fmt::Display for Why {
             Why::NoChange => "it's already that block",
             Why::TooFar => "that's out of reach",
             Why::TooFast => "slow down",
+            Why::Claimed => "that's someone's plot",
         })
     }
 }

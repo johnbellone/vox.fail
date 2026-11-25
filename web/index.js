@@ -54,6 +54,7 @@ async function show() {
   for (const s of offered.filter((s) => !linked.includes(s))) {
     line.append(el("a", { href: `/auth/${s}`, text: `Link your ${SITES[s] || s} account` }));
   }
+  api("/api/wallet").then((wal) => { $("#auth-n").textContent = `${wal.balances[0].amount} authority, `; }).catch(() => {});
   const w = await api("/api/worlds");
   const links = $("#dl-links");
   links.replaceChildren();

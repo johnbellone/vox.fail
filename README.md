@@ -53,7 +53,7 @@ Your block-style characters as a live, mic-driven avatar for streams and videos,
 | Path | What |
 |---|---|
 | `src/` | The avatar app (Bevy 0.19.1): lip sync, reactions, emotes, control page, webcam output |
-| `assets/models/` | The 37 playable characters (lead, 25 cast, 4 animals, peanut, 6 roasted peanuts); the app loads these |
+| `assets/models/` | The 38 playable characters (Blue, the lead, 25 cast, 4 animals, peanut, 6 roasted peanuts); the app loads these |
 | `assets/models/variants/` | Lead without props, and the stepped-timing twins |
 | `assets/models/early/` | The first three voxel versions of the lead, before the rig |
 | `assets/props/` | 124 props, set pieces and effects as `.glb` (lead 91, cast 13, roasted peanut 20) |
@@ -105,7 +105,7 @@ cargo run --release
 The first build takes a while (it compiles Bevy); after that it starts in seconds. On Linux,
 install the audio and input headers first: `sudo apt install libasound2-dev libudev-dev`.
 
-All 37 characters are in `assets/models/`. Press **Tab** to cycle them, or start with one:
+All 38 characters are in `assets/models/`. Press **Tab** to cycle them, or start with one:
 `cargo run --release -- --model president.glb`.
 
 ## Controls
@@ -710,7 +710,7 @@ browser, or download the desktop client.
 3. **Build the browser client once:** `tools/build_web.sh` (puts it in `web/pkg`; needs the
    wasm32 target and wasm-bindgen-cli, see the script).
 4. Open `http://<server>:7700/`: **Sign in with Steam** or **Sign in with Discord** (when the
-   directory has them, below), or **New account** with a name and password; pick who you are (37 characters) and what
+   directory has them, below), or **New account** with a name and password; pick who you are (38 characters, Blue first) and what
    you wear (a hat, something on your face, something in your hand, seen on a turntable),
    **Save character**, then **Enter the Void**. The browser needs WebGPU (current Chrome,
    Edge, Safari and Firefox have it).
@@ -730,6 +730,25 @@ address>` (Steam sends people back there; no key needed), and set `VOX_DISCORD_C
 their Steam name. A first sign-in makes an account named after you there (the nearest free
 name); signed in already, **Link your Steam account** adds it to yours. Name and password
 still work.
+
+**Authority, coins, the inventory, friends and raids.** Authority is the currency every
+world shares: 25 to start, then one for every 10 minutes in a world and every 50 blocks you
+place (up to 60 a day), and 15 for each raid your party wins. It can't be sent: it's spent on
+feats. **Claim a plot** (20): 16 × 16 blocks around where you last stood, which only you, or a
+group you share it with, can build in. **Open a portal** (30): a doorway in your plot to another
+world. **Issue a currency** (100): a world's owner gives it its own coin, with a fixed supply,
+which anyone can then send to anyone. **Start a raid** (10): your party's leader picks a world;
+when two or more of you spend ten minutes there together within the hour, everyone there gets
+15 authority and a trophy. The **Inventory** page holds coins, deeds, portal keys, banners,
+trophies and the wardrobe (filter by kind and world, search, sort), the feats and the ledger
+of every coin moved. **Friends and raids** has friend requests, groups (up to 24, who build
+together) and raid parties (up to 8).
+
+For this, worlds report to the directory: start the directory and each world server with the
+same `VOX_WORLD_SECRET`, give each world `--directory-url http://<directory>`, and list worlds
+on the directory as `--world "void=The Void=:7780"` (the id is the server's `--name`). The
+operators make someone a world's owner with
+`vox-directory --db directory.db --world … admin own-world void "Sam Hill"`.
 
 **vox.fail** is on Cloudflare: a Cloudflare Tunnel carries https://vox.fail/ to the directory
 and `wss://vox.fail/w/<port>/ws` to each world, with nothing open on the server. `deploy/` has
@@ -912,9 +931,16 @@ vest. All files pass the Khronos glTF validator with no errors or warnings.
 24 face-only clips (100-123) that layer over any body clip. Cast members have their own clips from
 100 up, with their props built in.
 
+### Blue (`assets/models/blue.glb`)
+
+Vox's main character, and who a new player or a first run starts as: an American pit bull
+terrier with a blue nose, a blue-grey coat, a white blaze, chest and paws, rose ears and an orange
+collar. Built on the shared rig by `tools/build_animals.py` (like the other animals), with the
+100 body clips plus Tail wag, Bark, Beg and Scratch. Source: `source/vox/characters/blue.vox`.
+
 ### Lead (`assets/models/scene_all.glb`)
 
-The main character: red MAGA cap, blue overalls over a white undershirt, short brown beard. 124 clips, and each clip shows only
+The original lead, no longer the main character: red MAGA cap, blue overalls over a white undershirt, short brown beard. 124 clips, and each clip shows only
 the props it uses, so it plays complete in any glTF viewer. Source: `source/vox/characters/lead.vox`.
 
 - **0-15 Core moves:** Idle, Walk, Run, Jump, Pick up, Carry, Place item, Block, Push, Climb,

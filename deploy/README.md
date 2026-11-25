@@ -25,8 +25,12 @@ unchanged locally and here. The tunnel can't rewrite paths, so world servers ans
 3. Worlds: `/etc/vox/void.env` holds `PORT=7780` and `SEED=data/levels/void.json`;
    `yard.env` `PORT=7781`, `SEED=data/levels/yard.json`; `islands.env` `PORT=7782`,
    `SEED=data/levels/islands.json`.
-4. Sign-in sites: copy `directory.env` to `/etc/vox/directory.env` (root, mode 600) and fill
-   it in (Discord client ID and secret; optionally a Steam Web API key).
+4. Secrets: copy `directory.env` to `/etc/vox/directory.env` (root, mode 600) and fill it in
+   (Discord client ID and secret; optionally a Steam Web API key; a world secret from
+   `openssl rand -hex 32`). Put the same `VOX_WORLD_SECRET=` line in `/etc/vox/worlds.env`
+   (mode 600) for the world servers: with it they report who's playing (authority, raids)
+   and take the plots and portals players make. A world's `--name` (`void`, `yard`,
+   `islands`) is its id in the directory's `--world "void=The Void=/w/7780/ws"`.
 5. Install `vox-directory.service` and `vox-world@.service` in `/etc/systemd/system`, then
    `systemctl enable --now vox-directory`, then
    `systemctl enable --now vox-world@void vox-world@yard vox-world@islands`. The directory
@@ -75,4 +79,9 @@ The desktop client goes to the Void at vox.fail by default: `vox-client --token 
 Offer downloads on the start page with `--download "Windows=https://…"` on the directory.
 GitHub Releases is a good home for them; files under `web/downloads/` are served too.
 
-Back up `/var/lib/vox`: the directory's accounts and key, and every world's blocks.
+Back up `/var/lib/vox`: the directory's accounts, key, wallets and ledger, and every world's
+blocks.
+
+World owners (who may issue a world's currency) are set by the operators:
+`sudo -u vox /opt/vox/bin/vox-directory --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key --world "void=The Void=/w/7780/ws" admin own-world void "Their Name"`
+(the same `--world` list as the service). `admin grant "Name" 50` gives authority.

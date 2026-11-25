@@ -1,6 +1,7 @@
 import { api, me, $, el, find } from "/vox.js";
+import { nav } from "/nav.js";
 
-const GROUPS = { Cast: "The cast", Roast: "The roast", Animals: "Animals" };
+const GROUPS = { Main: "Vox's own", Cast: "The cast", Roast: "The roast", Animals: "Animals" };
 const SLOTS = ["hat", "face", "hand"];
 
 let cat;
@@ -68,6 +69,7 @@ $("#save").addEventListener("click", async () => {
 async function start() {
   const who = await me();
   if (!who.name) { location.href = "/"; return; }
+  nav($("#top"));
   cat = await api("/api/catalogue");
   build();
   const have = who.character;
