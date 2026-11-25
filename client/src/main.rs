@@ -2,13 +2,13 @@
 //!
 //! The launch code comes from the directory's page ("Copy launch code"); it says who you are
 //! and what you look like. Without one, `--model models/dog.glb --name Sam` joins a world
-//! that lets guests in. `--world` defaults to the Void at vox.pub (`--world
+//! that lets guests in. `--world` defaults to the Void at vox.fail (`--world
 //! ws://127.0.0.1:7780/ws` for one on this machine).
 
 use std::path::PathBuf;
 
 /// Where the Void is.
-const DEFAULT_WORLD: &str = "wss://vox.pub/w/7780/ws";
+const DEFAULT_WORLD: &str = "wss://vox.fail/w/7780/ws";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

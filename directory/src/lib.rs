@@ -74,7 +74,7 @@ pub struct Config {
     pub secure_cookies: bool,
     /// where the desktop client can be downloaded (shown on the play page), if anywhere
     pub downloads: Vec<(String, String)>,
-    /// behind a reverse proxy (Caddy on vox.pub): a visitor's address is the last one in
+    /// behind a reverse proxy (Caddy on vox.fail): a visitor's address is the last one in
     /// `X-Forwarded-For`, not the connection's
     pub behind_proxy: bool,
 }

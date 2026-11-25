@@ -2,7 +2,7 @@
 //! [--key directory.key] [--web web] [--assets assets] [--data data]
 //! [--world "The Void=:7780"]... [--download "Windows=https://…"]... [--secure] [--behind-proxy]`.
 //!
-//! On vox.pub (see deploy/): `--secure --behind-proxy --world "The Void=/w/7780/ws"`.
+//! On vox.fail (see deploy/): `--secure --behind-proxy --world "The Void=/w/7780/ws"`.
 //!
 //! The signing key is made the first time and kept in `--key`; its public half is written
 //! next to it (`directory.key.pub`) and served at `/api/key`. Start world servers with

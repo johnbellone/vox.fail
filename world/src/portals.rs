@@ -691,8 +691,8 @@ mod tests {
         assert_eq!(portal_url(Some("wss://vox.example:443/ws"), ":8443"), "wss://vox.example:8443/ws");
         assert_eq!(portal_url(Some("ws://[::1]:7780/ws"), ":7781"), "ws://[::1]:7781/ws");
         assert_eq!(portal_url(None, "ws://other:9/ws"), "ws://other:9/ws");
-        // vox.pub: worlds behind one host, by port in the path
-        assert_eq!(portal_url(Some("wss://vox.pub/w/7780/ws"), ":7781"), "wss://vox.pub/w/7781/ws");
-        assert_eq!(portal_url(Some("wss://vox.pub/w/7780/ws"), "/yard/ws"), "wss://vox.pub/yard/ws");
+        // vox.fail: worlds behind one host, by port in the path
+        assert_eq!(portal_url(Some("wss://vox.fail/w/7780/ws"), ":7781"), "wss://vox.fail/w/7781/ws");
+        assert_eq!(portal_url(Some("wss://vox.fail/w/7780/ws"), "/yard/ws"), "wss://vox.fail/yard/ws");
     }
 }

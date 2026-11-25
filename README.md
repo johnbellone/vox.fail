@@ -720,8 +720,8 @@ lasts a day. List downloads on the page with
 `--download "Windows=https://…/vox-client.zip"`.
 
 Worlds on the page come from `--world "The Void=:7780"` (repeatable; `:7780` is the page's own
-host, that port; `/w/7780/ws` a path on it). **vox.pub** runs it all behind Caddy: the
-directory at https://vox.pub/ and each world at `wss://vox.pub/w/<port>/ws`; `deploy/` has
+host, that port; `/w/7780/ws` a path on it). **vox.fail** runs it all behind Caddy: the
+directory at https://vox.fail/ and each world at `wss://vox.fail/w/<port>/ws`; `deploy/` has
 the Caddyfile, systemd units and steps. The desktop client goes there by default.
 
 **Moving and building:** the camera looks down from above at an angle, like Diablo. **Left

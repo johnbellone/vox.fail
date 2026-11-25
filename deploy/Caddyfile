@@ -1,8 +1,8 @@
-# vox.pub: the directory (pages, accounts, the browser client) and the worlds, all on one
+# vox.fail: the directory (pages, accounts, the browser client) and the worlds, all on one
 # host behind Caddy, which gets the TLS certificate. Worlds sit at /w/<port>/ws, so a
-# portal's ":7781" becomes wss://vox.pub/w/7781/ws.
+# portal's ":7781" becomes wss://vox.fail/w/7781/ws.
 
-vox.pub {
+vox.fail {
 	encode zstd gzip
 
 	# the worlds: the Void, the yard, the islands
@@ -22,6 +22,6 @@ vox.pub {
 	}
 }
 
-www.vox.pub {
-	redir https://vox.pub{uri} permanent
+www.vox.fail {
+	redir https://vox.fail{uri} permanent
 }

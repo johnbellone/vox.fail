@@ -1,5 +1,5 @@
 [Unit]
-Description=Vox directory (vox.pub: accounts, characters, pages)
+Description=Vox directory (vox.fail: accounts, characters, pages)
 After=network-online.target
 
 [Service]

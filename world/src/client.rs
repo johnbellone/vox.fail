@@ -360,7 +360,7 @@ impl Default for WorldClient {
 
 /// `ws://host:port` as given, or with `/ws` added; `http(s)://` becomes `ws(s)://`.
 /// A portal's address: `:7781` is the world on port 7781 of the same host as `current`, or,
-/// behind a proxy that puts worlds at `/w/<port>/ws` (as vox.pub does), the same host's
+/// behind a proxy that puts worlds at `/w/<port>/ws` (as vox.fail does), the same host's
 /// `/w/7781/ws`. `/some/path` is a path on the same host. Anything else is a full address.
 pub fn portal_url(current: Option<&str>, target: &str) -> String {
     let t = target.trim();
