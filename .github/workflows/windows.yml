@@ -15,15 +15,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test
-        run: cargo test --release
+        run: cargo test --release -p block_avatar
       - name: Build
-        run: cargo build --release
+        run: cargo build --release -p block_avatar
       - name: Installer
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
           $ver = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.1.0' }
-          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /DVERSION=$ver installer\block-avatar.nsi
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /DVERSION=$ver bins\block-avatar\installer\block-avatar.nsi
       - name: Portable zip
         shell: pwsh
         run: |
@@ -35,12 +35,12 @@ jobs:
         with:
           name: block-avatar-windows
           path: |
-            installer/Block-Avatar-Setup-*.exe
+            bins/block-avatar/installer/Block-Avatar-Setup-*.exe
             Block-Avatar-portable.zip
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            installer/Block-Avatar-Setup-*.exe
+            bins/block-avatar/installer/Block-Avatar-Setup-*.exe
             Block-Avatar-portable.zip

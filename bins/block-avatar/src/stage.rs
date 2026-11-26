@@ -545,7 +545,7 @@ mod serde_json_lite {
 mod tests {
     #[test]
     fn reads_each_models_palette() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/models");
+        let dir = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("assets/models");
         for f in ["scene_all.glb", "dog.glb", "roasted_riot.glb"] {
             let p = super::palette_from_glb(&dir.join(f)).unwrap();
             assert!(p.len() > 20 && p.len() <= 256, "{f}: {}", p.len());

@@ -8,7 +8,7 @@ use vox_core::auth;
 use vox_directory::{Config, Directory, WorldInfo, check_name};
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 async fn serve() -> (Directory, String) {

@@ -157,7 +157,7 @@ mod tests {
     }
 
     fn load_level(name: &str) -> (World, Vec<String>, String, usize) {
-        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let pal = std::fs::read_to_string(base.join("data/blocks.json")).unwrap();
         let names = crate::palette_names(&pal).unwrap();
         let text = std::fs::read_to_string(base.join(format!("data/levels/{name}.json"))).unwrap();
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn the_yard_loads() {
-        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let pal = std::fs::read_to_string(base.join("data/blocks.json")).unwrap();
         let names = crate::palette_names(&pal).unwrap();
         let text = std::fs::read_to_string(base.join("data/levels/yard.json")).unwrap();

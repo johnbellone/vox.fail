@@ -902,7 +902,7 @@ mod tests {
 
     fn real_question() -> Vec<u8> {
         std::fs::read(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .join("demo/questions/bdl-a0042.wav"),
         )
         .unwrap()

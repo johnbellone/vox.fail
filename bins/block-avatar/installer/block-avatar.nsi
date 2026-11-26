@@ -10,7 +10,7 @@ Unicode true
   !define VERSION "0.1.0"
 !endif
 !ifndef SRC
-  !define SRC ".."
+  !define SRC "..\..\.."
 !endif
 !define APP "Block Avatar"
 !define EXE "block_avatar.exe"

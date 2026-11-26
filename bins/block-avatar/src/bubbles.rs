@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn segmenter_cuts_real_speech_into_jobs() {
         // a real recording: LibriSpeech reader, 16 kHz
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("demo/libri-male-5703-47212-0000.wav");
         let (rate, ch, s) = crate::lipsync::read_wav(path.to_str().unwrap()).unwrap();
         assert_eq!(ch, 1);

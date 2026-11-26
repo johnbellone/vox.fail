@@ -301,16 +301,20 @@ impl Avatar {
 }
 
 /// The folder holding `assets/`: the working directory if it has one (cargo run, or a shortcut
-/// that starts in the app folder), otherwise next to the executable.
+/// that starts in the app folder), otherwise next to the executable or a few folders above it
+/// (an installed copy keeps assets beside the exe; a build in target/ finds the repository).
 fn asset_base() -> std::path::PathBuf {
     let cwd = std::env::current_dir().unwrap_or_default();
     if cwd.join(MODELS_DIR).is_dir() {
         return cwd;
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or(cwd)
+    let exe = std::env::current_exe().ok();
+    let found = exe
+        .iter()
+        .flat_map(|p| p.ancestors().skip(1).take(8))
+        .find(|d| d.join(MODELS_DIR).is_dir())
+        .map(|d| d.to_path_buf());
+    found.or_else(|| exe.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()))).unwrap_or(cwd)
 }
 
 fn find_models() -> Vec<(String, String)> {

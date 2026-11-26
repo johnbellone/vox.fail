@@ -918,7 +918,7 @@ mod tests {
     /// A real recorded question (CMU ARCTIC, see demo/questions/README.md).
     pub fn real_question(name: &str) -> Vec<u8> {
         std::fs::read(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .join("demo/questions")
                 .join(name),
         )

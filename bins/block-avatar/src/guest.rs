@@ -955,7 +955,7 @@ mod tests {
 
     #[test]
     fn analysis_of_a_real_question_tracks_the_speech() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("demo/questions/clb-b0352.wav");
         let (rate, s) = parse_wav_mono16(&std::fs::read(path).unwrap()).unwrap();
         let s = crate::questions::level_voice(&s).unwrap();

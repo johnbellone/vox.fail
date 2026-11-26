@@ -1919,7 +1919,7 @@ mod real_models {
 
     #[test]
     fn rebuilt_models_are_clean() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
         let mut files: Vec<_> = ["assets/sets", "assets/models"].iter().flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().flatten().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "glb")).collect();
         files.sort();
         let mut bad = vec![];

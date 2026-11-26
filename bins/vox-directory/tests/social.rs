@@ -16,7 +16,7 @@ use vox_directory::{Config, Directory, Discord, Sites, Social, name_from};
 const STEAM_ID: &str = "https://steamcommunity.com/openid/id/";
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 async fn listen(app: Router) -> String {

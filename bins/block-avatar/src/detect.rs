@@ -288,7 +288,7 @@ mod tests {
     }
 
     fn files(sub: &str, ext: &str) -> Vec<PathBuf> {
-        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(sub);
+        let d = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(sub);
         let mut v: Vec<PathBuf> = std::fs::read_dir(d)
             .unwrap()
             .flatten()

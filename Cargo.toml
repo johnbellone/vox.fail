@@ -1,58 +1,7 @@
-[package]
-name = "block_avatar"
-version.workspace = true
-edition.workspace = true
-description = "Mic-driven block-style avatar for streaming (OBS)"
-
-[dependencies]
-bevy.workspace = true
-vox-core.workspace = true
-vox-world.workspace = true
-# Same major as bevy_audio's rodio, so both share one ALSA/CoreAudio/WASAPI backend.
-cpal = "0.17"
-# Built-in speech-to-text for the speech bubbles (optional: needs CMake and a C++ compiler, plus
-# LLVM/clang on Windows). Build with `cargo run --release --features whisper`.
-whisper-rs = { version = "0.16", optional = true }
-# Viewer questions: the public "ask" page (tiny_http), Twitch login (ureq), JSON, session tokens.
-tiny_http = "0.12"
-ureq = "3"
-serde_json.workspace = true
-getrandom.workspace = true
-# Auto shorts and comic strips: frames kept as JPEGs in memory, strips written as PNG.
-jpeg-encoder = "0.6"
-jpeg-decoder = "0.3"
-png.workspace = true
-ab_glyph = "0.2"
-tungstenite.workspace = true
-serde.workspace = true
-postcard.workspace = true
-
-# Windows only: hotkeys that work while a game has focus, and the console for --list-mics.
-# (`--cfg winchk` lets this code be type-checked on Linux: RUSTFLAGS="--cfg winchk" cargo check)
-[target.'cfg(any(windows, winchk))'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.build-dependencies]
-winresource = "0.1"
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(winchk)"] }
-
-[features]
-whisper = ["dep:whisper-rs"]
-
-[profile.dev]
-opt-level = 1
-[profile.dev.package."*"]
-opt-level = 3
-[profile.release]
-codegen-units = 16
-
+# The Vox workspace: no package here, so `cargo build` builds everything.
 [workspace]
-members = ["relay", "core", "server", "directory", "world", "client"]
+# Rust libraries in crates/, Rust programs in bins/ (Bun web apps are in apps/, see package.json).
+members = ["bins/*", "crates/*"]
 resolver = "3"
 
 [workspace.package]
@@ -62,8 +11,8 @@ edition = "2024"
 # Every shared dependency once: members write `name.workspace = true` (adding features if they
 # need more), so the crates can't drift apart.
 [workspace.dependencies]
-vox-core = { path = "core" }
-vox-world = { path = "world" }
+vox-core = { path = "crates/vox-core" }
+vox-world = { path = "crates/vox-world" }
 bevy = "0.19.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -81,6 +30,13 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = "0.3"
+
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 3
+[profile.release]
+codegen-units = 16
 
 # The browser client: smaller and a little slower to build.
 [profile.wasm-release]

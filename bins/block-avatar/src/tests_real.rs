@@ -9,7 +9,7 @@ use crate::voice::{Prosody, VoiceFrame};
 use std::path::PathBuf;
 
 fn dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/real")
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("testdata/real")
 }
 
 fn frames(file: &str) -> Vec<Frame> {
