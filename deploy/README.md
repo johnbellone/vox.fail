@@ -19,8 +19,9 @@ unchanged locally and here. The tunnel can't rewrite paths, so world servers ans
 ## On the server
 
 1. Build: `cargo build --release -p vox-directory -p vox-server -p vox-client` and
-   `tools/build_web.sh` (the browser client, into `web/pkg`).
-2. Copy to `/opt/vox`: `bin/` (the three binaries), `web/`, `assets/`, `data/`. Make a `vox`
+   `tools/build_web.sh` (the browser client, into `apps/site/public/pkg`), then the pages:
+   `bun install && (cd apps/site && bun run build)` (Bun is needed to build, not to run).
+2. Copy to `/opt/vox`: `bin/` (the three binaries), `apps/site/dist/` as `web/`, `assets/`, `data/`. Make a `vox`
    user and `/var/lib/vox` owned by it.
 3. Worlds: `/etc/vox/void.env` holds `PORT=7780` and `SEED=data/levels/void.json`;
    `yard.env` `PORT=7781`, `SEED=data/levels/yard.json`; `islands.env` `PORT=7782`,
@@ -77,7 +78,7 @@ unchanged locally and here. The tunnel can't rewrite paths, so world servers ans
 
 The desktop client goes to the Void at vox.fail by default: `vox-client --token <launch code>`.
 Offer downloads on the start page with `--download "Windows=https://…"` on the directory.
-GitHub Releases is a good home for them; files under `web/downloads/` are served too.
+GitHub Releases is a good home for them; files under `apps/site/public/downloads/` (copied into the build) are served too.
 
 Back up `/var/lib/vox`: the directory's accounts, key, wallets and ledger, and every world's
 blocks.

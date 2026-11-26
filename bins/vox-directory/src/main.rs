@@ -54,7 +54,11 @@ async fn main() {
     let cfg = Config {
         db: arg("--db").unwrap_or_else(|| "directory.db".into()).into(),
         key,
-        web: arg("--web").map(PathBuf::from).unwrap_or_else(|| root.join("web")),
+        // the built site: apps/site/dist in the repository, web/ where the deployment copies it
+        web: arg("--web").map(PathBuf::from).unwrap_or_else(|| {
+            let built = root.join("apps/site/dist");
+            if built.is_dir() { built } else { root.join("web") }
+        }),
         assets: arg("--assets").map(PathBuf::from).unwrap_or_else(|| root.join("assets")),
         data: arg("--data").map(PathBuf::from).unwrap_or_else(|| root.join("data")),
         worlds,

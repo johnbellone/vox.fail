@@ -4,7 +4,6 @@ target/
 *.log
 directory.key
 directory.key.pub
-web/pkg/
 gags.txt
 testdata/visual/out/
 __pycache__/
