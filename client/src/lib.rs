@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use bevy::{
+    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     core_pipeline::tonemapping::Tonemapping,
     gltf::Gltf,
     post_process::bloom::Bloom,
@@ -41,6 +42,10 @@ pub struct Start {
     /// the page's canvas (browser only)
     #[serde(default)]
     pub canvas: Option<String>,
+    /// watch the world instead of playing: no sign-in, no avatar, no controls or HUD, a
+    /// drifting camera (the front page's live view)
+    #[serde(default)]
+    pub watch: bool,
 }
 
 impl Start {
@@ -102,15 +107,22 @@ pub fn app(start: Start, assets: String) -> App {
         MaterialPlugin::<outdoors::RainMaterial>::default(),
         MaterialPlugin::<portals::PortalMaterial>::default(),
     ))
+    .add_plugins(FrameTimeDiagnosticsPlugin::default())
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
-    .insert_resource(world::WorldClient::new(Some(start.url.clone()), start.name.clone()).with_token(start.token.clone()))
+    .insert_resource(
+        world::WorldClient::new(Some(start.url.clone()), start.name.clone())
+            .with_token(start.token.clone())
+            .watching(start.watch),
+    )
     .insert_resource(WorldRender { level, shadows: true, outdoors: false, env_maps: !cfg!(target_arch = "wasm32") })
     .insert_resource(LocalAvatar { model: start.model.clone(), fallback: "models/blue.glb".into(), ..default() })
+    // watching: nobody to spawn
+    .insert_resource(Me { spawned: start.watch, ..default() })
     .insert_resource(start)
-    .init_resource::<Me>()
+
     .init_resource::<outdoors::Outdoors>()
     .init_resource::<portals::Portals>()
-    .add_systems(Startup, (blocks::setup, setup))
+    .add_systems(Startup, (blocks::setup, setup, (spawn_fps, spawn_fade).run_if(playing)))
     .add_systems(
         Update,
         (load_me, walk, world::receive, world::attach, world::controls, world::remesh, world::hud).chain(),
@@ -118,7 +130,7 @@ pub fn app(start: Start, assets: String) -> App {
     .add_systems(Update, (world::camera, world::weather).after(world::controls))
     .add_systems(Update, (outdoors::update, outdoors::weather_look).chain().after(world::camera))
     .add_systems(Update, portals::update.after(world::camera).after(world::receive))
-    .add_systems(Update, (dress, pose::load_remotes, report))
+    .add_systems(Update, (dress, pose::load_remotes, report, (update_fps, fade).run_if(playing)))
     .add_systems(
         PostUpdate,
         (world::send_pose, world::apply_others).chain().before(bevy::transform::TransformSystems::Propagate),
@@ -126,6 +138,115 @@ pub fn app(start: Start, assets: String) -> App {
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Update, web::fetch_wanted);
     app
+}
+
+/// Playing, not watching: the frame rate and the portal sweep are for players.
+fn playing(start: Res<Start>) -> bool {
+    !start.watch
+}
+
+#[derive(Component)]
+struct FadeCover;
+/// One streak of the sweep: where it sits, how fast it runs and where in the loop it starts.
+#[derive(Component)]
+struct Streak {
+    speed: f32,
+    phase: f32,
+}
+
+const STREAKS: usize = 22;
+
+/// A screen-wide wash with streaks racing across it, up while a world is loading (walking
+/// through a portal, or the first connect) and gone once the new world is ready.
+fn spawn_fade(mut commands: Commands) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.8, 0.85, 1.0, 1.0)),
+            GlobalZIndex(1000),
+            FadeCover,
+        ))
+        .with_children(|p| {
+            for i in 0..STREAKS {
+                let f = i as f32 / STREAKS as f32;
+                // a spread of heights, lengths and speeds, the same every time
+                let h = 1.5 + 4.0 * ((i * 7 % 5) as f32 / 4.0);
+                let len = 30.0 + 50.0 * ((i * 3 % 7) as f32 / 6.0);
+                p.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        top: Val::Percent(f * 100.0),
+                        left: Val::Percent(-100.0),
+                        width: Val::Percent(len),
+                        height: Val::Percent(h),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
+                    Streak { speed: 1.6 + 1.4 * ((i * 5 % 9) as f32 / 8.0), phase: (i * 13 % 11) as f32 / 11.0 },
+                ));
+            }
+        });
+}
+
+fn fade(
+    time: Res<Time>,
+    w: Res<world::WorldClient>,
+    mut level: Local<Option<f32>>,
+    mut cover: Query<(&mut BackgroundColor, &mut Visibility), (With<FadeCover>, Without<Streak>)>,
+    mut streaks: Query<(&Streak, &mut Node, &mut BackgroundColor), Without<FadeCover>>,
+) {
+    let a = level.get_or_insert(1.0);
+    let dt = time.delta_secs();
+    *a = if w.ready { (*a - dt / 0.5).max(0.0) } else { (*a + dt / 0.2).min(1.0) };
+    let a = *a;
+    for (mut bg, mut vis) in &mut cover {
+        bg.0 = Color::srgba(0.8, 0.85, 1.0, a * 0.8);
+        *vis = if a > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+    }
+    let t = time.elapsed_secs();
+    for (s, mut node, mut bg) in &mut streaks {
+        // each streak runs left to right and starts over past the edge
+        let x = (t * s.speed + s.phase).fract();
+        node.left = Val::Percent(-100.0 + x * 240.0);
+        bg.0 = Color::srgba(1.0, 1.0, 1.0, a * 0.55);
+    }
+}
+
+#[derive(Component)]
+struct FpsText;
+
+/// The frame rate, top right.
+fn spawn_fps(mut commands: Commands) {
+    commands.spawn((
+        Text::new("-- fps"),
+        TextFont { font_size: bevy::text::FontSize::Px(14.0), ..default() },
+        TextColor(Color::srgb(1.0, 0.55, 0.1)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(8.0),
+            right: Val::Px(8.0),
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+            border_radius: BorderRadius::all(Val::Px(6.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.55)),
+        FpsText,
+    ));
+}
+
+fn update_fps(diagnostics: Res<DiagnosticsStore>, mut q: Query<&mut Text, With<FpsText>>) {
+    let Some(fps) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()) else {
+        return;
+    };
+    for mut t in &mut q {
+        t.0 = format!("{fps:.0} fps");
+    }
 }
 
 fn setup(mut commands: Commands, render: Res<WorldRender>) {

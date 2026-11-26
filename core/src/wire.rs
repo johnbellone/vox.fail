@@ -32,6 +32,11 @@ pub enum ToServer {
     Pose { at: [f32; 3], blob: Vec<u8> },
     /// Change the world's weather (its climate; the simulation takes it from there).
     Climate(crate::weather::Climate),
+    /// Instead of `Hello`: watch the world without being in it (the front page's live view).
+    /// A watcher gets the world, the edits, the weather and everyone's poses, but no names,
+    /// is not a player, and may send nothing more. Added last, so older messages keep their
+    /// numbers.
+    Watch { protocol: u32 },
 }
 
 /// An edit the server made.

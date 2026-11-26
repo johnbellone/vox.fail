@@ -52,6 +52,10 @@ use vox_core::{
 const QUEUE: usize = 2048;
 /// Largest message a player may send.
 const MAX_MESSAGE: usize = 64 * 1024;
+/// A pose blob is a skeleton's worth of joints; half of MAX_MESSAGE is generous.
+const MAX_POSE_BLOB: usize = 32 * 1024;
+/// Poses per second one connection may send (a client sends about 20).
+const MAX_POSES_PER_SECOND: u32 = 60;
 /// How long a new connection has to say hello.
 const HELLO_WITHIN: Duration = Duration::from_secs(10);
 /// How far (in blocks, from the eyes) a player may edit.
@@ -70,6 +74,8 @@ pub struct Config {
     pub seed: Option<String>,
     pub bounds: Bounds,
     pub max_players: usize,
+    /// how many may watch at once without playing (the front page's live view)
+    pub max_watchers: usize,
     /// edits per second per player (and the burst allowed)
     pub edit_rate: f32,
     pub flush_every: Duration,
@@ -98,6 +104,7 @@ impl Config {
             seed: None,
             bounds: Bounds::default(),
             max_players: 100,
+            max_watchers: 200,
             edit_rate: 20.0,
             flush_every: Duration::from_secs(3),
             directory: None,
@@ -128,6 +135,7 @@ impl Status {
 
 enum Event {
     Join { conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64> },
+    Watch { conn: u64, tx: mpsc::Sender<Message>, protocol: u32 },
     Msg { conn: u64, msg: ToServer },
     Leave { conn: u64 },
     Tick,
@@ -225,7 +233,7 @@ impl Server {
     /// Save everything and stop. Players are disconnected.
     pub async fn shutdown(&self) {
         let _ = self.tx.send(Event::Shutdown).await;
-        let thread = self.thread.lock().unwrap().take();
+        let thread = self.thread.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(t) = thread {
             let _ = tokio::task::spawn_blocking(move || t.join()).await;
         }
@@ -268,6 +276,39 @@ fn admit(
     }
 }
 
+/// A watcher's connection: the world goes out, nothing comes in. Anything they send ends it.
+async fn watch_connection(
+    server: Server,
+    conn: u64,
+    protocol: u32,
+    mut sink: futures_util::stream::SplitSink<WebSocket, Message>,
+    mut stream: futures_util::stream::SplitStream<WebSocket>,
+) {
+    let (tx, mut rx) = mpsc::channel::<Message>(QUEUE);
+    let writer = tokio::spawn(async move {
+        while let Some(m) = rx.recv().await {
+            if sink.send(m).await.is_err() {
+                break;
+            }
+        }
+        let _ = sink.close().await;
+    });
+    if server.tx.send(Event::Watch { conn, tx, protocol }).await.is_err() {
+        return;
+    }
+    while let Some(Ok(m)) = stream.next().await {
+        match m {
+            Message::Binary(_) | Message::Text(_) | Message::Close(_) => break,
+            _ => {}
+        }
+        if writer.is_finished() {
+            break;
+        }
+    }
+    let _ = server.tx.send(Event::Leave { conn }).await;
+    writer.abort();
+}
+
 async fn run_connection(server: Server, socket: WebSocket) {
     let conn = server.next_conn.fetch_add(1, Ordering::Relaxed);
     let (mut sink, mut stream) = socket.split();
@@ -281,10 +322,14 @@ async fn run_connection(server: Server, socket: WebSocket) {
         None
     })
     .await;
-    let Ok(Some(ToServer::Hello { protocol, name, avatar, token })) = hello else {
-        let bye = wire::encode(&ToClient::Bye { why: "say hello first".into() });
-        let _ = sink.send(Message::Binary(bye.into())).await;
-        return;
+    let (protocol, name, avatar, token) = match hello {
+        Ok(Some(ToServer::Hello { protocol, name, avatar, token })) => (protocol, name, avatar, token),
+        Ok(Some(ToServer::Watch { protocol })) => return watch_connection(server, conn, protocol, sink, stream).await,
+        _ => {
+            let bye = wire::encode(&ToClient::Bye { why: "say hello first".into() });
+            let _ = sink.send(Message::Binary(bye.into())).await;
+            return;
+        }
     };
     // who they are: from their sign-in, when this world checks it
     let (name, account) = match admit(&server.gate, name, token.as_deref(), unix_now()) {
@@ -308,11 +353,25 @@ async fn run_connection(server: Server, socket: WebSocket) {
     if server.tx.send(Event::Join { conn, tx, protocol, name, avatar, account }).await.is_err() {
         return;
     }
+    // poses are the one message with no limit further on: cap them here, before they queue
+    let (mut window, mut poses) = (Instant::now(), 0u32);
     while let Some(Ok(m)) = stream.next().await {
         match m {
             Message::Binary(b) => match wire::decode::<ToServer>(&b) {
                 Ok(ToServer::Hello { .. }) | Err(_) => break,
                 Ok(msg) => {
+                    if let ToServer::Pose { blob, .. } = &msg {
+                        if blob.len() > MAX_POSE_BLOB {
+                            break;
+                        }
+                        if window.elapsed() >= Duration::from_secs(1) {
+                            (window, poses) = (Instant::now(), 0);
+                        }
+                        poses += 1;
+                        if poses > MAX_POSES_PER_SECOND {
+                            continue;
+                        }
+                    }
                     if server.tx.send(Event::Msg { conn, msg }).await.is_err() {
                         break;
                     }
@@ -399,6 +458,8 @@ struct WorldState {
     world: World,
     seq: u64,
     players: HashMap<u64, Player>,
+    /// connections watching without playing: they get what everyone sees, names left out
+    watchers: HashMap<u64, mpsc::Sender<Message>>,
     dirty: HashSet<ChunkKey>,
     /// edits not written yet: (seq, at, player name, cell, old, new)
     log: Vec<(u64, u64, String, [i32; 3], u16, u16)>,
@@ -506,6 +567,7 @@ impl WorldState {
             world,
             seq,
             players: HashMap::new(),
+            watchers: HashMap::new(),
             dirty,
             log: Vec::new(),
             spawn,
@@ -529,6 +591,7 @@ impl WorldState {
             match ev {
                 Event::Join { conn, tx, protocol, name, avatar, account } => self.join(conn, tx, protocol, name, avatar, account),
                 Event::Msg { conn, msg } => self.message(conn, msg),
+                Event::Watch { conn, tx, protocol } => self.watch(conn, tx, protocol),
                 Event::Leave { conn } => self.leave(conn),
                 Event::Tick => {
                     let behind = self.weather_at.elapsed().as_secs_f32();
@@ -594,7 +657,7 @@ impl WorldState {
         }
         let e = |e: rusqlite::Error| e.to_string();
         let t = self.db.transaction().map_err(e)?;
-        for k in self.dirty.drain() {
+        for &k in self.dirty.iter() {
             match self.world.chunk(k) {
                 Some(c) if !c.is_empty() => {
                     t.execute(
@@ -609,7 +672,8 @@ impl WorldState {
                 }
             }
         }
-        for (seq, at, player, c, old, new) in self.log.drain(..) {
+        for (seq, at, player, c, old, new) in self.log.iter() {
+            let (seq, at) = (*seq, *at);
             t.execute(
                 "INSERT OR REPLACE INTO edits(seq, at, player, x, y, z, old, new) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![seq as i64, at as i64, player, c[0], c[1], c[2], old, new],
@@ -620,7 +684,11 @@ impl WorldState {
         t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('palette', ?1)", [palette]).map_err(e)?;
         t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('seq', ?1)", [self.seq.to_string()]).map_err(e)?;
         t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('settings', ?1)", [self.settings.clone()]).map_err(e)?;
-        t.commit().map_err(e)
+        t.commit().map_err(e)?;
+        // forget what was written only now: a failed write keeps it for the next flush
+        self.dirty.clear();
+        self.log.clear();
+        Ok(())
     }
 
     /// Queue a message for one player; a player who can't keep up with reliable messages
@@ -640,8 +708,68 @@ impl WorldState {
                 gone.push(*conn);
             }
         }
+        // watchers see everything players see, but not who anyone is
+        let anonymous;
+        let w = match m {
+            ToClient::Joined { player, avatar, .. } => {
+                anonymous = ToClient::Joined { player: *player, name: String::new(), avatar: avatar.clone() };
+                &anonymous
+            }
+            _ => m,
+        };
+        for (conn, tx) in &self.watchers {
+            if !Self::send_to(tx, w) {
+                gone.push(*conn);
+            }
+        }
         for conn in gone {
             self.leave(conn);
+        }
+    }
+
+    /// The world as a newcomer gets it: welcome, chunks, ready, weather, who's here. False if
+    /// they couldn't keep up.
+    fn send_world(&self, tx: &mpsc::Sender<Message>, you: u32, name: &str, names: bool) -> bool {
+        let mut ok = Self::send_to(
+            tx,
+            &ToClient::Welcome {
+                you,
+                world: self.cfg.name.clone(),
+                palette: self.cfg.palette.clone(),
+                block_size: self.cfg.block_size,
+                bounds: self.cfg.bounds,
+                spawn: self.spawn,
+                settings: self.settings_now(),
+                name: name.to_string(),
+            },
+        );
+        for k in self.world.keys() {
+            let c = self.world.chunk(k).expect("listed");
+            ok &= Self::send_to(tx, &ToClient::Chunk { key: k, version: c.version, data: c.encode() });
+        }
+        ok &= Self::send_to(tx, &ToClient::Ready);
+        ok &= Self::send_to(tx, &ToClient::Weather(Box::new(self.weather.keyframe())));
+        for p in self.players.values() {
+            let name = if names { p.name.clone() } else { String::new() };
+            ok &= Self::send_to(tx, &ToClient::Joined { player: p.id, name, avatar: p.avatar.clone() });
+        }
+        ok
+    }
+
+    /// Someone watching without playing: the world and what happens in it, no names.
+    fn watch(&mut self, conn: u64, tx: mpsc::Sender<Message>, protocol: u32) {
+        let bye = |why: &str| {
+            let _ = tx.try_send(Message::Binary(wire::encode(&ToClient::Bye { why: why.into() }).into()));
+        };
+        if protocol != PROTOCOL {
+            return bye(&format!("this world speaks version {PROTOCOL}; please update"));
+        }
+        if self.watchers.len() >= self.cfg.max_watchers {
+            return bye("too many watching; try again soon");
+        }
+        // no player has this number: the watcher's own poses never come back to it
+        if self.send_world(&tx, u32::MAX, "", false) {
+            self.watchers.insert(conn, tx);
         }
     }
 
@@ -657,28 +785,7 @@ impl WorldState {
         }
         let id = conn as u32;
         let name = if name.is_empty() { format!("player {id}") } else { name };
-        let mut ok = Self::send_to(
-            &tx,
-            &ToClient::Welcome {
-                you: id,
-                world: self.cfg.name.clone(),
-                palette: self.cfg.palette.clone(),
-                block_size: self.cfg.block_size,
-                bounds: self.cfg.bounds,
-                spawn: self.spawn,
-                settings: self.settings_now(),
-                name: name.clone(),
-            },
-        );
-        for k in self.world.keys() {
-            let c = self.world.chunk(k).expect("listed");
-            ok &= Self::send_to(&tx, &ToClient::Chunk { key: k, version: c.version, data: c.encode() });
-        }
-        ok &= Self::send_to(&tx, &ToClient::Ready);
-        ok &= Self::send_to(&tx, &ToClient::Weather(Box::new(self.weather.keyframe())));
-        for p in self.players.values() {
-            ok &= Self::send_to(&tx, &ToClient::Joined { player: p.id, name: p.name.clone(), avatar: p.avatar.clone() });
-        }
+        let ok = self.send_world(&tx, id, &name, true);
         if !ok {
             return;
         }
@@ -703,6 +810,7 @@ impl WorldState {
     }
 
     fn leave(&mut self, conn: u64) {
+        self.watchers.remove(&conn);
         if let Some(p) = self.players.remove(&conn) {
             eprintln!("{} left ({} here)", p.name, self.players.len());
             self.broadcast(&ToClient::Left { player: p.id }, None);
@@ -719,7 +827,7 @@ impl WorldState {
         let now = self.started.elapsed().as_secs_f64();
         let Some(p) = self.players.get_mut(&conn) else { return };
         match msg {
-            ToServer::Hello { .. } => {}
+            ToServer::Hello { .. } | ToServer::Watch { .. } => {}
             ToServer::Climate(c) => {
                 if !p.bucket.take(now) {
                     return;

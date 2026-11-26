@@ -1,5 +1,5 @@
 //! Run a world: `vox-server [--listen 127.0.0.1:7780] [--db world.db] [--name void]
-//! [--seed data/levels/void.json] [--blocks data/blocks.json] [--max-players 100]
+//! [--seed data/levels/void.json] [--blocks data/blocks.json] [--max-players 100] [--max-watchers 200]
 //! [--directory-key <hex or file> [--guests]] [--directory-url http://127.0.0.1:7700]`.
 //!
 //! With `--directory-url` and `VOX_WORLD_SECRET` (the directory's too), the world reports who
@@ -39,6 +39,9 @@ async fn main() {
     }
     if let Some(n) = arg("--max-players").and_then(|v| v.parse().ok()) {
         cfg.max_players = n;
+    }
+    if let Some(n) = arg("--max-watchers").and_then(|v| v.parse().ok()) {
+        cfg.max_watchers = n;
     }
     // sign-in: the directory's public key (hex, or a file holding it)
     if let Some(k) = arg("--directory-key") {

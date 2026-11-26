@@ -179,6 +179,8 @@ pub struct WorldClient {
     pub name: String,
     /// a sign-in token from the directory (`--token`, or `VOX_TOKEN`), for worlds that ask
     pub token: Option<String>,
+    /// the host the sign-in token belongs to (where you started): portals to other hosts get no token
+    token_host: Option<String>,
     link: Option<Link>,
     pub status: String,
     pub you: Option<u32>,
@@ -271,6 +273,9 @@ pub struct WorldClient {
     travel: Option<(String, f64, [f32; 3])>,
     /// `world:portal:<name>`: go through that portal now
     pub portal_go: Option<String>,
+    /// watching, not playing (the front page's live view): no avatar, no input, no HUD, and a
+    /// camera that drifts round the spawn on its own
+    pub watch: bool,
 }
 
 /// Coming out of a portal: where you stand (blocks) and which way you and the camera face.
@@ -289,6 +294,7 @@ impl Default for WorldClient {
             url: None,
             name: String::new(),
             token: None,
+            token_host: None,
             link: None,
             status: String::new(),
             you: None,
@@ -354,6 +360,7 @@ impl Default for WorldClient {
             arrival: None,
             travel: None,
             portal_go: None,
+            watch: false,
         }
     }
 }
@@ -385,6 +392,17 @@ pub fn portal_url(current: Option<&str>, target: &str) -> String {
     format!("{scheme}://{host}:{port}/ws")
 }
 
+/// The host of a world address, without scheme, port or path.
+fn url_host(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let hostport = rest.split('/').next().unwrap_or("");
+    match hostport.rfind(':') {
+        Some(i) if !hostport[i..].contains(']') => &hostport[..i],
+        _ => hostport,
+    }
+    .to_ascii_lowercase()
+}
+
 pub fn ws_url(url: &str) -> String {
     let u = url.trim().trim_end_matches('/');
     let u = if let Some(r) = u.strip_prefix("http://") {
@@ -406,7 +424,15 @@ impl WorldClient {
             .nth(1)
             .or_else(|| std::env::var("VOX_TOKEN").ok())
             .filter(|t| !t.trim().is_empty());
-        WorldClient { url: url.map(|u| ws_url(&u)), name, token, ..default() }
+        let url = url.map(|u| ws_url(&u));
+        let token_host = url.as_deref().map(url_host);
+        WorldClient { url, name, token, token_host, ..default() }
+    }
+
+    /// Watch instead of play: see [`WorldClient::watch`].
+    pub fn watching(mut self, watch: bool) -> Self {
+        self.watch = watch;
+        self
     }
 
     /// With a sign-in token (for worlds that ask for one).
@@ -510,7 +536,7 @@ impl WorldClient {
     pub fn travel_check(&mut self) {
         let Some((back, at, pos)) = self.travel.clone() else { return };
         // nobody there (the link says so at once), or no welcome for a long while
-        let refused = self.status.starts_with("Can't reach");
+        let refused = self.status.starts_with("Can't reach") || self.status.starts_with("Reconnecting");
         if !refused && self.now() - at < 20.0 {
             return;
         }
@@ -653,6 +679,7 @@ impl WorldClient {
             }
         }
         self.slot = self.slot.min(self.hotbar.len().saturating_sub(1));
+        let spawn = if spawn.iter().all(|v| v.is_finite()) { spawn } else { [0.0, 8.0, 0.0] };
         self.spawn = spawn;
         self.body.pos = spawn;
         // start facing away from the camera, into the world
@@ -753,14 +780,16 @@ pub fn receive(
     #[cfg(target_arch = "wasm32")]
     web_link::pump();
     let msgs: Vec<Incoming> = match &w.link {
-        Some(l) => l.inbox.lock().unwrap().try_iter().collect(),
+        Some(l) => l.inbox.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect(),
         None => return,
     };
     let now = w.now();
     for m in msgs {
         match m {
             Incoming::Status(s) => {
-                if s == "Connected" {
+                if s == "Connected" && w.watch {
+                    w.send(&ToServer::Watch { protocol: PROTOCOL });
+                } else if s == "Connected" {
                     // say hello with what you look like
                     let hello = proto::Hello {
                         version: proto::VERSION,
@@ -770,7 +799,9 @@ pub fn receive(
                     };
                     let avatar = postcard::to_stdvec(&hello).unwrap_or_default();
                     let name = w.name.clone();
-                    let token = w.token.clone();
+                    // a portal can lead to any host: the sign-in token only goes where you signed in
+                    let here = w.url.as_deref().map(url_host);
+                    let token = if here == w.token_host { w.token.clone() } else { None };
                     w.send(&ToServer::Hello { protocol: PROTOCOL, name, avatar, token });
                 } else {
                     w.ready = false;
@@ -923,6 +954,9 @@ pub fn receive(
                     }
                     ToClient::Pose { player, blob } => {
                         let Ok(p) = postcard::from_bytes::<Placed>(&blob) else { continue };
+                        if !p.at.iter().all(|v| v.is_finite()) || !p.yaw.is_finite() {
+                            continue;
+                        }
                         if let Some(o) = w.others.get_mut(&player) {
                             let tick = p.pose.tick;
                             o.stream.push(p.pose, now);
@@ -941,7 +975,8 @@ pub fn receive(
                         Err(e) => crate::note!("[world] bad weather: {e}"),
                     },
                     ToClient::Bye { why } => {
-                        w.status = why;
+                        // refused on the far side of a portal: go back at once, not after a wait
+                        w.status = if w.travel.is_some() { format!("Can't reach the world: {why}") } else { why };
                         w.ready = false;
                     }
                 }
@@ -1243,7 +1278,7 @@ pub fn controls(
     for c in cmds {
         run_command(&mut w, &c);
     }
-    if !w.ready {
+    if !w.ready || w.watch {
         return;
     }
     let dt = real.delta_secs().min(0.25);
@@ -1553,6 +1588,21 @@ pub fn camera(
     }
     let dt = real.delta_secs().min(0.25);
     let size = w.block_size;
+    if w.watch {
+        // a slow drift round where people arrive, high enough to see them come and go
+        let t = w.now() as f32;
+        let centre = Vec3::from(w.spawn) * size + Vec3::Y * 1.5;
+        let angle = t * 0.045;
+        let radius = 15.0 + 2.5 * (t * 0.07).sin();
+        let at = centre + Vec3::new(angle.cos() * radius, 6.5 + 1.5 * (t * 0.05).sin(), angle.sin() * radius);
+        let dir = (centre - at).normalize_or(Vec3::NEG_Z);
+        w.cam_at = at;
+        w.cam_dir = dir;
+        for mut c in &mut cams {
+            *c = Transform::from_translation(at).looking_to(dir, Vec3::Y);
+        }
+        return;
+    }
     let ease = |rate: f32| 1.0 - (-dt * rate).exp();
     let chest = (Vec3::from(w.body.pos) + Vec3::Y * 2.4) * size;
     let focus = match w.focus {
@@ -1662,7 +1712,7 @@ pub fn hud(
     mut texts: Query<&mut Text, With<WorldHud>>,
     mut crosshairs: Query<&mut Visibility, With<Crosshair>>,
 ) {
-    if !w.active() {
+    if !w.active() || w.watch {
         return;
     }
     let hud = match w.hud {
@@ -1748,7 +1798,7 @@ pub fn hud(
 
 /// Send your pose 30 times a second: where you stand, which way you face, and the body.
 pub fn send_pose(mut w: ResMut<WorldClient>, tf: Query<&Transform>) {
-    if !w.ready || w.link.is_none() {
+    if !w.ready || w.link.is_none() || w.watch {
         return;
     }
     let now = w.now();

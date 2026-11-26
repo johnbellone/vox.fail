@@ -371,7 +371,7 @@ async fn plots_portals_and_reports_with_a_directory() {
             axum::routing::post(move |axum::Json(v): axum::Json<serde_json::Value>| {
                 let got = got.clone();
                 async move {
-                    got.lock().unwrap().push(v);
+                    got.lock().unwrap_or_else(|e| e.into_inner()).push(v);
                     "ok"
                 }
             }),
@@ -429,10 +429,65 @@ async fn plots_portals_and_reports_with_a_directory() {
     assert_eq!(refused, Some((1, Why::Claimed)));
     // the report: who's here, where, and the blocks each placed
     tokio::time::sleep(Duration::from_millis(900)).await;
-    let r = reports.lock().unwrap().iter().find(|r| r["players"].as_array().is_some_and(|p| !p.is_empty())).cloned().expect("a report");
+    let r = reports.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|r| r["players"].as_array().is_some_and(|p| !p.is_empty())).cloned().expect("a report");
     assert_eq!(r["world"], "test");
     assert_eq!(r["level"], "void");
     let mut placed: Vec<(u64, u64)> = r["players"].as_array().unwrap().iter().map(|p| (p["account"].as_u64().unwrap(), p["edits"].as_u64().unwrap())).collect();
     placed.sort();
     assert_eq!(placed, vec![(7, 1), (8, 1)]);
+}
+
+#[tokio::test]
+async fn watchers_see_the_world_without_names_and_are_not_players() {
+    let (server, url) = serve(config(":memory:")).await;
+    let mut a = join(&url, "Ann").await;
+    // a watcher gets the world, then Ann, with no name
+    let (mut w, _) = connect_async(&url).await.unwrap();
+    send(&mut w, &ToServer::Watch { protocol: PROTOCOL }).await;
+    let ToClient::Welcome { you, name, .. } = recv(&mut w).await else { panic!("no welcome") };
+    assert_eq!(you, u32::MAX);
+    assert!(name.is_empty());
+    let mut chunks = 0;
+    loop {
+        match recv(&mut w).await {
+            ToClient::Chunk { .. } => chunks += 1,
+            ToClient::Ready => break,
+            m => panic!("{m:?}"),
+        }
+    }
+    assert!(chunks > 0);
+    assert!(matches!(recv_event(&mut w).await, ToClient::Joined { ref name, .. } if name.is_empty()));
+    // the watcher is not a player: nobody hears of them, and the status counts only Ann
+    assert_eq!(server.status().await.unwrap().players, vec!["Ann".to_string()]);
+    // Ann's edits and Bob's arrival reach the watcher, Bob without his name
+    stand(&mut a).await;
+    send(&mut a.ws, &ToServer::Edit { id: 1, cell: [0, 0, 0], block: 3 }).await;
+    assert!(matches!(recv_event(&mut w).await, ToClient::Edits(ref e) if e.iter().any(|e| e.cell == [0, 0, 0] && e.block == 3)));
+    let b = join(&url, "Bob").await;
+    assert_eq!(b.others, vec!["Ann"], "Bob doesn't see the watcher");
+    assert!(matches!(recv_event(&mut w).await, ToClient::Joined { ref name, .. } if name.is_empty()));
+    // a watcher may not send anything: the server ends the connection
+    send(&mut w, &ToServer::Edit { id: 1, cell: [1, 0, 0], block: 2 }).await;
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(Ok(m)) = w.next().await {
+            if matches!(m, Message::Close(_)) {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the watcher was let go");
+}
+
+#[tokio::test]
+async fn watchers_are_capped() {
+    let mut cfg = config(":memory:");
+    cfg.max_watchers = 1;
+    let (_server, url) = serve(cfg).await;
+    let (mut w1, _) = connect_async(&url).await.unwrap();
+    send(&mut w1, &ToServer::Watch { protocol: PROTOCOL }).await;
+    assert!(matches!(recv(&mut w1).await, ToClient::Welcome { .. }));
+    let (mut w2, _) = connect_async(&url).await.unwrap();
+    send(&mut w2, &ToServer::Watch { protocol: PROTOCOL }).await;
+    assert!(matches!(recv(&mut w2).await, ToClient::Bye { ref why } if why.contains("too many")));
 }

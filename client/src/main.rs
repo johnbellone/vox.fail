@@ -23,6 +23,8 @@ fn main() {
         model: arg("--model").unwrap_or_default(),
         wear: arg("--wear").map(|w| w.split(',').map(String::from).collect()).unwrap_or_default(),
         canvas: None,
+        // --watch: look at the world without joining it
+        watch: args.iter().any(|a| a == "--watch"),
     }
     .from_token();
     vox_client::app(start, root.join("assets").to_string_lossy().into_owned()).run();
