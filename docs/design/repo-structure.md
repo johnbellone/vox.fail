@@ -1,6 +1,6 @@
 # Design: repository structure
 
-Status: **steps 1 to 9 done** · 2026-11-26 · except plugins: main() still registers every system itself
+Status: **done** · 2026-11-26 · the avatar app's plugins follow its pipelines (see AGENTS.md), not its folders
 
 ## Problem
 

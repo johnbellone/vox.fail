@@ -137,10 +137,11 @@ From the code review; none are regressions, but know they exist before relying o
   over every field we read; password hashing runs at most four at a time; the relay limits shows
   and wrong codes per address (and wrong codes per show) and drops text from guests and viewers.
   Not yet: a world's sign-in token is valid on any world (no audience in the token).
-- `bins/block-avatar/src/main.rs`'s `main()` (about 690 lines) registers every system itself;
-  one Bevy plugin per folder (`app`, `sound`, `scene`, ...) is the next step. The big files are
-  split into folders (`client/`, `questions/`, `ask/`, `chat/`, `guest/`, `bevel/`), each with
-  its types in `mod.rs` and its functions by concern in the children.
+- The avatar app's systems are plugins by pipeline (`app/plugins.rs`: `Setup`, `Frame`, `Motion`,
+  `Network`, `WorldGlue`), not by folder: several chains run systems from different folders in
+  a set order. Resources are built from the settings in `app/configure.rs`; `main()` is about
+  50 lines. Check schedule changes with `tools/test/visual_test.py` (render references with the
+  old build, `--update`, then compare the new one).
 - Remeshing copies voxels chunk by chunk and runs within a per-frame budget (8 ms desktop,
   5 ms browser), nearest first; still: a one-block edit rebuilds its whole chunk, vertices are
   64 bytes, and weather and fog baking run on the main thread.
