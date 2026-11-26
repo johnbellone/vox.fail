@@ -1,7 +1,7 @@
 [package]
 name = "vox-client"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "Play Vox: walk into a world with your character. Runs on the desktop and, built for WebAssembly, in the browser."
 
 [lib]
@@ -12,16 +12,16 @@ name = "vox-client"
 path = "src/main.rs"
 
 [dependencies]
-vox-world = { path = "../world" }
-vox-core = { path = "../core" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-bevy = "0.19.1"
+vox-world.workspace = true
+vox-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bevy.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "0.19.1", features = ["webgpu"] }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Response", "Request", "RequestInit", "Headers"] }
-getrandom = { version = "0.3", features = ["wasm_js"] }
+bevy = { workspace = true, features = ["webgpu"] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Response", "Request", "RequestInit", "Headers"] }
+getrandom = { workspace = true, features = ["wasm_js"] }

@@ -1,13 +1,13 @@
 [package]
 name = "block_avatar"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "Mic-driven block-style avatar for streaming (OBS)"
 
 [dependencies]
-bevy = "0.19.1"
-vox-core = { path = "core" }
-vox-world = { path = "world" }
+bevy.workspace = true
+vox-core.workspace = true
+vox-world.workspace = true
 # Same major as bevy_audio's rodio, so both share one ALSA/CoreAudio/WASAPI backend.
 cpal = "0.17"
 # Built-in speech-to-text for the speech bubbles (optional: needs CMake and a C++ compiler, plus
@@ -16,16 +16,16 @@ whisper-rs = { version = "0.16", optional = true }
 # Viewer questions: the public "ask" page (tiny_http), Twitch login (ureq), JSON, session tokens.
 tiny_http = "0.12"
 ureq = "3"
-serde_json = "1"
-getrandom = "0.3"
+serde_json.workspace = true
+getrandom.workspace = true
 # Auto shorts and comic strips: frames kept as JPEGs in memory, strips written as PNG.
 jpeg-encoder = "0.6"
 jpeg-decoder = "0.3"
-png = "0.18"
+png.workspace = true
 ab_glyph = "0.2"
-tungstenite = { version = "0.27", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
-serde = { version = "1.0.229", features = ["derive"] }
-postcard = { version = "1", features = ["use-std"] }
+tungstenite.workspace = true
+serde.workspace = true
+postcard.workspace = true
 
 # Windows only: hotkeys that work while a game has focus, and the console for --list-mics.
 # (`--cfg winchk` lets this code be type-checked on Linux: RUSTFLAGS="--cfg winchk" cargo check)
@@ -53,6 +53,34 @@ codegen-units = 16
 
 [workspace]
 members = ["relay", "core", "server", "directory", "world", "client"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# Every shared dependency once: members write `name.workspace = true` (adding features if they
+# need more), so the crates can't drift apart.
+[workspace.dependencies]
+vox-core = { path = "core" }
+vox-world = { path = "world" }
+bevy = "0.19.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+postcard = { version = "1", features = ["use-std"] }
+getrandom = "0.3"
+png = "0.18"
+tungstenite = { version = "0.27", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+axum = "0.8"
+futures-util = "0.3.34"
+tokio = "1"
+tokio-tungstenite = "0.30.0"
+rusqlite = { version = "0.37", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
 
 # The browser client: smaller and a little slower to build.
 [profile.wasm-release]

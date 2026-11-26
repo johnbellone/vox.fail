@@ -1,17 +1,17 @@
 [package]
 name = "vox-server"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "A Vox world server: one shared build space, its players and its blocks, kept in SQLite."
 
 [dependencies]
-vox-core = { path = "../core" }
-axum = { version = "0.8", features = ["ws"] }
-futures-util = "0.3.34"
-rusqlite = { version = "0.37", features = ["bundled"] }
-serde_json = "1.0.154"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+vox-core.workspace = true
+axum = { workspace = true, features = ["ws"] }
+futures-util.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
 
 [dev-dependencies]
-tokio-tungstenite = "0.30.0"
+tokio-tungstenite.workspace = true
