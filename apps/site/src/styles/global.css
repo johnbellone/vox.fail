@@ -1,0 +1,116 @@
+/* Vox's pages: the Void, before you're in it. A pale, cool, luminous space with a floor running
+   to a white horizon and three moons faint in the light. One loud thing: the blocky wordmark.
+   Everything else is quiet; Mantine draws the controls, themed in theme.ts. */
+
+@font-face {
+  font-family: "Atkinson";
+  src: url("./fonts/atkinson-hyperlegible-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atkinson";
+  src: url("./fonts/atkinson-hyperlegible-latin-700-normal.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Block";
+  src: url("./fonts/PressStart2P-Regular.ttf") format("truetype");
+  font-display: block;
+}
+
+:root {
+  --vox-fog: #e9edf4;
+  --vox-pearl: #fbfcfe;
+  --vox-slate: #262c3a;
+  --vox-moon: #6f7c9a;
+  --vox-veil: #c9d0de;
+  --vox-gate: #3a3fb0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--vox-fog);
+}
+
+/* ---- the void behind every page: sky, moons, a floor to the horizon */
+.vox-void {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: radial-gradient(120% 70% at 50% 62%, #ffffff 0%, #f4f6fa 38%, var(--vox-fog) 70%, #dfe4ee 100%);
+}
+.vox-void .moon { position: absolute; border-radius: 50%; filter: blur(1.5px); }
+.vox-void .great { width: 15vmin; height: 15vmin; left: 68%; top: 9%; background: radial-gradient(circle at 38% 36%, #ffffff, #dde3ee 60%, #cfd6e4); opacity: 0.55; }
+.vox-void .red { width: 5vmin; height: 5vmin; left: 22%; top: 17%; background: radial-gradient(circle at 40% 40%, #f3d6d0, #d9a99f); opacity: 0.35; }
+.vox-void .cold { width: 2.6vmin; height: 2.6vmin; left: 82%; top: 31%; background: #d6e2f2; opacity: 0.5; }
+.vox-void .floor {
+  position: absolute;
+  left: -50%;
+  right: -50%;
+  bottom: -10%;
+  height: 58%;
+  transform: perspective(60vh) rotateX(68deg);
+  transform-origin: 50% 0;
+  background-image:
+    linear-gradient(to right, rgba(140, 152, 180, 0.28) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(140, 152, 180, 0.28) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 45%);
+}
+
+/* ---- the front page's live view: the world, fading in over the still Void */
+.vox-live {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.6s ease;
+}
+.vox-live.on { opacity: 1; }
+.vox-live canvas { width: 100%; height: 100%; display: block; outline: none; }
+/* light across the words, clear over the world */
+.vox-live .veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(244, 246, 250, 0.82) 0%, rgba(244, 246, 250, 0.55) 38%, rgba(244, 246, 250, 0.08) 70%, transparent 100%);
+}
+@media (max-width: 991px) {
+  .vox-live .veil { background: rgba(244, 246, 250, 0.6); }
+}
+
+/* ---- the wordmark: the one loud thing */
+.vox-wordmark {
+  font-family: "Block", monospace;
+  letter-spacing: 0.08em;
+  color: var(--vox-slate);
+  line-height: 1;
+  margin: 0;
+  text-shadow: 3px 3px 0 var(--vox-veil);
+}
+.vox-wordmark a { color: inherit; text-decoration: none; }
+
+/* ---- surfaces: pale stone, a little glass over the void */
+.vox-slab {
+  background: rgba(251, 252, 254, 0.86);
+  backdrop-filter: blur(6px);
+}
+
+/* ---- playing: the game fills the window */
+.vox-game {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  outline: none;
+  background: #f3f5f9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

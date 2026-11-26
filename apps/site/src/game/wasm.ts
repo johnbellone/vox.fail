@@ -1,0 +1,65 @@
+// The WebAssembly client (vox-client built by tools/build_web.sh into public/pkg). It is loaded
+// at run time, not bundled, and reports how it's getting on through three window callbacks.
+
+declare global {
+  interface Window {
+    vox_status?: (text: string) => void;
+    vox_ready?: () => void;
+    vox_error?: (text: string) => void;
+  }
+}
+
+/** What `start` takes (client/src/lib.rs, `Start`). */
+export interface StartConfig {
+  canvas: string;
+  url: string;
+  token?: string;
+  name?: string;
+  model?: string;
+  wear?: string[];
+  /** look at the world without joining it: no sign-in, no avatar, no controls */
+  watch?: boolean;
+  base?: string;
+}
+
+interface Client {
+  default: () => Promise<unknown>;
+  start: (config: string) => void;
+}
+
+// where the client is served; a variable so the bundler leaves the import alone
+const CLIENT_URL = "/pkg/vox_client.js";
+
+export async function loadClient(): Promise<(config: StartConfig) => void> {
+  let client: Client;
+  try {
+    client = (await import(/* @vite-ignore */ CLIENT_URL)) as Client;
+    await client.default();
+  } catch (err) {
+    console.error(err);
+    throw new Error("the browser client isn't installed on this server yet (tools/build_web.sh builds it)");
+  }
+  return (config) => client.start(JSON.stringify({ base: location.origin, ...config }));
+}
+
+interface Gpu {
+  requestAdapter: () => Promise<unknown>;
+}
+
+/** Can this browser run the client well enough to show it unasked? Checked before downloading
+ *  it: a browser may offer WebGPU yet have no GPU to give (the client would then stop). */
+export async function canShowLive(): Promise<boolean> {
+  if (typeof navigator === "undefined") return false;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+  // small screens are mostly phones: not megabytes of client before anyone asked to play
+  if (matchMedia("(max-width: 767px)").matches) return false;
+  const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+  if (conn?.saveData) return false;
+  const gpu = (navigator as Navigator & { gpu?: Gpu }).gpu;
+  if (!gpu) return false;
+  try {
+    return (await gpu.requestAdapter()) != null;
+  } catch {
+    return false;
+  }
+}

@@ -8,3 +8,6 @@ web/pkg/
 gags.txt
 testdata/visual/out/
 __pycache__/
+node_modules/
+apps/*/dist/
+apps/site/public/pkg/
