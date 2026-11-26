@@ -1,4 +1,7 @@
 ## 2026-11-26
+* **Creation** [2026-11-26T21:54:59Z]: Documented concept `decisions/player-help-single-source.md` (Decision: Player Help Is Markdown in docs/help, Rendered by the Site). — Record help-docs single-source design
+* **Creation** [2026-11-26T21:54:59Z]: Documented concept `decisions/haiku-writes-sonnet-reviews.md` (Decision: Haiku Writes, Sonnet Reviews, Beads Plan the Work). — Record model-role policy adopted with the AGENTS.md restructure
+* **Update** [2026-11-26T21:54:51Z]: Updated concept `convention/work-tracking.md`.
 * **Relate** [2026-11-26T17:38:54Z]: Linked `status/repository-hygiene.md` to `status/restructure-and-follow-on-work.md` (where the large worktree came from).
 * **Relate** [2026-11-26T17:38:54Z]: Linked `status/test-results.md` to `architecture/testing-and-ci.md` (how tests and CI are set up).
 * **Relate** [2026-11-26T17:38:54Z]: Linked `status/documentation-drift.md` to `status/restructure-and-follow-on-work.md` (docs also changed with the restructure).

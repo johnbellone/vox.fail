@@ -171,6 +171,7 @@ impl Directory {
             .route_service("/play", ServeFile::new(web.join("play.html")))
             .route_service("/inventory", ServeFile::new(web.join("inventory.html")))
             .route_service("/friends", ServeFile::new(web.join("friends.html")))
+            .route_service("/help", ServeFile::new(web.join("help.html")))
             .nest_service("/assets", ServeDir::new(assets))
             .nest_service("/data", ServeDir::new(data))
             // the browser client is big: served pre-compressed when tools/dev/build_web.sh made the

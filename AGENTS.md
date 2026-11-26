@@ -3,6 +3,26 @@
 Orientation for anyone (human or AI agent) working in this repository. Read this first; the
 [README](README.md) is the user-facing manual for the avatar app and the Vox worlds.
 
+## Read this first (30 seconds)
+
+1. **Find your work:** writers: your task message is your bead. Leads: `bd ready` lists unblocked
+   beads; `bd show <id>` gives one bead's files and acceptance check. Do that bead and nothing
+   else. No bead and no task message: ask. Writers never claim or close beads; the lead closes
+   a bead after its review passes.
+2. **Know your role:** haiku writes (code and prose, one bead, under 100k tokens of context);
+   sonnet reviews. See [Models and subagents](#models-and-subagents).
+3. **Stay in your files.** Touch only the files the bead names. Need another? Stop and ask.
+4. **Never invent facts.** Key bindings, ports, flags and numbers come from code or data you
+   read, not from memory.
+5. **Prove it:** run the bead's acceptance command, report the real result.
+6. **Hard stops:** (the full list is the "Hard constraints" bullet under "Task tracking and agent memory") no secrets, `*.db` or `directory.key*` in git; no edits to generated assets
+   (`assets/models`, `apps/site/public/pkg`, `apps/site/dist`); no commits or pushes unless asked;
+   do not read `knowledge/` with file tools (use `okf_*`, see the end of this file).
+
+Quick commands: `cargo check --workspace` (types), `cargo test --workspace` (tests),
+`cd apps/site && bun run build` (pages), `tools/dev/check_links.sh` (markdown links, once it
+exists), `bd ready` / `bd close <id> --reason "..."` (work).
+
 ## What this is
 
 Two products share one Cargo workspace:
@@ -37,7 +57,10 @@ Two products share one Cargo workspace:
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
 | `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
-| `docs/` | | `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
+| `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
+| `.pi/agents/` | | Project subagents: `vox-writer` (haiku) and `vox-reviewer` (sonnet). See [Models and subagents](#models-and-subagents). |
+| `.beads/` | | The beads task database (`bd`). Never edit by hand. |
+| `knowledge/` | | okf project memory. Use the `okf_*` tools, not file tools. |
 | `source/vox/` | | MagicaVoxel sources for the characters and props. |
 
 Dependency direction: `vox-core` <- `vox-world` <- `vox-client` and `block_avatar`; `vox-server`
@@ -111,6 +134,90 @@ ignores `*.db`).
   bare `println!`.
 - Comments explain why, and every module starts with a `//!` doc saying what it is for.
 
+## Models and subagents
+
+Plans are written by the lead (a person or a larger model); work is split into beads small
+enough for a haiku-class model; sonnet-class models review. The roles are pinned in
+`.pi/agents/` (`vox-writer`, `vox-reviewer`); change a model there, not in prompts.
+
+| Role | Model | Does | Must not |
+| --- | --- | --- | --- |
+| Lead | any | Plans, writes beads, picks files, launches subagents, decides, runs `okf_*`, closes beads | Hand a writer a vague task |
+| `vox-writer` | haiku | Implements **one bead**: code or prose, in the named files | Explore the repo, touch other files, decide design, commit |
+| `vox-reviewer` | sonnet | Reads the diff or prose, checks facts against code and data, reports `PASS` / `PASS WITH FIXES` / `FAIL` | Edit files, run shell commands |
+
+Rules that keep haiku inside its limits:
+
+- **One bead, one writer, one cwd.** Never run two writers on the same files at once.
+- **Under 100k tokens of context.** A bead names at most about eight files to read and a few to
+  change. Split a bead that needs more. Point at line ranges for big files; never at `assets/`,
+  `target/`, `*.db`, `apps/site/dist` or `apps/site/public/pkg`.
+- **Prose beads carry their sources.** List the files each claim must come from. Pages stay
+  short (about one screen per topic) so one writer can finish one.
+- **Every bead ends with a command.** Something that prints pass or fail: `cargo check -p <crate>`,
+  `cargo test -p <crate> <name>`, `bun run build`, a `grep`, a link check.
+- **Every writer bead gets a reviewer.** Sonnet reviews before the bead closes; fix `blocker`
+  and `major` findings (a new writer run, or the lead) and re-review until `PASS`.
+- **Escalate, do not guess.** A writer that needs a decision stops and reports it.
+
+Launch (Pi subagents): `subagent({ agent: "vox-writer", task: <template below> })`, then
+`subagent({ agent: "vox-reviewer", task: <review template> })`. Parallel writers are fine when
+their `Files to change` do not overlap.
+
+### Directed task template
+
+Give a writer exactly this, filled in. Short and concrete beats long and general.
+
+```text
+Bead: vox-xxx.n  <title>
+Goal: <one sentence, the outcome>
+Files to read: <paths, with line ranges for big files>
+Files to change: <paths; "new: path" for a new file>
+Do:
+  1. <concrete step>
+  2. <concrete step>
+Do not: <scope limits, e.g. "do not touch other docs", "no new dependencies">
+Acceptance: <command to run> -> <expected result>
+Report: what changed, the acceptance output, and anything you could not verify.
+```
+
+Review template for `vox-reviewer`:
+
+```text
+Bead: vox-xxx.n  <title>
+Acceptance criteria: <copied from the bead>
+Files changed: <paths>
+Check against: <code and data files the claims come from>
+Focus: <facts | correctness | security | conventions | lost content | links>
+Report: verdict and findings with path:line evidence.
+```
+
+## Beads workflow
+
+Beads (`bd`, prefix `vox`) are how work is planned and run. Do not keep plans only in chat.
+
+```bash
+bd ready                              # unblocked work
+bd show vox-abc.2                     # one bead: description, acceptance, dependencies
+bd update vox-abc.2 --claim           # take it (marks in progress)
+bd close vox-abc.2 --reason "what was done and how it was checked"
+bd create "Title" --parent vox-abc --silent -p 2 \
+  -d "Files and steps" --acceptance "command -> result" --deps "vox-abc.1"
+bd list                               # everything, as a tree
+```
+
+- **Plan as an epic with children.** One bead per haiku-sized piece of work, plus one review
+  bead after each group of writer beads (dependency: the writers it reviews).
+- **A bead says:** the files (read and change), the steps, and the acceptance command. If you
+  could not hand it to `vox-writer` as the template above, it is too vague or too big. Split it.
+- **Dependencies are real.** Use `--deps` so `bd ready` shows only what can start now.
+- **User-facing bug or request?** It also needs a GitHub issue; put `gh-<n>` in `--external-ref`.
+- **Claim before you start, close with a reason** that names the check you ran. Do not close a
+  writer bead before its review passes.
+- **Found something else?** Create a new bead (`--deps "discovered-from:<id>"`); do not widen the
+  current one.
+- `bd metrics off` keeps usage reporting off (already set in this clone).
+
 ## Design documents
 
 Proposals live in `docs/design/`. Read the relevant one before large changes:
@@ -178,8 +285,10 @@ From the code review; none are regressions, but know they exist before relying o
 - **GitHub Issues** are for people: user-facing bugs, feature requests and questions. They are the
   public record of what should change and why. Never track a user-facing bug in beads only.
 - **beads** (`bd`) is for agents: implementation tasks, dependencies and follow-ups. Put the
-  GitHub issue in each bead (`gh-<n>`); work from `bd ready`; close with a reason. (beads may not
-  be installed yet.)
+  GitHub issue in each bead (`gh-<n>`, `--external-ref`); work from `bd ready`; close with a
+  reason. The workflow is in [Beads workflow](#beads-workflow). Install: `npm install -g @beads/bd`;
+  set up once per clone with `bd init --non-interactive --prefix vox --skip-agents --skip-hooks`
+  (this file is the agent instructions; do not let `bd init` rewrite it).
 - **okf** (`knowledge/`) is durable project knowledge: architecture, technologies, decisions and
   status. Search it before large changes; record decisions in it when you finish.
 - Hard constraints: no real-person likenesses or trademarked characters; no synthetic voices
@@ -188,6 +297,8 @@ From the code review; none are regressions, but know they exist before relying o
   `knowledge/convention/hard-constraints.md`.
 - Before finishing code changes run `cargo test --workspace`, and
   `okf validate knowledge --strict --drift` when you touched `knowledge/`.
+- Done means: acceptance command passed, review passed, bead closed with a reason, decisions
+  recorded in okf (lead only).
 
 <!-- BEGIN OKF AGENT MEMORY -->
 ## 1. Behavioral Invariants & Constraints (RFC 2119)

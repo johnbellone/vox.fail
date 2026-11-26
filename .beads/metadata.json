@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "vox",
+  "project_id": "922e1c89-0841-4162-ad5f-67788d0dd940"
+}

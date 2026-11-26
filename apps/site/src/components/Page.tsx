@@ -9,6 +9,7 @@ const PLACES: [string, string][] = [
   ["/create", "Character"],
   ["/inventory", "Inventory"],
   ["/friends", "Friends and raids"],
+  ["/help", "Help"],
 ];
 
 export function Nav() {

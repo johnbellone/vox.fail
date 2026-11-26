@@ -32,7 +32,7 @@ WebAssembly client with `tools/dev/build_web.sh` (see below).
 ```
 build.ts                 Bun.build over src/pages/*.html into dist/, then copies public/
 src/
-  pages/*.html           one HTML entry per URL: index (/), create, play, inventory, friends
+  pages/*.html           one HTML entry per URL: index (/), create, play, inventory, friends, help
   entries/*.tsx          each page's script: mount(<ThePage />)
   api/
     client.ts            fetch wrapper, errors, helpers (worldUrl, when, num)
@@ -48,6 +48,7 @@ src/
     inventory/           explorer (model.ts holds the filtering rules, with tests),
                          item detail, feats, ledger
     friends/             friends, groups, raid parties
+    help/                the help pages: docs/help/*.md, imported as text (pages.ts)
     play/                starts the WebAssembly client on a full-window canvas
   styles/global.css      fonts and the Void backdrop
   theme.ts               Mantine theme: gate blue, ember for errors, moon greys, Atkinson

@@ -32,7 +32,7 @@ to cross to another world. If a port is taken by a leftover server, `pkill vox-s
 | `assets/`, `data/` | Models, props, sets, sounds, fonts; blocks, characters, wardrobe, levels |
 | `tools/assets`, `tools/dev`, `tools/test` | Asset builders; dev scripts (local play, the browser build); test drivers |
 | `deploy/` | systemd units and the Cloudflare Tunnel for vox.fail |
-| `docs/` | `vox/` (playing and running worlds), `avatar/` (the avatar app's manual), `design/` (design documents) |
+| `docs/` | `help/` (player help), `vox/` (playing and running worlds), `avatar/` (the avatar app's manual), `design/` (design documents) |
 
 ## Building
 
@@ -58,6 +58,8 @@ On Linux, install the audio and input headers first: `sudo apt install libasound
 
 ## Read next
 
+- [docs/help](docs/help/README.md): player help: getting started, controls, building, worlds,
+  accounts, troubleshooting, FAQ. Also on the site at /help.
 - [docs/vox](docs/vox/README.md): running worlds, the directory, signing in, authority, plots,
   portals, raids.
 - [docs/avatar/manual.md](docs/avatar/manual.md): Block Avatar, the streaming app.

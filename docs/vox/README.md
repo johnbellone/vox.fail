@@ -1,7 +1,7 @@
 # Vox: playing and running worlds
 
 How to run a world, sign in from the web pages, and what authority, currencies, plots, portals,
-friends and raids are. For a quick local game see the [README](../../README.md); for deploying
+friends and raids are. For how to play, see the [player help](../help/README.md). For a quick local game see the [README](../../README.md); for deploying
 vox.fail see [deploy/README.md](../../deploy/README.md); the design documents are in
 [docs/design](../design).
 
@@ -75,15 +75,14 @@ and `wss://vox.fail/w/<port>/ws` to each world, with nothing open on the server.
 the tunnel's config, systemd units, the dashboard settings and the steps. The desktop client
 goes there by default.
 
-**Moving and building:** the camera looks down from above at an angle, like Diablo. **Left
-click** (or hold) walks to where you point, **WASD** walk too, the **wheel** zooms in and out,
-**Q**/**E** turn the view, **Space** jumps, **F** flies. **Right click** puts a block where you
-point, **Shift + right click** takes one away; **1–9** or **Shift + wheel** choose which. **V**
-switches to a camera behind your shoulder (mouse look, crosshair; Esc gives the mouse back). Some
-places have a fixed camera that takes over while you're there. A controller: left stick walk,
-right stick turn and zoom, A jump, Y fly, RT build, LT take away, bumpers choose, Select switches
-camera. The show's hotkeys are off while you're in a world. Others appear as their own
-characters, moving as they move.
+**Moving and building:** you start in first person, looking around with the mouse. **V** or **F5**
+changes the view: first person, behind your shoulder, then from above. From above, **left click**
+walks to the point under the pointer, **right click** places a block, **Shift + right click**
+removes one, and the **wheel** zooms. **1–9** choose the hotbar slot. Some places have a fixed
+camera that takes over while you're there. A controller: left stick walks, right stick looks,
+South jumps, D-pad down flies, RT breaks, LT places, and the bumpers choose the hotbar block. The
+show's hotkeys are off while you're in a world. Others appear as their own characters, moving as
+they move. Every control is listed in [the player help](../help/controls.md).
 
 **The Void** is the first world: an ethereal, flat, luminous space. A pale polished floor goes
 on for ever into bright fog, three moons faint in the light. You arrive in a circle of pale

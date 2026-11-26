@@ -4,7 +4,7 @@
 //   bun run build --watch    again on every change (for working on the pages)
 //
 // Each page in src/pages is its own HTML entry, so the URLs stay what the directory routes:
-// /, /create, /play, /inventory, /friends. Everything in public/ is copied as is, including
+// /, /create, /play, /inventory, /friends, /help. Everything in public/ is copied as is, including
 // public/pkg, the WebAssembly client that tools/dev/build_web.sh writes. Bundled files (fonts, the
 // icon) go to static/, not assets/: the directory serves /assets from the repository's assets/.
 
