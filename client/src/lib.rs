@@ -107,7 +107,7 @@ pub fn app(start: Start, assets: String) -> App {
         MaterialPlugin::<outdoors::RainMaterial>::default(),
         MaterialPlugin::<portals::PortalMaterial>::default(),
     ))
-    .add_plugins(FrameTimeDiagnosticsPlugin::default())
+    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::hud::HudPlugin))
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
     .insert_resource(
         world::WorldClient::new(Some(start.url.clone()), start.name.clone())
@@ -137,7 +137,42 @@ pub fn app(start: Start, assets: String) -> App {
     );
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Update, web::fetch_wanted);
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(path) = std::env::var("VOX_SCREENSHOT") {
+        app.insert_resource(ShotAt { path, after: std::env::var("VOX_SCREENSHOT_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(6.0), taken: None })
+            .add_systems(Update, screenshot);
+    }
     app
+}
+
+/// For checking the screen without looking: `VOX_SCREENSHOT=shot.png` saves a picture of the
+/// window `VOX_SCREENSHOT_AFTER` seconds (6) after the world is ready, then quits.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource)]
+struct ShotAt {
+    path: String,
+    after: f64,
+    taken: Option<f64>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn screenshot(mut commands: Commands, w: Res<world::WorldClient>, mut shot: ResMut<ShotAt>, mut ready_at: Local<Option<f64>>, mut exit: MessageWriter<AppExit>) {
+    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    let now = w.now();
+    if !w.ready {
+        return;
+    }
+    let ready = *ready_at.get_or_insert(now);
+    match shot.taken {
+        None if now - ready >= shot.after => {
+            commands.spawn(Screenshot::primary_window()).observe(save_to_disk(shot.path.clone()));
+            shot.taken = Some(now);
+        }
+        Some(t) if now - t > 2.0 => {
+            exit.write(AppExit::Success);
+        }
+        _ => {}
+    }
 }
 
 /// Playing, not watching: the frame rate and the portal sweep are for players.

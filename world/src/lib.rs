@@ -18,6 +18,8 @@
 pub mod blocks;
 pub mod client;
 pub mod files;
+pub mod hud;
+pub mod input;
 pub mod outdoors;
 pub mod portals;
 pub mod pose;

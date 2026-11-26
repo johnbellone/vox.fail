@@ -1229,6 +1229,8 @@ fn main() {
         .add_systems(Update, sets::build)
         .init_resource::<vox_world::WorldRender>()
         .init_resource::<vox_world::LocalAvatar>()
+        // walking and building in a world read the same actions as the player client
+        .add_plugins(vox_world::input::InputPlugin)
         .add_systems(
             Update,
             (world_in, world::receive, world::attach, world::controls, world_out, world::remesh, world::hud)

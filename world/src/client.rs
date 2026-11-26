@@ -27,10 +27,6 @@ use std::{
 
 use bevy::platform::time::Instant;
 use bevy::{
-    input::{
-        gamepad::{Gamepad, GamepadButton},
-        mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
-    },
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
@@ -106,10 +102,37 @@ struct Other {
 /// How the camera follows you.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CamMode {
-    /// From high up at an angle (like Diablo), zooming in and out; the mouse points at things.
-    Diablo,
+    /// Through your own eyes, the mouse (or right stick) looks round; the default.
+    First,
     /// Close behind your shoulder, the mouse looks round.
     Behind,
+    /// From high up at an angle (like Diablo), zooming in and out; the mouse points at things.
+    Diablo,
+}
+
+impl CamMode {
+    /// The next view, round the three.
+    pub fn next(self) -> CamMode {
+        match self {
+            CamMode::First => CamMode::Behind,
+            CamMode::Behind => CamMode::Diablo,
+            CamMode::Diablo => CamMode::First,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            CamMode::First => "View: first person",
+            CamMode::Behind => "View: behind",
+            CamMode::Diablo => "View: from above",
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            CamMode::First => "first",
+            CamMode::Behind => "behind",
+            CamMode::Diablo => "diablo",
+        }
+    }
 }
 
 /// A fixed camera for a place in the world: while you're in its zone the camera moves there
@@ -321,7 +344,7 @@ impl Default for WorldClient {
             weather: None,
             weather_acc: 0.0,
             floor: None,
-            cam_mode: CamMode::Diablo,
+            cam_mode: CamMode::First,
             zoom: 13.0,
             zoom_now: 13.0,
             focus: None,
@@ -447,7 +470,7 @@ impl WorldClient {
         self.url.is_some()
     }
 
-    fn now(&self) -> f64 {
+    pub fn now(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
     }
 
@@ -596,6 +619,43 @@ impl WorldClient {
             return Some(0);
         }
         self.names.iter().position(|n| n == name).map(|i| i as u16 + 1)
+    }
+
+    /// Put `block` in your hand: its hotbar slot if it has one, else in place of the block in
+    /// the current slot.
+    pub fn pick_block(&mut self, block: u16) {
+        if block == 0 || self.liquid.get(block as usize).copied().unwrap_or(false) {
+            return;
+        }
+        if let Some(i) = self.hotbar.iter().position(|b| *b == block) {
+            self.slot = i;
+        } else if self.slot < self.hotbar.len() {
+            self.hotbar[self.slot] = block;
+        } else {
+            self.hotbar.push(block);
+            self.slot = self.hotbar.len() - 1;
+        }
+    }
+
+    /// The blocks in the hotbar, by slot.
+    pub fn hotbar(&self) -> &[u16] {
+        &self.hotbar
+    }
+
+    /// Put `block` in hotbar slot `i` (0 to 8).
+    pub fn set_hotbar(&mut self, i: usize, block: u16) {
+        if i >= 9 || block == 0 {
+            return;
+        }
+        while self.hotbar.len() <= i {
+            self.hotbar.push(block);
+        }
+        self.hotbar[i] = block;
+    }
+
+    /// Every block this world has, by id (1 up).
+    pub fn block_ids(&self) -> std::ops::RangeInclusive<u16> {
+        1..=self.names.len() as u16
     }
 
     pub fn selected(&self) -> u16 {
@@ -1164,6 +1224,10 @@ fn run_command(w: &mut WorldClient, cmd: &str) {
                 w.cam_mode = CamMode::Behind;
                 w.forced_shot = None;
             }
+            Some("first") => {
+                w.cam_mode = CamMode::First;
+                w.forced_shot = None;
+            }
             Some("auto") => w.forced_shot = None,
             Some("fixed") => {
                 let name = parts.get(2).copied().unwrap_or("");
@@ -1258,18 +1322,24 @@ fn facing(yaw: f32, pitch: f32) -> Vec3 {
 /// view, right click builds where the mouse points, Shift + right click takes a block away.
 /// Behind camera (V switches): the mouse looks round once captured and the crosshair builds.
 #[allow(clippy::too_many_arguments)]
+/// Walking, looking and building, from [`crate::input::Actions`] (keyboard and mouse or a
+/// gamepad, whichever is in use). Held break and place repeat, as in a creative world.
+#[allow(clippy::too_many_arguments)]
 pub fn controls(
     mut w: ResMut<WorldClient>,
     mut av: ResMut<crate::LocalAvatar>,
+    actions: Res<crate::input::Actions>,
+    settings: Res<crate::input::InputSettings>,
+    active: Res<crate::input::ActiveDevice>,
+    mode: Res<crate::input::UiMode>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    motion: Res<AccumulatedMouseMotion>,
-    scroll: Res<AccumulatedMouseScroll>,
-    pads: Query<&Gamepad>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
     cams: Query<(&Camera, &GlobalTransform), With<crate::WorldCamera>>,
     real: Res<Time<Real>>,
     mut walkers: Query<&mut Transform, With<Walker>>,
+    mut shown: Query<&mut Visibility>,
+    mut repeat: Local<BuildRepeat>,
 ) {
     if !w.active() {
         return;
@@ -1281,17 +1351,43 @@ pub fn controls(
     if !w.ready || w.watch {
         return;
     }
+    // a menu is open: it has the input, and the mouse
+    if *mode == crate::input::UiMode::Menu {
+        if let Ok((_, mut c)) = windows.single_mut() {
+            if w.captured {
+                c.grab_mode = CursorGrabMode::None;
+                c.visible = true;
+                w.captured = false;
+            }
+        }
+        repeat.held = None;
+        return;
+    }
+    use crate::input::Action as A;
     let dt = real.delta_secs().min(0.25);
     let size = w.block_size;
+    let now = w.now();
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    if keys.just_pressed(KeyCode::KeyV) {
-        w.cam_mode = if w.cam_mode == CamMode::Diablo { CamMode::Behind } else { CamMode::Diablo };
-        let s = if w.cam_mode == CamMode::Diablo { "Camera: from above" } else { "Camera: behind" };
+    let pad_active = active.is_gamepad();
+    if actions.just_pressed(A::View) {
+        w.cam_mode = w.cam_mode.next();
+        let s = w.cam_mode.label();
         w.notice(s);
     }
     let diablo = w.cam_mode == CamMode::Diablo;
-    // ---- the mouse: captured for looking behind; free (a pointer) from above
-    let mut clicked = (mouse.just_pressed(MouseButton::Left), mouse.just_pressed(MouseButton::Right));
+    // your own body is out of sight in first person
+    if let Some(root) = av.root {
+        if let Ok(mut v) = shown.get_mut(root) {
+            let want = if w.cam_mode == CamMode::First { Visibility::Hidden } else { Visibility::Inherited };
+            if *v != want {
+                *v = want;
+            }
+        }
+    }
+    // ---- the mouse: captured for looking (first person, behind); a pointer from above.
+    // The click that captures it does nothing else.
+    let clicked = (mouse.just_pressed(MouseButton::Left), mouse.just_pressed(MouseButton::Right));
+    let mut swallowed = false;
     let mut cursor_at = None;
     if let Ok((win, mut c)) = windows.single_mut() {
         if diablo {
@@ -1301,15 +1397,11 @@ pub fn controls(
                 w.captured = false;
             }
             cursor_at = win.cursor_position();
-        } else if !w.captured && clicked.0 {
+        } else if !w.captured && (clicked.0 || clicked.1) && !pad_active {
             c.grab_mode = CursorGrabMode::Locked;
             c.visible = false;
             w.captured = true;
-            clicked = (false, false);
-        } else if w.captured && keys.just_pressed(KeyCode::Escape) {
-            c.grab_mode = CursorGrabMode::None;
-            c.visible = true;
-            w.captured = false;
+            swallowed = true;
         }
     }
     // the ray under the pointer, from where the camera was last frame
@@ -1319,95 +1411,67 @@ pub fn controls(
             w.pick = Some((ray.origin / size, Vec3::from(ray.direction)));
         }
     }
-    // ---- look, zoom and turn
+    // ---- look and zoom
     if w.captured && !diablo {
-        w.cam_yaw -= motion.delta.x * 0.0035;
-        w.cam_pitch -= motion.delta.y * 0.0035;
+        w.cam_yaw -= actions.mouse_delta.x * settings.mouse_look;
+        w.cam_pitch -= actions.mouse_delta.y * settings.mouse_look;
     }
-    let pad = pads.iter().next();
-    let (mut stick, mut up, mut down) = (Vec2::ZERO, false, false);
-    let (mut jump, mut toggle_fly, mut run) = (false, false, false);
-    let (mut place, mut remove) =
-        if diablo { (clicked.1 && !shift, clicked.1 && shift) } else { (clicked.1 && w.captured, clicked.0 && w.captured) };
-    let mut cycle = 0i32;
-    let mut pad_build = false;
-    if let Some(p) = pad {
-        let look = p.right_stick();
-        if look.length() > 0.15 {
-            w.cam_yaw -= look.x * 2.6 * dt;
-            if diablo {
-                w.zoom = (w.zoom * (1.0 - look.y * 1.5 * dt)).clamp(4.0, 45.0);
-            } else {
-                w.cam_pitch += look.y * 2.0 * dt;
-            }
-        }
-        let ls = p.left_stick();
-        if ls.length() > 0.15 {
-            stick += ls;
-        }
-        jump |= p.just_pressed(GamepadButton::South);
-        up |= p.pressed(GamepadButton::South);
-        down |= p.pressed(GamepadButton::East);
-        toggle_fly |= p.just_pressed(GamepadButton::North);
-        run |= p.pressed(GamepadButton::LeftThumb);
-        let (rt, lt) = (p.just_pressed(GamepadButton::RightTrigger2), p.just_pressed(GamepadButton::LeftTrigger2));
-        place |= rt;
-        remove |= lt;
-        pad_build = rt || lt;
-        cycle += p.just_pressed(GamepadButton::RightTrigger) as i32 - p.just_pressed(GamepadButton::LeftTrigger) as i32;
-        if p.just_pressed(GamepadButton::Select) {
-            w.cam_mode = if diablo { CamMode::Behind } else { CamMode::Diablo };
+    let look = actions.look_stick;
+    if look != Vec2::ZERO {
+        w.cam_yaw -= look.x * settings.stick_look * dt;
+        if diablo {
+            w.zoom = (w.zoom * (1.0 - look.y * 1.5 * dt)).clamp(4.0, 45.0);
+        } else {
+            w.cam_pitch += look.y * settings.stick_look * 0.75 * dt;
         }
     }
     w.cam_pitch = w.cam_pitch.clamp(-1.45, 1.3);
     if diablo {
-        // Q and E turn the view an eighth of a turn
+        // Q and R turn the view an eighth of a turn
         if keys.just_pressed(KeyCode::KeyQ) {
             w.cam_yaw += std::f32::consts::FRAC_PI_4;
         }
-        if keys.just_pressed(KeyCode::KeyE) {
+        if keys.just_pressed(KeyCode::KeyR) {
             w.cam_yaw -= std::f32::consts::FRAC_PI_4;
         }
     }
-    // ---- keys
-    let k = |c: KeyCode| keys.pressed(c);
-    stick.y += k(KeyCode::KeyW) as i32 as f32 - k(KeyCode::KeyS) as i32 as f32;
-    stick.x += k(KeyCode::KeyD) as i32 as f32 - k(KeyCode::KeyA) as i32 as f32;
-    jump |= keys.just_pressed(KeyCode::Space);
+    // ---- moving
+    let mut stick = actions.movement;
+    let mut jump = actions.just_pressed(A::Jump);
     jump |= std::mem::take(&mut w.auto_jump);
     if let Some((dir, until)) = w.auto {
-        if w.now() < until {
+        if now < until {
             stick += dir;
         } else {
             w.auto = None;
         }
     }
-    up |= k(KeyCode::Space);
-    down |= k(KeyCode::ControlLeft) || k(KeyCode::ControlRight);
-    run |= shift && !diablo;
-    toggle_fly |= keys.just_pressed(KeyCode::KeyF);
-    const DIGITS: [KeyCode; 9] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-    ];
-    for (i, d) in DIGITS.iter().enumerate() {
-        if keys.just_pressed(*d) && i < w.hotbar.len() {
+    let up = actions.pressed(A::Jump);
+    let down = actions.pressed(A::Down);
+    let run = actions.pressed(A::Sprint);
+    // fly: its own button, or jump twice quickly
+    let mut toggle_fly = actions.just_pressed(A::Fly);
+    if actions.just_pressed(A::Jump) {
+        if now - repeat.last_jump < 0.3 {
+            toggle_fly = true;
+            repeat.last_jump = -1.0;
+        } else {
+            repeat.last_jump = now;
+        }
+    }
+    // ---- the hotbar
+    if let Some(i) = actions.digit {
+        if i < w.hotbar.len() {
             w.slot = i;
         }
     }
-    if scroll.delta.y.abs() > 0.0 {
+    let mut cycle = actions.just_pressed(A::HotbarNext) as i32 - actions.just_pressed(A::HotbarPrev) as i32;
+    if actions.scroll.abs() > 0.0 {
         if diablo && !shift {
             // the wheel zooms the camera in and out
-            w.zoom = (w.zoom * (1.0 - scroll.delta.y.signum() * 0.12)).clamp(4.0, 45.0);
+            w.zoom = (w.zoom * (1.0 - actions.scroll.signum() * 0.12)).clamp(4.0, 45.0);
         } else {
-            cycle -= scroll.delta.y.signum() as i32;
+            cycle -= actions.scroll.signum() as i32;
         }
     }
     if cycle != 0 && !w.hotbar.is_empty() {
@@ -1420,6 +1484,26 @@ pub fn controls(
         let s = if w.fly { "Flying" } else { "Walking" };
         w.notice(s);
     }
+    // ---- breaking and placing: on press, then again every quarter second while held
+    let (mut place, mut remove) = (false, false);
+    if diablo && !pad_active {
+        // from above, the pointer builds: right click places, shift and right click removes
+        place = clicked.1 && !shift;
+        remove = clicked.1 && shift;
+    } else if !swallowed {
+        for (act, out) in [(A::Break, &mut remove), (A::Place, &mut place)] {
+            if actions.just_pressed(act) {
+                *out = true;
+                repeat.held = Some((act, now + 0.3));
+            } else if actions.pressed(act) && repeat.held.is_some_and(|(a, at)| a == act && now >= at) {
+                *out = true;
+                repeat.held = Some((act, now + 0.22));
+            } else if actions.just_released(act) && repeat.held.is_some_and(|(a, _)| a == act) {
+                repeat.held = None;
+            }
+        }
+    }
+    let pick = actions.just_pressed(A::Pick);
     // ---- where to walk
     let stick = stick.clamp_length_max(1.0);
     // "forward" is up the screen: the camera's direction on the ground; through a cut to a
@@ -1500,7 +1584,10 @@ pub fn controls(
     }
     // ---- face where you walk; walk while moving
     let moving = dir.length() > 0.1;
-    if moving {
+    if w.cam_mode == CamMode::First {
+        // in first person you face where you look
+        w.yaw = screen_yaw + std::f32::consts::PI;
+    } else if moving {
         let goal = dir.x.atan2(dir.z);
         let mut d = goal - w.yaw;
         d = (d + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
@@ -1525,7 +1612,7 @@ pub fn controls(
         d2 <= REACH * REACH
     };
     w.target = if diablo {
-        let from_pad = pad_build || (cursor_at.is_none() && pad.is_some());
+        let from_pad = pad_active || cursor_at.is_none();
         if from_pad {
             let ahead = Vec3::new(w.yaw.sin(), 0.0, w.yaw.cos());
             let o = head;
@@ -1550,8 +1637,18 @@ pub fn controls(
             let c = [h.cell[0] + h.normal[0], h.cell[1] + h.normal[1], h.cell[2] + h.normal[2]];
             let b = w.selected();
             w.edit(c, b);
+        } else if pick {
+            let b = w.view.get(h.cell);
+            w.pick_block(b);
         }
     }
+}
+
+/// Held break and place, repeating; and when jump was last pressed (twice quickly flies).
+#[derive(Default)]
+pub struct BuildRepeat {
+    held: Option<(crate::input::Action, f64)>,
+    last_jump: f64,
 }
 
 /// The behind camera: behind and a little right of the head, pulled in if a block is in the
@@ -1621,10 +1718,16 @@ pub fn camera(
             (focus - dir * w.zoom_now, dir)
         }
         CamMode::Behind => (behind_spot(&w), facing(w.cam_yaw, w.cam_pitch)),
+        CamMode::First => ((Vec3::from(w.body.pos) + Vec3::Y * EYES) * size, facing(w.cam_yaw, w.cam_pitch)),
     };
     // ---- a fixed shot for where you are
     let here = w.body.pos;
-    let zone = w.forced_shot.or_else(|| w.shots.iter().position(|s| s.contains(here)));
+    // (fixed shots are for the views from outside you)
+    let zone = if w.cam_mode == CamMode::First && w.forced_shot.is_none() {
+        None
+    } else {
+        w.forced_shot.or_else(|| w.shots.iter().position(|s| s.contains(here)))
+    };
     if zone.is_some() {
         if zone != w.shot {
             w.last_shot = w.shot.or(w.last_shot);
@@ -1711,10 +1814,14 @@ pub fn hud(
     mut commands: Commands,
     mut texts: Query<&mut Text, With<WorldHud>>,
     mut crosshairs: Query<&mut Visibility, With<Crosshair>>,
+    pixel: Option<Res<crate::hud::PixelHud>>,
 ) {
     if !w.active() || w.watch {
         return;
     }
+    // with the pixel HUD (the hotbar and hints drawn as such), this text is just the status,
+    // small, top left
+    let pixel = pixel.is_some();
     let hud = match w.hud {
         Some(e) => e,
         None => {
@@ -1733,22 +1840,35 @@ pub fn hud(
                 Crosshair,
             ));
             // on a dark glass panel, so it reads on the bright void as well as at night
+            let node = if pixel {
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(12.0),
+                    left: Val::Px(12.0),
+                    max_width: Val::Percent(60.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                }
+            } else {
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(12.0),
+                    left: Val::Px(12.0),
+                    right: Val::Px(12.0),
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                }
+            };
             let e = commands
                 .spawn((
                     Text::new(""),
-                    TextFont { font_size: bevy::text::FontSize::Px(16.0), ..default() },
+                    TextFont { font_size: bevy::text::FontSize::Px(if pixel { 13.0 } else { 16.0 }), ..default() },
                     TextColor(Color::srgb(0.96, 0.96, 0.98)),
-                    TextLayout::justify(Justify::Center),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        bottom: Val::Px(12.0),
-                        left: Val::Px(12.0),
-                        right: Val::Px(12.0),
-                        padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
-                        border_radius: BorderRadius::all(Val::Px(8.0)),
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
+                    TextLayout::justify(if pixel { Justify::Left } else { Justify::Center }),
+                    node,
                     BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.55)),
                     WorldHud,
                 ))
@@ -1778,12 +1898,12 @@ pub fn hud(
         None if who.is_empty() => format!("{} | on your own{}", w.world, if w.fly { " | flying" } else { "" }),
         None => format!("{} | with {}{}", w.world, who.join(", "), if w.fly { " | flying" } else { "" }),
     };
-    line = format!("{top}\n{line}");
+    line = if pixel { top } else { format!("{top}\n{line}") };
     if let Some(a) = w.air() {
         line = format!("{}\n{line}", weather_line(&a));
     }
-    // the crosshair only behind you: from above the mouse is the pointer
-    let show = if w.cam_mode == CamMode::Behind && w.shot.is_none() { Visibility::Inherited } else { Visibility::Hidden };
+    // the crosshair when looking with the mouse: from above the mouse is the pointer
+    let show = if w.cam_mode != CamMode::Diablo && w.shot.is_none() { Visibility::Inherited } else { Visibility::Hidden };
     for mut v in &mut crosshairs {
         if *v != show {
             *v = show;
@@ -1858,7 +1978,7 @@ pub fn json(w: &WorldClient) -> serde_json::Value {
     serde_json::json!({
         "url": w.url,
         "time": (w.hours * 100.0).round() / 100.0,
-        "camera": match w.cam_mode { CamMode::Diablo => "diablo", CamMode::Behind => "behind" },
+        "camera": w.cam_mode.name(),
         "shot": w.shot.map(|i| w.shots[i].name.clone()),
         "zoom": w.zoom,
         "floor": w.floor,
