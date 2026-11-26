@@ -4,6 +4,7 @@
 #   vox.fail/w/7780/...  the Void (vox-server on 127.0.0.1:7780)
 #   vox.fail/w/7781/...  the yard
 #   vox.fail/w/7782/...  the islands
+#   vox.fail/w/7783/...  the dark sea
 #   /api/world/...       refused (only the worlds use it, on localhost)
 #   everything else      vox-directory on 127.0.0.1:7700
 #
@@ -24,6 +25,9 @@ ingress:
   - hostname: vox.fail
     path: ^/w/7782/
     service: http://127.0.0.1:7782
+  - hostname: vox.fail
+    path: ^/w/7783/
+    service: http://127.0.0.1:7783
   # worlds report to the directory over localhost, never through the tunnel
   - hostname: vox.fail
     path: ^/api/world/

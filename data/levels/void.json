@@ -1,6 +1,6 @@
 {
  "name": "The Void",
- "about": "The first world: an ethereal, flat, luminous space. A pale floor that goes on for ever in bright fog, three moons faint in the light, and almost nothing else: the Circle of pillars where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, a stair to nowhere, monoliths and doorways far off in the fog. Made by tools/assets/build_void.py.",
+ "about": "The first world: an ethereal, flat, luminous space. A pale floor that goes on for ever in bright fog, three moons faint in the light, and almost nothing else: the Circle of pillars where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, the Tide Door to the east, a stair to nowhere, monoliths and doorways far off in the fog. Made by tools/assets/build_void.py.",
  "world": {
   "sky": "void",
   "time": 0.0,
@@ -79,6 +79,27 @@
      0
     ],
     "yaw": 270
+   },
+   {
+    "name": "sea",
+    "at": [
+     38.5,
+     0,
+     0
+    ],
+    "axis": "x",
+    "size": [
+     8,
+     14
+    ],
+    "level": "sea",
+    "url": ":7783",
+    "arrive": [
+     -7.5,
+     0,
+     0
+    ],
+    "yaw": 90
    }
   ],
   "hotbar": [
@@ -1442,6 +1463,71 @@
    ],
    "to": [
     -38,
+    0,
+    5
+   ]
+  },
+  {
+   "block": "basalt",
+   "from": [
+    38,
+    0,
+    -5
+   ],
+   "to": [
+    38,
+    14,
+    -5
+   ]
+  },
+  {
+   "block": "basalt",
+   "from": [
+    38,
+    0,
+    4
+   ],
+   "to": [
+    38,
+    14,
+    4
+   ]
+  },
+  {
+   "block": "basalt",
+   "from": [
+    38,
+    14,
+    -5
+   ],
+   "to": [
+    38,
+    15,
+    4
+   ]
+  },
+  {
+   "block": "water",
+   "from": [
+    38,
+    0,
+    -6
+   ],
+   "to": [
+    38,
+    0,
+    -6
+   ]
+  },
+  {
+   "block": "water",
+   "from": [
+    38,
+    0,
+    5
+   ],
+   "to": [
+    38,
     0,
     5
    ]

@@ -697,7 +697,7 @@ pub fn setup(
             let water = water_mats.add(WaterMaterial {
                 base: StandardMaterial {
                     base_color_texture: Some(colour.clone()),
-                    base_color: Color::srgba(0.75, 0.9, 1.0, 1.0),
+                    base_color: Color::srgba(WATER_TINT[0], WATER_TINT[1], WATER_TINT[2], 1.0),
                     perceptual_roughness: 0.04,
                     reflectance: 0.5,
                     alpha_mode: AlphaMode::Blend,
@@ -705,7 +705,7 @@ pub fn setup(
                     cull_mode: None,
                     ..default()
                 },
-                extension: WaterExt { waves: Vec4::new(1.0, 1.0, 0.0, 0.0) },
+                extension: WaterExt { waves: Vec4::new(1.0, 1.0, 0.0, 0.0), swell: Vec4::new(0.0, 1.0, WATER_OPACITY, pal.size) },
             });
             let glass = mats.add(StandardMaterial {
                 base_color_texture: Some(colour),
@@ -794,7 +794,8 @@ impl bevy::pbr::MaterialExtension for BlockExt {
 }
 
 /// Water: moving waves on the surface, more mirror-like the flatter you look across it, and
-/// the sky and sun in it (`shaders/water.wgsl`).
+/// the sky and sun in it (`shaders/water.wgsl`); and, where a world asks for it, a swell that
+/// lifts and drops the surface itself, with pale crests.
 pub type WaterMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, WaterExt>;
 
 /// Flames: rising, flickering noise shaped into tongues of fire, white-yellow at the root
@@ -823,12 +824,25 @@ impl Material for FlameMaterial {
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 pub struct WaterExt {
-    /// wave height, wave speed
+    /// wave height, wave speed, the wind's direction (x, z)
     #[uniform(100)]
     pub waves: Vec4,
+    /// the swell's height in metres (0: none), how pale its crests go, how opaque the water is
+    /// looking straight down, the block size (m)
+    #[uniform(101)]
+    pub swell: Vec4,
 }
 
+/// The tint water has unless a world says otherwise (multiplied with the water tile).
+pub const WATER_TINT: [f32; 3] = [0.75, 0.9, 1.0];
+/// How much water hides what's under it, looking straight down, unless a world says otherwise.
+pub const WATER_OPACITY: f32 = 0.55;
+
 impl bevy::pbr::MaterialExtension for WaterExt {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        "shaders/water.wgsl".into()
+    }
+
     fn fragment_shader() -> bevy::shader::ShaderRef {
         "shaders/water.wgsl".into()
     }

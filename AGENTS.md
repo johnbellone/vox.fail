@@ -12,7 +12,7 @@ Two products share one Cargo workspace:
    reactions, a local HTTP control page, viewer questions, Twitch chat, optional
    Windows-only webcam output.
 2. **Vox** (every other crate): a shared voxel build space. You sign in on a web page, make a
-   character, and walk into worlds (the Void, the yard, the islands) that you can build in
+   character, and walk into worlds (the Void, the yard, the islands, the dark sea) that you can build in
    together. It runs on the desktop (`vox-client`) and in the browser (the same client built
    for WebAssembly). Live at https://vox.fail.
 
@@ -31,7 +31,7 @@ Two products share one Cargo workspace:
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
 | `apps/site/` | (Bun) | The vox.fail pages: React 19, Mantine 9, built with Bun into `dist/`. `public/pkg/` is the wasm client (generated, ignored). See its README. |
-| `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands), clip manifests. |
+| `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands, sea), clip manifests. |
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
 | `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail. See `deploy/README.md`. |
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
@@ -57,7 +57,7 @@ cargo check --workspace              # fast type check
 cargo clippy --workspace             # lints (the tree has existing warnings; do not add new ones)
 cargo test --workspace               # tests; the avatar app's tests use testdata/real/
 
-tools/dev/play-local.sh                  # local Void + yard + islands, then the client joins as a guest
+tools/dev/play-local.sh                  # local Void + yard + islands + sea, then the client joins as a guest
 tools/dev/play-local.sh --name Sam --model models/dog.glb
 
 cargo run --release -p vox-server -- --listen 127.0.0.1:7780 --db void.db     # one world
@@ -69,8 +69,8 @@ tools/dev/build_web.sh               # browser client into apps/site/public/pkg 
 bun install && (cd apps/site && bun run build)   # the pages into apps/site/dist
 ```
 
-`tools/dev/play-local.sh` refuses to start if ports 7780 to 7782 are taken; clear a leftover with
-`pkill vox-server`. Worlds save to `void.db`, `yard.db`, `islands.db` in the repo root (git
+`tools/dev/play-local.sh` refuses to start if ports 7780 to 7783 are taken; clear a leftover with
+`pkill vox-server`. Worlds save to `void.db`, `yard.db`, `islands.db`, `sea.db` in the repo root (git
 ignores `*.db`).
 
 ## How the pieces talk

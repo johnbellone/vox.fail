@@ -93,14 +93,16 @@ the black **Ember Door**. Far off in the fog: a stair to nowhere, monoliths, emp
 (`data/levels/islands.json`, `tools/assets/build_islands.py`).
 
 **Portals:** walk towards the First Gate and an echo of the yard fades into it, faint and pale
-at first, solid close up; walk through and you're there. The Ember Door shows the islands. A
+at first, solid close up; walk through and you're there. The Ember Door (west) shows the
+islands; the Tide Door (east) the dark sea, a stormy ocean rolling in long swells. A
 level lists its doorways under `"portals"` in its `"world"` object (where, which way, how big,
 which level, which server, and the matching point on the far side); `":7781"` means another
-port on the same host. To try all three:
+port on the same host. To try them all (or run `tools/dev/play-local.sh`):
 
     vox-server --listen 127.0.0.1:7780 --db void.db
     vox-server --listen 127.0.0.1:7781 --db yard.db --seed data/levels/yard.json --name yard
     vox-server --listen 127.0.0.1:7782 --db islands.db --seed data/levels/islands.json --name islands
+    vox-server --listen 127.0.0.1:7783 --db sea.db --seed data/levels/sea.json --name sea
 
 If nobody answers on the other side, you're put back where you were. `world:portal:<name>`
 goes through by command.

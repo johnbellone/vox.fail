@@ -7,6 +7,12 @@
 //!   floor (`shaders/floor.wgsl`) going into white fog, three moons faint in the light.
 //! - **islands:** fog without end in every direction, dark, with three moons (a great pale one,
 //!   a red one, a small cold one) veiled behind it; lit by the pale moon and by fire.
+//! - **sea:** a storm at night over open water: a sky black overhead and slate at the horizon,
+//!   one low moon breaking through and laying a cold path across the waves.
+//!
+//! A world can also set how its water looks (`"water": {"colour": [r, g, b], "swell": metres,
+//! "opacity": 0-1}`): the colour it's tinted, how high its swell rolls, and how much it hides
+//! what's under it (see `shaders/water.wgsl`).
 //!
 //! Either way the same sky (without its small detail) is drawn into an environment map, so the
 //! whole sky lights the world softly and shows in glass, metal and water; haze takes the
@@ -180,6 +186,8 @@ pub enum Style {
     Void,
     /// floating islands in dark fog
     Islands,
+    /// a storm at night over the open sea
+    Sea,
 }
 
 impl Style {
@@ -187,6 +195,7 @@ impl Style {
         match s {
             "void" => Style::Void,
             "islands" => Style::Islands,
+            "sea" => Style::Sea,
             _ => Style::Earth,
         }
     }
@@ -219,6 +228,8 @@ pub struct Outdoors {
     rain: Option<(Entity, Handle<RainMaterial>)>,
     /// clouds set by hand (`world:clouds:`) instead of by the weather
     clouds_set: bool,
+    /// the world's water: its tint, its swell (m; 0: none), how opaque it is
+    pub water: WaterLook,
 }
 
 impl Default for Outdoors {
@@ -242,6 +253,7 @@ impl Default for Outdoors {
             floor: None,
             rain: None,
             clouds_set: false,
+            water: WaterLook::default(),
         }
     }
 }
@@ -312,6 +324,7 @@ pub fn sky_at(style: Style, hours: f32) -> SkyLook {
         Style::Earth => earth_at(hours),
         Style::Void => void_at(hours),
         Style::Islands => islands_at(hours),
+        Style::Sea => sea_at(hours),
     }
 }
 
@@ -387,6 +400,31 @@ fn void_at(hours: f32) -> SkyLook {
         ambient: 1400.0,
         visibility: 130.0,
         moons: [Some(pale), Some(rose), Some(blue)],
+    }
+}
+
+/// The dark sea: a storm at night. Black cloud overhead, slate at the horizon where the
+/// spray hangs, and one moon low in a break in the cloud, its light lying across the water in
+/// a cold path (it's the key light, so the waves catch it).
+fn sea_at(hours: f32) -> SkyLook {
+    let turn = hours / 24.0 * TAU * 0.25;
+    let yaw = 0.9 + turn;
+    let pitch = 0.17f32;
+    let dir = Vec3::new(yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
+    let moon = Moon { dir, radius: 0.11, colour: Vec3::new(0.86, 0.9, 1.0), glow: 1.6 };
+    SkyLook {
+        style: Style::Sea,
+        sun: Vec3::NEG_Y,
+        zenith: Vec3::new(0.012, 0.015, 0.021),
+        horizon: Vec3::new(0.052, 0.064, 0.074),
+        ground: Vec3::new(0.02, 0.027, 0.031),
+        light: Vec3::new(0.72, 0.8, 0.95),
+        lux: 520.0,
+        key: dir,
+        night: 1.0,
+        ambient: 900.0,
+        visibility: 120.0,
+        moons: [Some(moon), None, None],
     }
 }
 
@@ -578,6 +616,7 @@ pub fn sky_colour(look: &SkyLook, dir: Vec3) -> Vec3 {
     let veil = match look.style {
         Style::Earth => 1.0,
         Style::Islands => 0.12,
+        Style::Sea => 0.5,
         Style::Void => 0.18,
     };
     for m in look.moons.iter().flatten() {
@@ -659,6 +698,43 @@ pub fn dome_mesh() -> Mesh {
     mesh
 }
 
+/// How a world's water looks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WaterLook {
+    /// multiplied with the water tile, each 0-1
+    pub tint: [f32; 3],
+    /// metres from the calm surface to a crest (0: none, at most 3)
+    pub swell: f32,
+    /// how much it hides what's under it, looking straight down (0-1)
+    pub opacity: f32,
+}
+
+impl Default for WaterLook {
+    fn default() -> Self {
+        WaterLook { tint: crate::blocks::WATER_TINT, swell: 0.0, opacity: crate::blocks::WATER_OPACITY }
+    }
+}
+
+/// A world's `"water"` setting, or the usual clear water when it says nothing; nonsense is
+/// clamped or left out.
+pub fn water_look(v: Option<&serde_json::Value>) -> WaterLook {
+    let mut look = WaterLook::default();
+    let num = |k: &str| v.and_then(|v| v.get(k)).and_then(|h| h.as_f64()).map(|h| h as f32).filter(|h| h.is_finite());
+    if let Some(c) = v.and_then(|v| v.get("colour")).and_then(|c| c.as_array()).filter(|c| c.len() == 3) {
+        let rgb: Vec<f32> = c.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).filter(|x| x.is_finite()).collect();
+        if rgb.len() == 3 {
+            look.tint = [rgb[0].clamp(0.0, 1.0), rgb[1].clamp(0.0, 1.0), rgb[2].clamp(0.0, 1.0)];
+        }
+    }
+    if let Some(h) = num("swell") {
+        look.swell = h.clamp(0.0, 3.0);
+    }
+    if let Some(o) = num("opacity") {
+        look.opacity = o.clamp(0.0, 1.0);
+    }
+    look
+}
+
 pub fn sky_uniform(look: &SkyLook, clouds: f32, wind: Vec4) -> SkyUniform {
     let v = |c: Vec3| c.extend(1.0);
     let moon = |m: &Option<Moon>| m.map_or((Vec4::ZERO, Vec4::ZERO), |m| (m.dir.extend(m.radius), m.colour.extend(m.glow)));
@@ -667,7 +743,7 @@ pub fn sky_uniform(look: &SkyLook, clouds: f32, wind: Vec4) -> SkyUniform {
     let (c, cc) = moon(&look.moons[2]);
     let style = match look.style {
         Style::Earth => 0.0,
-        Style::Islands => 1.0,
+        Style::Islands | Style::Sea => 1.0,
         Style::Void => 2.0,
     };
     SkyUniform {
@@ -724,6 +800,9 @@ pub fn update(
         if let Some(c) = s.get("clouds").and_then(|v| v.as_f64()) {
             out.clouds = (c as f32).clamp(0.0, 1.0);
         }
+        out.water = water_look(s.get("water"));
+        // the water's look is pushed with the waves (below): do it now
+        out.last_bake = f32::NEG_INFINITY;
     }
     if out.running {
         out.hours = (out.hours + real.delta_secs() / DAY * 24.0).rem_euclid(24.0);
@@ -854,7 +933,7 @@ pub fn update(
     // the weather lets you see (the fog volume, when there is one, does the near fog itself)
     let h = look.horizon;
     let sun_haze = match look.style {
-        Style::Islands => look.light * 0.06,
+        Style::Islands | Style::Sea => look.light * 0.06,
         Style::Void => look.light * 0.0,
         Style::Earth => look.light * (1.0 - look.night) * 0.4,
     };
@@ -1033,10 +1112,19 @@ pub fn weather_look(
         let speed = wind.length();
         let dir = if speed > 0.05 { wind / speed } else { Vec2::new(0.8, 0.6) };
         let wp = Vec4::new((0.5 + speed / 5.0).clamp(0.4, 2.5), 1.0, dir.x, dir.y);
-        if waters.get(&blocks.water).is_some_and(|m| m.extension.waves != wp) {
-            if let Some(mut m) = waters.get_mut(&blocks.water) {
-                m.extension.waves = wp;
-            }
+        // the swell rolls higher in a gale, never less than two thirds of the world's own
+        let lift = out.water.swell * (0.67 + (speed / 12.0).min(1.0) * 0.33);
+        let [r, g, b] = out.water.tint;
+        let tint = Color::srgba(r, g, b, 1.0);
+        let opacity = out.water.opacity;
+        let changed = waters.get(&blocks.water).is_some_and(|m| {
+            m.extension.waves != wp || m.extension.swell.x != lift || m.extension.swell.z != opacity || m.base.base_color != tint
+        });
+        if changed && let Some(mut m) = waters.get_mut(&blocks.water) {
+            m.extension.waves = wp;
+            m.extension.swell.x = lift;
+            m.extension.swell.z = opacity;
+            m.base.base_color = tint;
         }
     }
     // ---- the fog volume, baked from the weather twice a second (High quality)
@@ -1053,6 +1141,7 @@ pub fn weather_look(
     let (colour, light_i, asym) = match out.style {
         Style::Void => (Color::srgb(1.0, 0.985, 0.96), 18.0, 0.3),
         Style::Islands => (Color::srgb(0.66, 0.7, 0.82), 3.0, 0.55),
+        Style::Sea => (Color::srgb(0.55, 0.62, 0.68), 2.4, 0.6),
         Style::Earth => (Color::srgb(0.92, 0.93, 0.96), 2.6, 0.5),
     };
     let ambient_i = 0.0;
@@ -1180,6 +1269,7 @@ mod tests {
         assert_ne!(sky_at(Style::Void, 3.0).moons[0].unwrap().dir, v.moons[0].unwrap().dir);
         assert_eq!(Style::parse("void"), Style::Void);
         assert_eq!(Style::parse("islands"), Style::Islands);
+        assert_eq!(Style::parse("sea"), Style::Sea);
         assert_eq!(Style::parse("anything"), Style::Earth);
     }
 
@@ -1195,6 +1285,33 @@ mod tests {
         assert_eq!(v.key, v.moons[0].unwrap().dir);
         let m = v.moons[0].unwrap();
         assert!(sky_colour(&v, m.dir).length() > sky_colour(&v, Vec3::Y).length() * 1.5);
+    }
+
+    #[test]
+    fn the_sea() {
+        // darker than the islands overhead, the horizon lighter than the zenith, and the moon
+        // low (so its light lies across the water) and the brightest thing in the sky
+        let v = sky_at(Style::Sea, 0.0);
+        let up = sky_colour(&v, Vec3::Y);
+        assert!(up.length() < sky_colour(&sky_at(Style::Islands, 0.0), Vec3::Y).length());
+        assert!(sky_colour(&v, Vec3::new(1.0, 0.02, 0.0).normalize()).length() > up.length());
+        let m = v.moons[0].unwrap();
+        assert!(m.dir.y > 0.05 && m.dir.y < 0.3, "{}", m.dir);
+        assert_eq!(v.key, m.dir);
+        assert!(sky_colour(&v, m.dir).length() > sky_colour(&v, Vec3::X).length() * 2.0);
+    }
+
+    #[test]
+    fn a_worlds_water() {
+        use serde_json::json;
+        assert_eq!(water_look(None), WaterLook::default());
+        let dark = json!({"colour": [0.07, 0.11, 0.13], "swell": 0.75, "opacity": 0.93});
+        assert_eq!(water_look(Some(&dark)), WaterLook { tint: [0.07, 0.11, 0.13], swell: 0.75, opacity: 0.93 });
+        // nonsense is clamped or ignored, never passed to the shader
+        let silly = json!({"colour": [4, -1, 0.5], "swell": 900, "opacity": -2});
+        assert_eq!(water_look(Some(&silly)), WaterLook { tint: [1.0, 0.0, 0.5], swell: 3.0, opacity: 0.0 });
+        let short = json!({"colour": [0.1, 0.2], "swell": "high"});
+        assert_eq!(water_look(Some(&short)), WaterLook::default());
     }
 
     #[test]

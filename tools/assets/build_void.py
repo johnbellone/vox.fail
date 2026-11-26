@@ -10,6 +10,7 @@ Almost nothing stands in it, so what does looks lost and far away:
                      frames it as you walk up, and an echo of the yard appears in it (a portal:
                      walk through and you're there)
     the Ember Door   a black doorway to the west, with an echo of the islands in it
+    the Tide Door    a basalt doorway to the east, with an echo of the dark sea in it
     the Stair        steps rising to the north-east and stopping in mid-air
     the Monoliths    a row of tall slabs far to the north-west, fading into the fog
     the Doors        doorframes scattered far out in every direction
@@ -65,6 +66,10 @@ def main():
     doorway(-38, 0, facing_x=True, w=8, h=14, block="obsidian")
     box("magma", (-38, 0, -6), (-38, 0, -6))
     box("magma", (-38, 0, 5), (-38, 0, 5))
+    # ---- the Tide Door, east: an echo of the dark sea, water standing at its sill
+    doorway(38, 0, facing_x=True, w=8, h=14, block="basalt")
+    for dz in (-6, 5):
+        box("water", (38, 0, dz), (38, 0, dz))
     # ---- the Stair: rising north-east and stopping
     for k in range(18):
         box("pearl", (30 + k, 0, -30 - k), (32 + k, k, -28 - k))
@@ -95,7 +100,7 @@ def main():
         "name": "The Void",
         "about": "The first world: an ethereal, flat, luminous space. A pale floor that goes on for ever in "
                  "bright fog, three moons faint in the light, and almost nothing else: the Circle of pillars "
-                 "where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, a stair to nowhere, monoliths and doorways "
+                 "where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, the Tide Door to the east, a stair to nowhere, monoliths and doorways "
                  "far off in the fog. Made by tools/assets/build_void.py.",
         "world": {
             "sky": "void",
@@ -118,6 +123,8 @@ def main():
                  "level": "yard", "url": ":7781", "arrive": [0, 0, 11.5], "yaw": 0},
                 {"name": "islands", "at": [-37.5, 0, 0], "axis": "x", "size": [8, 14],
                  "level": "islands", "url": ":7782", "arrive": [-13.5, 0, 0], "yaw": 270},
+                {"name": "sea", "at": [38.5, 0, 0], "axis": "x", "size": [8, 14],
+                 "level": "sea", "url": ":7783", "arrive": [-7.5, 0, 0], "yaw": 90},
             ],
             "hotbar": ["pearl", "lumen", "glass", "concrete", "water", "crystal", "planks", "stone", "bricks"],
         },
