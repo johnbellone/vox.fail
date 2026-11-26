@@ -1,6 +1,6 @@
 {
  "name": "The Void",
- "about": "The first world: an ethereal, flat, luminous space. A pale floor that goes on for ever in bright fog, three moons faint in the light, and almost nothing else: the Circle of pillars where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, a stair to nowhere, monoliths and doorways far off in the fog. Made by tools/build_void.py.",
+ "about": "The first world: an ethereal, flat, luminous space. A pale floor that goes on for ever in bright fog, three moons faint in the light, and almost nothing else: the Circle of pillars where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, a stair to nowhere, monoliths and doorways far off in the fog. Made by tools/assets/build_void.py.",
  "world": {
   "sky": "void",
   "time": 0.0,

@@ -1,7 +1,7 @@
 //! Making a one-person stream look produced:
 //!
 //! - **Sets**: voxel backdrops that replace the green screen (rally stage, press room, diner,
-//!   hospital, newsroom, night city; built by tools/build_sets.py). Pick one on the control page,
+//!   hospital, newsroom, night city; built by tools/assets/build_sets.py). Pick one on the control page,
 //!   or "auto" to match the character (the medic gets the hospital, the cook the diner...).
 //!   An OBS scene switcher or Stream Deck can change it with `GET /cmd/set:diner`.
 //! - **Auto-director**: cuts between close-up, waist-up and wide on its own: wide after a long

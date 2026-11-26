@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run the Void, the yard and the islands locally (guests allowed, so portals work) and join the
 # Void with the desktop client.
-# Usage: tools/play-local.sh [client args...]   e.g. --name Sam --model models/dog.glb
+# Usage: tools/dev/play-local.sh [client args...]   e.g. --name Sam --model models/dog.glb
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 for port in 7780 7781 7782; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then

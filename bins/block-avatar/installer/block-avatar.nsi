@@ -50,7 +50,7 @@ Section "${APP} (required)" SecMain
   SectionIn RO
   SetOutPath "$INSTDIR"
   File "${SRC}\target\release\${EXE}"
-  File "${SRC}\README.md"
+  File /oname=README.md "${SRC}\docs\avatar\manual.md"
   SetOutPath "$INSTDIR\assets"
   File /r "${SRC}\assets\*.*"
   SetOutPath "$INSTDIR"

@@ -15,7 +15,7 @@ Almost nothing stands in it, so what does looks lost and far away:
     the Doors        doorframes scattered far out in every direction
     the Lights       glowing stones on thin stems, leading out from the Circle
 
-    python3 tools/build_void.py        # writes data/levels/void.json
+    python3 tools/assets/build_void.py        # writes data/levels/void.json
 
 Coordinates are blocks (half a metre); y = 0 is the floor's top.
 """
@@ -24,7 +24,7 @@ import math
 import random
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "levels" / "void.json"
 
 boxes = []
@@ -96,7 +96,7 @@ def main():
         "about": "The first world: an ethereal, flat, luminous space. A pale floor that goes on for ever in "
                  "bright fog, three moons faint in the light, and almost nothing else: the Circle of pillars "
                  "where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, a stair to nowhere, monoliths and doorways "
-                 "far off in the fog. Made by tools/build_void.py.",
+                 "far off in the fog. Made by tools/assets/build_void.py.",
         "world": {
             "sky": "void",
             "time": 0.0,

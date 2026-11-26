@@ -221,13 +221,13 @@ or reach the network through them.
 
 The Python scripts stay as they are until each kind of asset has a recipe that reproduces it.
 
-1. Port the shared toolkit (`Vox` in `tools/build_animals.py`, `write_prop` in
-   `tools/build_roasted.py`) into `vox-art` operations and exporters.
-2. Reproduce one existing asset from a recipe (a stage set from `tools/build_sets.py`) and
+1. Port the shared toolkit (`Vox` in `tools/assets/build_animals.py`, `write_prop` in
+   `tools/assets/build_roasted.py`) into `vox-art` operations and exporters.
+2. Reproduce one existing asset from a recipe (a stage set from `tools/assets/build_sets.py`) and
    compare voxel for voxel with today's `.vox` file.
 3. Move each builder in turn; delete a Python script once its recipes match.
 
-Character rigging (`tools/build_animals.py` builds bodies on the shared skeleton) is out of
+Character rigging (`tools/assets/build_animals.py` builds bodies on the shared skeleton) is out of
 scope for recipes at first; it stays a separate tool until there is a reason to port it.
 
 ## Testing

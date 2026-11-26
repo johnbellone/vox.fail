@@ -2,8 +2,8 @@
 detail (src/bevel.rs), and adds them to data/surfaces.json. Entries already in the file win, so
 hand-made lists (the lead's) and corrections are kept.
 
-    python3 tools/guess_surfaces.py           # update data/surfaces.json
-    python3 tools/guess_surfaces.py --dry     # just print the guesses
+    python3 tools/assets/guess_surfaces.py           # update data/surfaces.json
+    python3 tools/assets/guess_surfaces.py --dry     # just print the guesses
 
 The rules, all on the model's rest pose:
 - skin: the commonest colour on the front of the face, between eyes and chin
@@ -24,7 +24,7 @@ from PIL import Image
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import build_animals as B  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "surfaces.json"
 ANIMALS = {"cat", "dog", "donkey", "rhino"}
 # helmets and visors would read as hair; the peanuts' shells aren't hair or cloth

@@ -345,7 +345,7 @@ impl Directory {
         .map_err(|e| e.to_string())?;
         let catalogue = Catalogue::load(&cfg.data);
         if catalogue.characters.is_empty() {
-            return Err(format!("no characters in {}/characters.json (tools/build_catalogue.py makes it)", cfg.data.display()));
+            return Err(format!("no characters in {}/characters.json (tools/assets/build_catalogue.py makes it)", cfg.data.display()));
         }
         Ok(Directory(
             Arc::new(Inner {
@@ -446,7 +446,7 @@ impl Directory {
             .route_service("/friends", ServeFile::new(web.join("friends.html")))
             .nest_service("/assets", ServeDir::new(assets))
             .nest_service("/data", ServeDir::new(data))
-            // the browser client is big: served pre-compressed when tools/build_web.sh made the
+            // the browser client is big: served pre-compressed when tools/dev/build_web.sh made the
             // .br / .gz files
             .fallback_service(ServeDir::new(web).precompressed_br().precompressed_gzip())
             .layer(axum::middleware::from_fn(headers))

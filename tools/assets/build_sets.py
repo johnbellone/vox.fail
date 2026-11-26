@@ -1,6 +1,6 @@
 """Builds the stage sets: voxel backdrops and floors that replace the green screen.
 
-    python tools/build_sets.py
+    python tools/assets/build_sets.py
 
 Writes assets/sets/<name>.glb (+ source/vox/sets/<name>.vox). 10 cm voxels (the 5 cm grid
 scaled 2x), origin on the floor under the character, x to the right, z toward the camera. Each
@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_animals as B
 from build_animals import Vox, WHITE, BLACK
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 W0, W1 = -70, 70          # 14 m wide
 FRONT, BACK = 60, -21     # floor depth
 WALL = -20                # back wall face (2 m behind the character)

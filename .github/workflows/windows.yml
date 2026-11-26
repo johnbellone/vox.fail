@@ -28,7 +28,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory portable | Out-Null
-          Copy-Item target\release\block_avatar.exe, README.md portable\
+          Copy-Item target\release\block_avatar.exe portable\
+          Copy-Item docs\avatar\manual.md portable\README.md
           Copy-Item -Recurse assets portable\assets
           Compress-Archive portable\* Block-Avatar-portable.zip
       - uses: actions/upload-artifact@v4

@@ -9,8 +9,8 @@ and lamps also have <name>.glow.png (white = lit). The app builds its texture at
 start, so a tile can be repainted in any paint program; keep it tiling (wrap-around) and the
 same size. data/blocks.json says which tiles each block uses on top, sides and bottom.
 
-    python3 tools/build_blocks.py                    # (re)make every tile
-    python3 tools/build_blocks.py --sheet out.png    # and a contact sheet to look at
+    python3 tools/assets/build_blocks.py                    # (re)make every tile
+    python3 tools/assets/build_blocks.py --sheet out.png    # and a contact sheet to look at
 """
 import json
 import sys
@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "assets" / "blocks" / "tiles"
 N = 128
 

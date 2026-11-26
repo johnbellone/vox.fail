@@ -232,7 +232,7 @@ pub fn yin(x: &[f32], fs: f32) -> (f32, f32) {
 
 /// F1, F2 the way Praat does it: Burg LPC (order fs/1000 + 2) on a pre-emphasised Gaussian-ish
 /// window, then the roots of the predictor polynomial; each root with a narrow bandwidth is a
-/// formant at its angle. Checked against Praat on LibriSpeech recordings (see tools/eval_voice.py).
+/// formant at its angle. Checked against Praat on LibriSpeech recordings (see tools/test/eval_voice.py).
 pub fn formants(win: &[f32], fs: f32) -> Option<(f32, f32)> {
     let n = win.len();
     let order = ((fs / 1000.0).round() as usize + 2).clamp(8, 20);

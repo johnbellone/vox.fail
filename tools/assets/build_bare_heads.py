@@ -8,8 +8,8 @@ brim), fills the skull up to a plain top with the character's hair (or peanut sh
 the result to the model as a `Head_bare` node under `Head`. The app hides it until a hat goes on,
 then swaps it in (src/wardrobe.rs). Hat heights go to data/bare_heads.json.
 
-    python3 tools/build_bare_heads.py           # updates assets/models/*.glb and data/bare_heads.json
-    python3 tools/build_bare_heads.py --preview out.png   # front/side views, before and after
+    python3 tools/assets/build_bare_heads.py           # updates assets/models/*.glb and data/bare_heads.json
+    python3 tools/assets/build_bare_heads.py --preview out.png   # front/side views, before and after
 
 Helmeted characters (riot_a, riot_b, roasted_riot) keep their helmets: under those there is no
 head to show.
@@ -26,7 +26,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent))
 import build_animals as B  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 V = 0.05
 SHELL = ["cc9654", "a06c36", "cc9654", "805026", "cc9654"]
 PEANUT = ["deba80", "be9660", "deba80", "c8a068"]

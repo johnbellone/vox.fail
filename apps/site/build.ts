@@ -5,7 +5,7 @@
 //
 // Each page in src/pages is its own HTML entry, so the URLs stay what the directory routes:
 // /, /create, /play, /inventory, /friends. Everything in public/ is copied as is, including
-// public/pkg, the WebAssembly client that tools/build_web.sh writes. Bundled files (fonts, the
+// public/pkg, the WebAssembly client that tools/dev/build_web.sh writes. Bundled files (fonts, the
 // icon) go to static/, not assets/: the directory serves /assets from the repository's assets/.
 
 import { cp, rm, readdir } from "node:fs/promises";

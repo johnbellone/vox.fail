@@ -253,7 +253,7 @@ fn handle(sh: &AskShared, mut req: Request) {
     let _ = req.respond(resp);
 }
 
-/// /portrait/<n>.png: the picture of character n (made by tools/make_portraits.py).
+/// /portrait/<n>.png: the picture of character n (made by tools/assets/make_portraits.py).
 fn portrait(sh: &AskShared, p: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     let n = p
         .strip_prefix("/portrait/")

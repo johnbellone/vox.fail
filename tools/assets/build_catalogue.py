@@ -6,13 +6,13 @@ data/cast_manifest.json, and the wardrobe from src/wardrobe.rs, and writes
 data/characters.json and data/wardrobe.json, which the directory serves to the character
 creator.
 
-    python3 tools/build_catalogue.py
+    python3 tools/assets/build_catalogue.py
 """
 import json
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 cast = {c["id"]: c for c in json.loads((ROOT / "data/cast_manifest.json").read_text())["characters"]}
 GROUPS = {"blue": "Main", "cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals"}
 NAMES = {"blue": "Blue", "scene_all": "Lead", "peanut": "Peanut", "roasted_miami": "Miami tourist"}
@@ -40,7 +40,7 @@ for p in sorted((ROOT / "assets/portraits").glob("*.png")):
 order = {"Main": -1, "Cast": 0, "Roast": 1, "Animals": 2}
 chars.sort(key=lambda c: (c["id"] != MAIN, order[c["group"]], c["name"]))
 
-src = (ROOT / "src/wardrobe.rs").read_text()
+src = (ROOT / "bins/block-avatar/src/wardrobe.rs").read_text()
 body = src[src.index("pub const ITEMS"):]
 body = body[:body.index("];")]
 items = []

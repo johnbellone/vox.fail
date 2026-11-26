@@ -1,4 +1,4 @@
-// The WebAssembly client (vox-client built by tools/build_web.sh into public/pkg). It is loaded
+// The WebAssembly client (vox-client built by tools/dev/build_web.sh into public/pkg). It is loaded
 // at run time, not bundled, and reports how it's getting on through three window callbacks.
 
 declare global {
@@ -37,7 +37,7 @@ export async function loadClient(): Promise<(config: StartConfig) => void> {
     await client.default();
   } catch (err) {
     console.error(err);
-    throw new Error("the browser client isn't installed on this server yet (tools/build_web.sh builds it)");
+    throw new Error("the browser client isn't installed on this server yet (tools/dev/build_web.sh builds it)");
   }
   return (config) => client.start(JSON.stringify({ base: location.origin, ...config }));
 }

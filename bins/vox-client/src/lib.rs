@@ -2,7 +2,7 @@
 //! its doorways to others.
 //!
 //! The same app runs on the desktop (`vox-client --token <launch code>`) and in the browser
-//! (built for WebAssembly by `tools/build_web.sh`, started by the directory's play page). The
+//! (built for WebAssembly by `tools/dev/build_web.sh`, started by the directory's play page). The
 //! world itself (blocks, sky, weather, portals, other players, walking and building) is
 //! vox-world's; this crate brings the window, the camera, the light, and your character with
 //! what you chose to wear.

@@ -5,7 +5,7 @@
 //!   its top, sides and bottom, plus how rough or metallic it is, how deep its bumps are, and
 //!   whether it's see-through (glass) or glows (lamp).
 //! - **Tiles** (`assets/blocks/tiles/`): a 128 x 128 colour PNG per tile, a `.height.png` for its
-//!   bumps and, for lamps, a `.glow.png`. `tools/build_blocks.py` draws the built-in ones; any
+//!   bumps and, for lamps, a `.glow.png`. `tools/assets/build_blocks.py` draws the built-in ones; any
 //!   tile can be repainted (keep it wrapping). At start they're packed into one atlas, with the
 //!   bumps turned into a normal map and the roughness into a roughness map.
 //! - **Levels** (`data/levels/<name>.json`, or `levels/` in your files folder): boxes of blocks.

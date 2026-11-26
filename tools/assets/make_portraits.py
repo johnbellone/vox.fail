@@ -4,7 +4,7 @@ picker and the shorts' title cards: assets/portraits/<model>.png (transparent, 1
 Renders each model's Head joint (with the neutral face: open eyes, normal brows, flat mouth) and
 the top of the torso straight from the front, orthographic, one flat colour per voxel face.
 
-    python3 tools/make_portraits.py
+    python3 tools/assets/make_portraits.py
 """
 import io
 import pathlib
@@ -16,7 +16,7 @@ from PIL import Image
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import build_animals as B  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "assets" / "portraits"
 SIZE = 160
 PX = 9  # pixels per voxel before the final resize

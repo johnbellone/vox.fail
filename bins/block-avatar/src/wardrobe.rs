@@ -6,7 +6,7 @@
 //! take it off, or `dressup_minutes` pass. Viewers have a cooldown, and you choose who may dress
 //! you up (everyone, subs/VIPs, or mods). The control page has the same wardrobe for you.
 //! Hats sit on top of each character's head (on its cap, if it has one) using data/head_fit.json,
-//! measured from the models by tools/build_wardrobe.py.
+//! measured from the models by tools/assets/build_wardrobe.py.
 
 use std::collections::HashMap;
 
@@ -224,7 +224,7 @@ pub struct Fit {
     pub mouth_y: f32,
 }
 
-/// data/bare_heads.json (tools/build_bare_heads.py): model file -> top of the bare head.
+/// data/bare_heads.json (tools/assets/build_bare_heads.py): model file -> top of the bare head.
 fn load_bare() -> HashMap<String, f32> {
     std::fs::read_to_string(crate::asset_base().join("data/bare_heads.json"))
         .ok()

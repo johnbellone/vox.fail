@@ -6,7 +6,7 @@ keeps the same node tree, the 100 body clips, the 24 face clips and the swappabl
 animal replaces the body meshes with its own voxels (5 cm), moves the mouth onto its snout, adds a
 Tail joint (animated in every clip), and appends its own clips after index 123.
 
-    python3 tools/build_animals.py            # writes assets/models/<name>.glb and source/vox/characters/<name>.vox
+    python3 tools/assets/build_animals.py            # writes assets/models/<name>.glb and source/vox/characters/<name>.vox
 """
 import io, json, math, struct, sys
 from pathlib import Path
@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "assets/models/variants/character_rigged.glb"
 V = 0.05  # voxel size
 

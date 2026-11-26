@@ -2,7 +2,7 @@
 """Roasted peanut series: one roasted, salted peanut in six outfits, each with its own hand props and
 five poses, on the shared block rig (so the 100 body clips and 24 face clips work too).
 
-    python3 tools/build_roasted.py        # assets/models/roasted_*.glb, assets/props/roasted/*.glb, source/vox/...
+    python3 tools/assets/build_roasted.py        # assets/models/roasted_*.glb, assets/props/roasted/*.glb, source/vox/...
 """
 import io, math, sys
 from pathlib import Path

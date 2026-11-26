@@ -19,7 +19,7 @@ unchanged locally and here. The tunnel can't rewrite paths, so world servers ans
 ## On the server
 
 1. Build: `cargo build --release -p vox-directory -p vox-server -p vox-client` and
-   `tools/build_web.sh` (the browser client, into `apps/site/public/pkg`), then the pages:
+   `tools/dev/build_web.sh` (the browser client, into `apps/site/public/pkg`), then the pages:
    `bun install && (cd apps/site && bun run build)` (Bun is needed to build, not to run).
 2. Copy to `/opt/vox`: `bin/` (the three binaries), `apps/site/dist/` as `web/`, `assets/`, `data/`. Make a `vox`
    user and `/var/lib/vox` owned by it.

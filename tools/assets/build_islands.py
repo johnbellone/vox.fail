@@ -16,7 +16,7 @@ plus scattered islets (some burning, some with crystals), embers glowing far bel
 of obsidian shards at the world's edge. About 480 x 480 blocks (240 m across at half-metre
 blocks), like a medium Minecraft map.
 
-    python3 tools/build_islands.py        # writes data/levels/islands.json
+    python3 tools/assets/build_islands.py        # writes data/levels/islands.json
 
 Coordinates are blocks: (0, -1, 0) is the ground where you arrive, -z is north (ahead).
 The output is the level format (boxes), with identical neighbouring blocks merged into big
@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "levels" / "islands.json"
 
 # world bounds (the server's): x, z in [-256, 256), y in [-32, 96)
@@ -592,7 +592,7 @@ def main():
         "about": "Floating islands in endless dark fog, three moons faint through it. "
                  "The Threshold (where you arrive) with the First Gate north, Ember Wastes east, Crystal Hollow west, "
                  "the Shattered Keep north, The Dark north-east and Magma Falls south-west, joined by basalt bridges "
-                 "lit with fire; the Pale Door on the plaza leads back to the void. Made by tools/build_islands.py.",
+                 "lit with fire; the Pale Door on the plaza leads back to the void. Made by tools/assets/build_islands.py.",
         "world": {"sky": "islands", "time": 0.0,
                   "weather": {"humidity": 1.02, "temperature": 8.0, "wind_speed": 2.0, "gusts": 0.5, "heating": 0.0,
                               "wetness": 0.9, "ground": -16.0},

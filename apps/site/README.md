@@ -24,8 +24,8 @@ cargo run -p vox-directory -- --listen 127.0.0.1:7700 --web apps/site/dist
 ```
 
 Then open http://127.0.0.1:7700/. For the play page and the front page's live view, also run
-a world (`cargo run --release -p vox-server`, or `tools/play-local.sh` for three) and build the
-WebAssembly client with `tools/build_web.sh` (see below).
+a world (`cargo run --release -p vox-server`, or `tools/dev/play-local.sh` for three) and build the
+WebAssembly client with `tools/dev/build_web.sh` (see below).
 
 ## Layout
 
@@ -57,7 +57,7 @@ public/                  copied into dist/ as is; public/pkg/ is the wasm client
 ## Notes
 
 - **The WebAssembly client** is loaded at run time from `/pkg/vox_client.js`, not bundled
-  (`src/game/wasm.ts`). `tools/build_web.sh` writes it to `public/pkg/`; run it before
+  (`src/game/wasm.ts`). `tools/dev/build_web.sh` writes it to `public/pkg/`; run it before
   `bun run build`. The play page and the front page both use it.
 - **The front page's live view** (`components/LiveWorld.tsx`) starts the client in watch mode
   on the first world the directory lists: no sign-in, no avatar, a camera drifting round the

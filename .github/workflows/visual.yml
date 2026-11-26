@@ -1,7 +1,7 @@
 name: Visual tests
 
 # Renders a fixed set of characters and sets with the app's snapshot mode and compares them with
-# testdata/visual/ref/ (tools/visual_test.py). Runs on Linux with Mesa's software Vulkan, so the
+# testdata/visual/ref/ (tools/test/visual_test.py). Runs on Linux with Mesa's software Vulkan, so the
 # references must be made the same way: run this workflow with "update" ticked, download the
 # "visual-report" artifact and commit its pictures as the new references.
 
@@ -36,7 +36,7 @@ jobs:
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
         run: |
-          xvfb-run -s "-screen 0 1600x1000x24" python3 tools/visual_test.py ${{ inputs.update && '--update' || '' }}
+          xvfb-run -s "-screen 0 1600x1000x24" python3 tools/test/visual_test.py ${{ inputs.update && '--update' || '' }}
       - name: Report
         if: always()
         uses: actions/upload-artifact@v4

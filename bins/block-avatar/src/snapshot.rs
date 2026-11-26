@@ -7,7 +7,7 @@
 //! Everything that moves on its own (idle life, voice reactions, blinks, weather) is held still
 //! so the same build makes the same picture. Every frame is exactly one simulation tick (see
 //! `main`), so with `--snapshot-fx` the burst fired on the first frame is always photographed
-//! the same number of ticks later. tools/visual_test.py runs a list of these and
+//! the same number of ticks later. tools/test/visual_test.py runs a list of these and
 //! compares them with the reference pictures in testdata/visual/.
 
 use std::path::PathBuf;

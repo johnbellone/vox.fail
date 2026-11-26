@@ -2,10 +2,10 @@
 """End to end in a browser: make an account, make a character, walk into the Void.
 
 Needs a directory on :7700 and the Void on :7780 started with the directory's key, and the
-browser client built (tools/build_web.sh). Uses Chromium with WebGPU on SwiftShader, on a
+browser client built (tools/dev/build_web.sh). Uses Chromium with WebGPU on SwiftShader, on a
 display (DISPLAY=:99 with Xvfb on a server).
 
-    python3 tools/web_e2e.py OUT_DIR [--name "Test Player"]
+    python3 tools/test/web_e2e.py OUT_DIR [--name "Test Player"]
 
 Writes screenshots of each step to OUT_DIR and exits non-zero if a step fails.
 """

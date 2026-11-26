@@ -2,12 +2,12 @@
 """Visual regression tests: render a fixed list of characters and sets with the app's snapshot
 mode and compare each picture with its reference in testdata/visual/ref/.
 
-    python3 tools/visual_test.py              # render, compare, write testdata/visual/out/report.html
-    python3 tools/visual_test.py --update     # accept the new pictures as the references
-    python3 tools/visual_test.py --only night_lead
+    python3 tools/test/visual_test.py              # render, compare, write testdata/visual/out/report.html
+    python3 tools/test/visual_test.py --update     # accept the new pictures as the references
+    python3 tools/test/visual_test.py --only night_lead
 
 Needs a release build (cargo build --release) and a display. On a Linux machine without one:
-    xvfb-run -s "-screen 0 1600x1000x24" python3 tools/visual_test.py
+    xvfb-run -s "-screen 0 1600x1000x24" python3 tools/test/visual_test.py
 (with Mesa's software Vulkan: VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json).
 
 A picture passes when, against its reference, the average difference is under MEAN_MAX (of 255)
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "testdata" / "visual" / "ref"
 OUT = ROOT / "testdata" / "visual" / "out"
 EXE = ROOT / "target" / "release" / ("block_avatar.exe" if os.name == "nt" else "block_avatar")

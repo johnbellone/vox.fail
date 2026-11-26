@@ -1,6 +1,6 @@
 """Builds the dress-up wardrobe: hats and face pieces chat can put on the character.
 
-    python tools/build_wardrobe.py
+    python tools/assets/build_wardrobe.py
 
 Writes assets/props/wardrobe/<name>.glb (+ source/vox/props/wardrobe/<name>.vox) and
 data/head_fit.json: where the top of the head, the eyes and the mouth are on every character,
@@ -19,7 +19,7 @@ import build_animals as B
 from build_animals import Vox, WHITE, BLACK
 from build_roasted import write_prop
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 GOLD, GOLD_D, RED, BLUE, GREEN = (240, 196, 60), (196, 150, 40), (214, 52, 52), (52, 96, 200), (60, 160, 80)
 BROWN, BROWN_D, PINK, PURPLE, ORANGE = (150, 100, 56), (110, 70, 38), (236, 120, 170), (120, 70, 170), (240, 130, 40)
 GREY, STEEL, CREAM = (120, 120, 128), (176, 180, 188), (240, 232, 210)

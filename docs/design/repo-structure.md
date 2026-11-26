@@ -1,6 +1,6 @@
 # Design: repository structure
 
-Status: **proposed** · 2026-11-25 · no files have moved yet
+Status: **steps 1 to 5 done** · 2026-11-26 · steps 6 to 9 (splitting code inside crates) are not
 
 ## Problem
 

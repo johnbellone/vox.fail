@@ -342,7 +342,7 @@ impl LipSync {
         }
         let rel = f.db - self.settings.gate_db;
         let (open, front) = self.refs.coords(f.f1, f.f2);
-        // thresholds tuned on real recordings (6 speakers, tools/eval_voice.py)
+        // thresholds tuned on real recordings (6 speakers, tools/test/eval_voice.py)
         Some(if open > 0.55 {
             // jaw-open vowel (ah, aw, a, uh): wide unless it's barely above the gate
             if rel > 3.0 { Mouth::Open } else { Mouth::Mid }

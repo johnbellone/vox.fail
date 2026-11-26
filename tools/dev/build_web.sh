@@ -2,14 +2,14 @@
 # Build the browser client (vox-client for WebAssembly) into apps/site/public/pkg, where the
 # site's build copies it to dist/pkg: the play page and the front page's live view load it.
 #
-#   tools/build_web.sh               then: (cd apps/site && bun run build)
+#   tools/dev/build_web.sh               then: (cd apps/site && bun run build)
 #
 # Needs the wasm32 target (`rustup target add wasm32-unknown-unknown`) and wasm-bindgen-cli
 # at the same version as the wasm-bindgen crate (`cargo install wasm-bindgen-cli --version X`).
 # Without the target installed, it builds the standard library from source instead (needs the
 # rust-src component, or the library sources linked into the toolchain).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 OUT="${OUT:-apps/site/public/pkg}"
 # cargo install puts wasm-bindgen here, which isn't always on PATH
 export PATH="$HOME/.cargo/bin:$PATH"

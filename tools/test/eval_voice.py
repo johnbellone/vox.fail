@@ -3,15 +3,15 @@
 
     pip install praat-parselmouth
     cargo build --release
-    python3 tools/eval_voice.py praat demo/*.wav               # pitch + F1/F2 vs Praat, frame by frame
-    python3 tools/eval_voice.py vowels path/to/fsdd/recordings  # vowel accuracy on the Free Spoken Digit Dataset
-    python3 tools/eval_voice.py rises your_recording.wav        # pitch rise at each phrase end
+    python3 tools/test/eval_voice.py praat demo/*.wav               # pitch + F1/F2 vs Praat, frame by frame
+    python3 tools/test/eval_voice.py vowels path/to/fsdd/recordings  # vowel accuracy on the Free Spoken Digit Dataset
+    python3 tools/test/eval_voice.py rises your_recording.wav        # pitch rise at each phrase end
 
 Praat's formant ceiling is 5000 Hz for male voices and 5500 Hz for female (pass --female).
 """
 import csv, math, os, statistics as st, subprocess, sys, tempfile, collections
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.path.join(ROOT, 'target', 'release', 'block_avatar' + ('.exe' if os.name == 'nt' else ''))
 TMP = tempfile.mkdtemp()
 
