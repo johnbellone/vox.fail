@@ -1,0 +1,33 @@
+Vox is starting: the directory first (it makes the signing key), then the worlds (each waits
+for the directory's public key), behind the edge.
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Worlds:
+{{- range .Values.worlds }}
+  {{ .name }} ({{ .id }}): {{ $.Values.publicUrl | replace "https://" "wss://" | replace "http://" "ws://" }}/w/{{ .port }}/ws
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+Public: {{ .Values.publicUrl }} through the Ingress for {{ .Values.ingress.host }}.
+{{- else if .Values.cloudflared.enabled }}
+Public: {{ .Values.publicUrl }} through the Cloudflare Tunnel. In the dashboard, route the
+tunnel's hostname to http://{{ include "vox.edge" . }}:{{ .Values.edge.port }}.
+{{- else }}
+Neither an Ingress nor a tunnel is on. To try it:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "vox.edge" . }} 8080:{{ .Values.edge.port }}
+and open http://localhost:8080 (install with publicUrl=http://localhost:8080).
+{{- end }}
+
+Operators (world owners, authority):
+  kubectl -n {{ .Release.Namespace }} exec {{ include "vox.directory" . }}-0 -- vox-directory \
+    --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key \
+    {{- range .Values.worlds }} --world "{{ .id }}={{ .name }}=/w/{{ .port }}/ws"{{ end }} \
+    admin own-world void "Their Name"
+
+A world's snapshots (kept a week) and a restore, with the world stopped:
+  kubectl -n {{ .Release.Namespace }} scale statefulset/<world> --replicas=0
+  then run vox-server --db /var/lib/vox/<id>.db --list-snapshots / --restore ... in a pod
+  with its volume (see deploy/helm/README.md).
+
+Back up the volumes: the directory's (accounts, the signing key, wallets) and every world's.

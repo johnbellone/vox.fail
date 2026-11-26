@@ -1,0 +1,131 @@
+{{- /* The directory: accounts, characters, sign-in, the pages and the game's files. SQLite and
+       its signing key live on its volume, so it runs as one replica. */ -}}
+{{- $name := include "vox.directory" . }}
+{{- $d := .Values.directory }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: directory
+spec:
+  selector:
+    {{- include "vox.selector" (list . "directory") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $d.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: directory
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vox.selector" (list . "directory") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vox.labels" . | nindent 8 }}
+        {{- include "vox.selector" (list . "directory") | nindent 8 }}
+      annotations:
+        # restart when the secrets change
+        checksum/secrets: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # time to finish what it's doing and close the database
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: directory
+          image: {{ include "vox.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - vox-directory
+            - --listen
+            - "0.0.0.0:{{ $d.port }}"
+            - --db
+            - /var/lib/vox/directory.db
+            - --key
+            - /var/lib/vox/directory.key
+            - --web
+            - /opt/vox/web
+            - --assets
+            - /opt/vox/assets
+            - --data
+            - /opt/vox/data
+            - --public-url
+            - {{ .Values.publicUrl | quote }}
+            - --behind-proxy
+            {{- if hasPrefix "https://" .Values.publicUrl }}
+            - --secure
+            {{- end }}
+            {{- if $d.steam }}
+            - --steam
+            {{- end }}
+            {{- range .Values.worlds }}
+            - --world
+            - {{ printf "%s=%s=/w/%v/ws" .id .name .port | quote }}
+            {{- end }}
+            {{- range $d.downloads }}
+            - --download
+            - {{ printf "%s=%s" .label .url | quote }}
+            {{- end }}
+            {{- with $d.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "vox.secretName" . }}
+          ports:
+            - name: http
+              containerPort: {{ $d.port }}
+          readinessProbe:
+            httpGet: {path: /api/worlds, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /api/worlds, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 6
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $d.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/vox
+      {{- with $d.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $d.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $d.persistence.size }}

@@ -1,0 +1,34 @@
+{{- /* An Ingress to the edge, which routes everything else itself (pages, files, worlds). */ -}}
+{{- if .Values.ingress.enabled }}
+{{- $i := .Values.ingress }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "vox.fullname" . }}
+  labels:
+    {{- include "vox.labels" . | nindent 4 }}
+  {{- with $i.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $i.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $i.tls.enabled }}
+  tls:
+    - hosts: [{{ $i.host | quote }}]
+      secretName: {{ $i.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ $i.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "vox.edge" . }}
+                port:
+                  name: http
+{{- end }}

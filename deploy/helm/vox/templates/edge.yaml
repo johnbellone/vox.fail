@@ -1,0 +1,194 @@
+{{- /* The edge: nginx in front of the directory and the worlds. It caches the game's files
+       (the directory marks /pkg/, /assets/ and /data/ cacheable for five minutes; the browser
+       client alone is about 11 MB compressed), carries /w/<port>/ WebSockets to each world,
+       and refuses /api/world/ (the worlds' own endpoints, used inside the cluster only). */ -}}
+{{- $name := include "vox.edge" . }}
+{{- $e := .Values.edge }}
+{{- $dir := include "vox.directory" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+data:
+  nginx.conf: |
+    worker_processes auto;
+    pid /tmp/nginx.pid;
+    events { worker_connections 4096; }
+    http {
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+      fastcgi_temp_path /tmp/fastcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+      access_log /dev/stdout;
+      error_log /dev/stderr warn;
+      server_tokens off;
+      keepalive_timeout 65;
+      client_max_body_size 1m;
+
+      map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+      # who's asking: passed on as it came from what's in front (an Ingress controller or
+      # Cloudflare's tunnel), never with this hop added, since the directory reads the last
+      # address in the list
+      map $http_x_forwarded_for $client_chain { '' $remote_addr; default $http_x_forwarded_for; }
+      map $http_x_forwarded_proto $client_proto { '' $scheme; default $http_x_forwarded_proto; }
+      # one cached copy per encoding the directory can send (it serves .br and .gz as asked)
+      map $http_accept_encoding $encoding { ~br br; ~gzip gzip; default identity; }
+
+      {{- if $e.cache.enabled }}
+      proxy_cache_path /var/cache/nginx/vox levels=1:2 keys_zone=vox:32m max_size={{ $e.cache.maxSize }} inactive={{ $e.cache.inactive }} use_temp_path=off;
+      {{- end }}
+
+      upstream directory {
+        server {{ $dir }}:{{ .Values.directory.port }};
+        keepalive 32;
+      }
+
+      server {
+        listen {{ $e.port }};
+
+        proxy_http_version 1.1;
+        # (every location sets its headers in full: one proxy_set_header in a location drops
+        # all of the server's)
+
+        location = /healthz {
+          access_log off;
+          return 200 "ok\n";
+        }
+
+        # the worlds' reports and fetches: inside the cluster only
+        location /api/world/ {
+          return 404;
+        }
+
+        {{- range $world := .Values.worlds }}
+
+        # {{ $world.name }}
+        location /w/{{ $world.port }}/ {
+          proxy_pass http://{{ include "vox.world" (list $ $world) }}:{{ $world.port }};
+          {{- include "vox.edgeHeaders" $ | nindent 10 }}
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+          proxy_buffering off;
+          proxy_read_timeout 3600s;
+          proxy_send_timeout 3600s;
+        }
+        {{- end }}
+
+        # the game's files: the browser client, models, textures, levels
+        location ~ ^/(pkg|assets|data)/ {
+          proxy_pass http://directory;
+          {{- include "vox.edgeHeaders" . | nindent 10 }}
+          proxy_set_header Connection "";
+          {{- if $e.cache.enabled }}
+          proxy_cache vox;
+          proxy_cache_key "$host$request_uri|$encoding";
+          proxy_cache_valid 200 {{ $e.cache.fallback }};
+          proxy_cache_lock on;
+          proxy_cache_background_update on;
+          proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+          add_header X-Cache-Status $upstream_cache_status always;
+          {{- end }}
+        }
+
+        # the pages, sign-in and the API: never cached
+        location / {
+          proxy_pass http://directory;
+          {{- include "vox.edgeHeaders" . | nindent 10 }}
+          proxy_set_header Connection "";
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+spec:
+  selector:
+    {{- include "vox.selector" (list . "edge") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $e.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+spec:
+  replicas: {{ $e.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vox.selector" (list . "edge") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vox.labels" . | nindent 8 }}
+        {{- include "vox.selector" (list . "edge") | nindent 8 }}
+      annotations:
+        # restart when the configuration changes (a world added, the cache resized)
+        checksum/config: {{ .Values.worlds | toJson | cat (toJson $e) (toJson .Values.cloudflared.enabled) | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: "{{ $e.image.repository }}:{{ $e.image.tag }}"
+          imagePullPolicy: {{ $e.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $e.port }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $e.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir:
+            sizeLimit: {{ $e.cache.volumeSize }}
+      {{- with $e.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $e.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $e.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

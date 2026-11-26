@@ -1,0 +1,166 @@
+{{- /* One world server per entry in .Values.worlds: a single process owns the world's blocks
+       and players, with SQLite and its snapshots on its own volume. Before starting it fetches
+       the directory's public key, so it lets in the people who signed in there. */ -}}
+{{- $dir := include "vox.directory" . }}
+{{- range $world := .Values.worlds }}
+{{- $w := mergeOverwrite (deepCopy $.Values.worldDefaults) $world }}
+{{- $name := include "vox.world" (list $ $w) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vox.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: world
+    vox.fail/world: {{ $w.id }}
+spec:
+  selector:
+    {{- include "vox.selector" (list $ "world") | nindent 4 }}
+    vox.fail/world: {{ $w.id }}
+  ports:
+    - name: ws
+      port: {{ $w.port }}
+      targetPort: ws
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vox.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: world
+    vox.fail/world: {{ $w.id }}
+spec:
+  serviceName: {{ $name }}
+  # a world is one process: never more than one
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vox.selector" (list $ "world") | nindent 6 }}
+      vox.fail/world: {{ $w.id }}
+  template:
+    metadata:
+      labels:
+        {{- include "vox.labels" $ | nindent 8 }}
+        {{- include "vox.selector" (list $ "world") | nindent 8 }}
+        vox.fail/world: {{ $w.id }}
+      annotations:
+        checksum/secrets: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      # SIGTERM saves the world and takes a last snapshot: give it time
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: directory-key
+          image: {{ include "vox.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until curl -fsS --max-time 5 http://{{ $dir }}:{{ $.Values.directory.port }}/api/key -o /run/vox/directory.key.pub; do
+                echo "waiting for the directory"; sleep 3
+              done
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: run
+              mountPath: /run/vox
+      containers:
+        - name: world
+          image: {{ include "vox.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args:
+            - vox-server
+            - --listen
+            - "0.0.0.0:{{ $w.port }}"
+            - --name
+            - {{ $w.id | quote }}
+            - --db
+            - /var/lib/vox/{{ $w.id }}.db
+            - --seed
+            - /opt/vox/data/levels/{{ $w.seed }}.json
+            - --blocks
+            - /opt/vox/data/blocks.json
+            - --directory-key
+            - /run/vox/directory.key.pub
+            - --directory-url
+            - http://{{ $dir }}:{{ $.Values.directory.port }}
+            - --max-players
+            - {{ $w.maxPlayers | quote }}
+            - --max-watchers
+            - {{ $w.maxWatchers | quote }}
+            {{- if $w.guests }}
+            - --guests
+            {{- end }}
+            {{- if $w.snapshots.enabled }}
+            - --snapshot-every
+            - {{ $w.snapshots.every | quote }}
+            {{- else }}
+            - --no-snapshots
+            {{- end }}
+            {{- with $w.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: VOX_WORLD_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vox.secretName" $ }}
+                  key: VOX_WORLD_SECRET
+          ports:
+            - name: ws
+              containerPort: {{ $w.port }}
+          # the world's status page
+          readinessProbe:
+            httpGet: {path: /, port: ws}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /, port: ws}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 6
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $w.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/vox
+            - name: run
+              mountPath: /run/vox
+              readOnly: true
+      volumes:
+        - name: run
+          emptyDir:
+            sizeLimit: 1Mi
+      {{- with $w.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $w.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $w.persistence.size }}
+{{- end }}

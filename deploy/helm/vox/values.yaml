@@ -1,0 +1,173 @@
+# Vox on Kubernetes. Everything comes from one image (deploy/docker/Dockerfile).
+#
+#   helm install vox deploy/helm/vox -n vox --create-namespace \
+#     --set image.repository=ghcr.io/<you>/vox --set image.tag=<version> \
+#     --set publicUrl=https://vox.fail --set ingress.host=vox.fail
+#
+# The pieces:
+#   directory  accounts, characters, sign-in, the pages and the game's files; signs the tokens
+#              worlds check. SQLite on its own volume, so one replica.
+#   worlds     one world server per entry below, each on its own volume (SQLite and its
+#              snapshots), one replica each: a world is one process by design.
+#   edge       nginx in front of everything: caches the game's files (/pkg/, /assets/, /data/,
+#              which the directory marks cacheable for five minutes), routes /w/<port>/ to the
+#              worlds (WebSockets), and refuses /api/world/ (only the worlds use it, inside).
+#   ingress    optional: a Kubernetes Ingress to the edge.
+#   cloudflared optional: a Cloudflare Tunnel to the edge (as vox.fail runs today).
+
+image:
+  repository: ghcr.io/johnbellone/vox
+  tag: ""          # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Where people reach it: Steam and Discord send people back here, and cookies are marked
+# secure when it's https.
+publicUrl: https://vox.fail
+
+# The secrets the directory and worlds share. Either name a Secret you made yourself (keys
+# VOX_WORLD_SECRET, VOX_DISCORD_CLIENT_ID, VOX_DISCORD_CLIENT_SECRET, VOX_STEAM_KEY), or leave
+# existingSecret empty and the chart makes one from the values below. An empty worldSecret is
+# made up once at random and kept across upgrades.
+secrets:
+  existingSecret: ""
+  worldSecret: ""
+  discordClientId: ""
+  discordClientSecret: ""
+  steamKey: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+directory:
+  port: 7700
+  # sign in with Steam (needs nothing else; secrets.steamKey lets accounts take Steam names)
+  steam: true
+  # links offered on the start page: [{label: Windows, url: https://…}]
+  downloads: []
+  extraArgs: []
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Every world: `id` is the world's name to the directory and in its database; `port` is the
+# number in its public path (/w/<port>/ws), which portals in the levels name (":7781"), so keep
+# the numbers the levels use; `seed` is the level a new world starts from (data/levels/).
+worlds:
+  - id: void
+    name: The Void
+    port: 7780
+    seed: void
+  - id: yard
+    name: The Yard
+    port: 7781
+    seed: yard
+  - id: islands
+    name: The Islands
+    port: 7782
+    seed: islands
+  - id: sea
+    name: The Dark Sea
+    port: 7783
+    seed: sea
+  - id: orbit
+    name: Orbit
+    port: 7784
+    seed: orbit
+
+# What every world gets unless its entry says otherwise (any of these keys can go on a world).
+worldDefaults:
+  maxPlayers: 100
+  maxWatchers: 200
+  # let people in without signing in at the directory too
+  guests: false
+  snapshots:
+    enabled: true
+    every: 300      # seconds
+  extraArgs: []
+  persistence:
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+edge:
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.27-alpine
+    pullPolicy: IfNotPresent
+  replicas: 2
+  port: 8080
+  cache:
+    # cache the game's files (/pkg/, /assets/, /data/) in each edge pod
+    enabled: true
+    # how much nginx keeps (nginx's units: 1500m), on a scratch volume per pod a little
+    # bigger than that, and how long a file nobody asks for stays
+    maxSize: 1500m
+    volumeSize: 2Gi
+    inactive: 1h
+    # how long to keep a file when the directory says nothing (it says five minutes)
+    fallback: 5m
+  # trust X-Forwarded-For from whatever is in front (an Ingress controller or Cloudflare);
+  # the edge passes it on unchanged so the directory sees who's really asking
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+ingress:
+  enabled: false
+  className: nginx
+  host: vox.fail
+  # a Secret with the certificate (cert-manager can make it: see annotations)
+  tls:
+    enabled: true
+    secretName: vox-tls
+  annotations:
+    # ingress-nginx: keep WebSockets open (a world's connection lasts the whole visit)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    # cert-manager.io/cluster-issuer: letsencrypt
+
+cloudflared:
+  enabled: false
+  image:
+    repository: cloudflare/cloudflared
+    tag: 2024.12.2
+    pullPolicy: IfNotPresent
+  replicas: 2
+  # a Secret holding the tunnel's token under `token` (Zero Trust -> Networks -> Tunnels ->
+  # your tunnel -> the token in its install command). In the dashboard, give the tunnel one
+  # public hostname, vox.fail, pointing at http://<release>-vox-edge:8080.
+  tokenSecret: cloudflared-token
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+# Only the edge may reach the directory and the worlds, and only the worlds may reach the
+# directory's /api/world/ (the edge refuses it outright too). Needs a CNI that enforces it.
+networkPolicy:
+  enabled: true

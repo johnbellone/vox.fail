@@ -1,0 +1,13 @@
+apiVersion: v2
+name: vox
+description: >-
+  Vox (vox.fail): the directory (accounts, characters, the pages and the game's files), one
+  world server per world, and an edge in front of them that caches the game's files and routes
+  /w/<port>/ to the worlds. Optionally an Ingress and/or a Cloudflare Tunnel.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://vox.fail
+sources:
+  - https://github.com/johnbellone/vox.fail
+keywords: [game, voxel, websocket]

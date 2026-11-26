@@ -17,7 +17,7 @@
 //! its token; they go by the name in it. `--guests` lets people in without one too.
 //!
 //! A new database is filled from the seed level; after that the world is whatever its
-//! players built. Ctrl-C saves and stops. Put it behind TLS (a reverse proxy or Cloudflare)
+//! players built. Ctrl-C (or SIGTERM) saves and stops. Put it behind TLS (a reverse proxy or Cloudflare)
 //! for `wss://` on the internet.
 
 use std::path::PathBuf;
@@ -100,12 +100,29 @@ async fn main() {
     let stop = server.clone();
     axum::serve(listener, server.router())
         .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            stop_asked().await;
             eprintln!("saving…");
             stop.shutdown().await;
         })
         .await
         .expect("server");
+}
+
+/// Ctrl-C, or SIGTERM (how systemd and Kubernetes ask a program to stop): either way, save
+/// and stop.
+async fn stop_asked() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 /// The `data` folder: next to the working directory, or next to the executable.

@@ -1,0 +1,19 @@
+# What the image build (deploy/docker/Dockerfile) leaves out: build output, databases, keys,
+# local tools and anything big the servers don't need.
+.git
+.claude
+target
+node_modules
+apps/*/node_modules
+apps/*/dist
+apps/site/public/pkg
+*.db
+*.db-*
+*.db.snapshots
+directory.key
+directory.key.pub
+*.log
+testdata
+source
+knowledge
+deploy/helm

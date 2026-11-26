@@ -13,6 +13,9 @@ manage, and the machine's address stays private.
 | The dark sea | 127.0.0.1:7783 | wss://vox.fail/w/7783/ws |
 | Orbit | 127.0.0.1:7784 | wss://vox.fail/w/7784/ws |
 
+On Kubernetes instead: the image in `docker/` and the Helm chart in `helm/` (see
+[helm/README.md](helm/README.md)).
+
 Portals in the levels name other worlds by port (`":7781"`); from a world at
 `wss://vox.fail/w/7780/ws` that becomes `wss://vox.fail/w/7781/ws`, so the levels work
 unchanged locally and here. The tunnel can't rewrite paths, so world servers answer at

@@ -100,11 +100,26 @@ async fn main() {
     eprintln!("vox-directory on http://{listen}/ (public key {public}, in {})", pub_path.display());
     eprintln!("sign in with a password{}", offered.iter().map(|s| format!(", {s}")).collect::<String>());
     axum::serve(listener, dir.router().into_make_service_with_connect_info::<std::net::SocketAddr>())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(stop_asked())
         .await
         .expect("serve");
+}
+
+/// Ctrl-C, or SIGTERM (how systemd and Kubernetes ask a program to stop): either way, save
+/// and stop.
+async fn stop_asked() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 fn env(k: &str) -> Option<String> {
