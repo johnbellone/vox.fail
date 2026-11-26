@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "okf-memory": {
+      "command": "okf",
+      "args": ["mcp", "knowledge"]
+    }
+  }
+}

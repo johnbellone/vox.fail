@@ -47,6 +47,15 @@ tools/dev/build_web.sh           # the browser client, into apps/site/public/pkg
 On Linux, install the audio and input headers first: `sudo apt install libasound2-dev libudev-dev`
 (Debian and Ubuntu) or `sudo pacman -S alsa-lib systemd-libs` (Arch).
 
+## How we track work
+
+- **GitHub Issues** are for people: bugs, feature requests and questions from users and contributors.
+- **[beads](https://github.com/steveyegge/beads)** (`bd`) is for agents: task breakdowns, dependencies
+  and follow-ups, each referencing its GitHub issue (`gh-42`). Users never need it.
+- **[okf](https://github.com/okf-memory/okf-agent-memory)** keeps long-term project knowledge in
+  `knowledge/` (architecture, technologies, decisions, status). An MCP server is set up in
+  `.mcp.json`; the rules for agents are in [AGENTS.md](AGENTS.md).
+
 ## Read next
 
 - [docs/vox](docs/vox/README.md): running worlds, the directory, signing in, authority, plots,

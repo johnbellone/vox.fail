@@ -172,3 +172,44 @@ From the code review; none are regressions, but know they exist before relying o
 - Do not commit `*.db`, `directory.key*`, or anything under `/etc/vox` equivalents. Secrets
   (`VOX_WORLD_SECRET`, `VOX_DISCORD_CLIENT_SECRET`, `VOX_STEAM_KEY`) live in environment files
   on the server, never in the repo.
+
+## Task tracking and agent memory
+
+- **GitHub Issues** are for people: user-facing bugs, feature requests and questions. They are the
+  public record of what should change and why. Never track a user-facing bug in beads only.
+- **beads** (`bd`) is for agents: implementation tasks, dependencies and follow-ups. Put the
+  GitHub issue in each bead (`gh-<n>`); work from `bd ready`; close with a reason. (beads may not
+  be installed yet.)
+- **okf** (`knowledge/`) is durable project knowledge: architecture, technologies, decisions and
+  status. Search it before large changes; record decisions in it when you finish.
+- Hard constraints: no real-person likenesses or trademarked characters; no synthetic voices
+  (test and demo audio are real recordings); the medic's cross is green; no poses of assaulting
+  police; sound effects are real CC0 recordings; stay on Bevy 0.19.1. See
+  `knowledge/convention/hard-constraints.md`.
+- Before finishing code changes run `cargo test --workspace`, and
+  `okf validate knowledge --strict --drift` when you touched `knowledge/`.
+
+<!-- BEGIN OKF AGENT MEMORY -->
+## 1. Behavioral Invariants & Constraints (RFC 2119)
+- MUST execute `okf_search(query=keywords, limit=3)` before proposing architecture, new dependencies, or substantial changes.
+- NEVER scan `knowledge/` via `list_dir`, `grep_search`, `find`, or raw file readers.
+- NEVER forge human verification (`verified:` is human-only; declare `generated: { by: "<actor>", at: "<iso-time>" }`).
+- PREFER native `okf_*` MCP tools OVER CLI fallback commands.
+
+## 2. Guard Clauses & Scope Governance
+- ON edit(@path/):
+    IF first_visit(@path/) => okf_search(for_path=@path/)
+    IF governance == "hold" => STOP("Subsystem frozen by governance. Request explicit human confirmation.")
+    IF governance == "constraint" => MUST adhere to all listed invariants
+    IF governance == "context" => proceed with awareness
+- ON user_query(architecture | requirements | conventions | domain_facts):
+    okf_search(query=keywords, limit=3) => evaluate summary description
+    IF relevant => okf_show(concept_id) ONLY on demand
+    IF updating_existing_concept => PREFER okf_update OVER okf_create
+
+## 3. Completion Pipeline (Sequential Assertion Gates)
+1. IF decisions_made => MUST okf_create(category/*, type="decision", title=..., desc=...)
+2. IF requirements_discovered => MUST okf_update(concept_id)
+3. IF concepts_mutated => MUST sync(knowledge/log.md, knowledge/index.md)
+4. ASSERT(okf_validate(strict=true, drift=true) == {errors: 0, warnings: 0}, ELSE=fix_before_exit)
+<!-- END OKF AGENT MEMORY -->
