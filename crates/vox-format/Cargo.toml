@@ -1,0 +1,17 @@
+[package]
+name = "vox-format"
+version.workspace = true
+edition.workspace = true
+description = "Vox's world format: regions as compressed, content-addressed blobs, a blob store, and snapshot manifests kept for a week. No rendering, so the world server, the clients and the tools share it."
+
+[dependencies]
+vox-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+blake3 = "1"
+# decoding everywhere (pure Rust, so also in the browser)
+ruzstd = "0.8"
+
+# encoding on the server and the desktop (the C library: faster, better levels)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+zstd = "0.14"

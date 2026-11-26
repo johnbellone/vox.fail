@@ -18,11 +18,13 @@
 //! they opened (added to the settings new arrivals get).
 
 mod connection;
+mod snapshot;
 mod world;
 #[allow(unused_imports)]
 pub use connection::*;
 #[allow(unused_imports)]
 pub use world::*;
+pub use snapshot::{Restore, list_snapshots, restore};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -84,6 +86,11 @@ pub struct Config {
     /// take players' positions as they say (test and automation worlds); otherwise moves
     /// faster than a player can go are sent back
     pub trust_moves: bool,
+    /// where snapshots go (a folder; see vox-format): every `snapshot_every` and on shutdown,
+    /// kept `keep_snapshots` seconds. None: no snapshots.
+    pub snapshots: Option<PathBuf>,
+    pub snapshot_every: Duration,
+    pub keep_snapshots: u64,
     /// how many may watch at once without playing (the front page's live view)
     pub max_watchers: usize,
     /// edits per second per player (and the burst allowed)
@@ -115,6 +122,9 @@ impl Config {
             bounds: Bounds::default(),
             max_players: 100,
             trust_moves: false,
+            snapshots: None,
+            snapshot_every: Duration::from_secs(300),
+            keep_snapshots: vox_format::store::KEEP_SECS,
             max_watchers: 200,
             edit_rate: 20.0,
             flush_every: Duration::from_secs(3),
@@ -291,6 +301,13 @@ struct WorldState {
     /// claimed plots and player-opened portals, from the directory
     plots: Vec<Plot>,
     portals: Vec<serde_json::Value>,
+    /// snapshots: the store, the last one taken, regions changed since, and whether the next
+    /// one must hold every region (no usable last one)
+    snaps: Option<vox_format::Snapshots<vox_format::DirStore>>,
+    snap_prev: Option<vox_format::Manifest>,
+    snap_changed: HashSet<vox_format::RegionKey>,
+    snap_full: bool,
+    last_snapshot: Instant,
 }
 
 /// Steps and keyframes of the weather, s.

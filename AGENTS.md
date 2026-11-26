@@ -22,10 +22,11 @@ Two products share one Cargo workspace:
 | --- | --- | --- |
 | `crates/vox-core/` | `vox-core` | Engine-free rules shared by everyone: blocks and chunks (`world`), voxel raycast (`ray`), walking physics (`body`), level files (`level`), the wire protocol (`wire`), sign-in tokens (`auth`), client-side prediction (`predict`), weather simulation (`weather`). **No Bevy here.** |
 | `crates/vox-world/` | `vox-world` | A world on screen, shared by the app and the client: block meshing and materials (`blocks`), server link, chunks, controls, camera (`client`), input actions, bindings, controller brands and button hints (`input/`), the pixel HUD and quick wheel (`hud`), menus with controller navigation (`menu`), sky and fog (`outdoors`), portals (`portals`), avatar pose streaming (`pose`, `proto`), file access that also works in the browser (`files`). |
+| `crates/vox-format/` | `vox-format` | The world format: regions (16 × 16 chunk columns) as checked, zstd-compressed blobs named by their BLAKE3 hash (`region`), a blob store and snapshots (manifests of region hashes, shared blobs, kept a week; `store`). Decodes in wasm too (`ruzstd`); encoding is native. |
 | `crates/vox-link/` | `vox-link` | A WebSocket kept open on its own thread, reconnecting with backoff; a `Dial` says where and how (world servers, the relay). Desktop only. |
 | `crates/avatar-voice/` | `avatar-voice` | Block Avatar's voice analysis, pure Rust: lip sync (`lipsync`), pitch and formants (`voice`), laugh and sing detection (`detect`), WAV files (`wav`, one hardened reader). Its tests run on real recordings in `testdata/real`. |
 | `bins/vox-client/` | `vox-client` | The player client: a thin Bevy app (`lib.rs`) around `vox-world`. Builds natively and to wasm32. Also the FPS counter, the portal sweep and watch mode (the front page's live view). |
-| `bins/vox-server/` | `vox-server` | One world: a single thread owns the blocks, players and edit order; WebSocket on `/ws` for players and watchers; SQLite persistence. |
+| `bins/vox-server/` | `vox-server` | One world: a single thread owns the blocks, players and edit order; WebSocket on `/ws` for players and watchers; SQLite persistence, with `vox-format` snapshots beside it (`<db>.snapshots/`) and restore (`snapshot`). |
 | `bins/vox-directory/` | `vox-directory` | Accounts (Steam, Discord, name and password), characters, authority and world currencies, plots, portals, raids, friends and groups, token signing; serves the site and the game's files. |
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
@@ -60,6 +61,8 @@ tools/dev/play-local.sh                  # local Void + yard + islands, then the
 tools/dev/play-local.sh --name Sam --model models/dog.glb
 
 cargo run --release -p vox-server -- --listen 127.0.0.1:7780 --db void.db     # one world
+cargo run --release -p vox-server -- --db void.db --list-snapshots             # (world closed) its snapshots
+cargo run --release -p vox-server -- --db void.db --restore-at 1795700000      # back to a moment; undoable
 cargo run --release -p vox-client -- --world ws://127.0.0.1:7780/ws --name Sam
 cargo run --release -p vox-directory -- --listen 0.0.0.0:7700                 # accounts and pages
 tools/dev/build_web.sh               # browser client into apps/site/public/pkg (wasm32 target + wasm-bindgen-cli)

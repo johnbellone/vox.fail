@@ -92,9 +92,22 @@ impl WorldState {
             keyframe_at: Instant::now(),
             plots: Vec::new(),
             portals: Vec::new(),
+            snaps: None,
+            snap_prev: None,
+            snap_changed: HashSet::new(),
+            snap_full: true,
+            last_snapshot: Instant::now(),
         };
         if fresh {
             s.flush()?;
+        }
+        if let Some(dir) = s.cfg.snapshots.clone() {
+            let snaps = vox_format::Snapshots::new(vox_format::DirStore::new(dir));
+            let latest = snaps.latest().map_err(|e| format!("snapshots: {e}"))?;
+            // the last snapshot is a base only if nothing happened after it
+            s.snap_full = latest.as_ref().is_none_or(|m| m.seq != s.seq) || fresh;
+            s.snap_prev = latest;
+            s.snaps = Some(snaps);
         }
         Ok(s)
     }
@@ -154,11 +167,20 @@ impl WorldState {
             let _ = p.tx.try_send(Message::Binary(wire::encode(&ToClient::Bye { why: "the world is closing".into() }).into()));
         }
         self.save();
+        // closing: always a snapshot of what was built
+        if let Err(e) = self.snapshot() {
+            eprintln!("couldn't take a snapshot: {e}");
+        }
     }
 
     pub(super) fn save(&mut self) {
         if let Err(e) = self.flush() {
             eprintln!("couldn't save the world: {e}");
+        }
+        if self.last_snapshot.elapsed() >= self.cfg.snapshot_every
+            && let Err(e) = self.snapshot()
+        {
+            eprintln!("couldn't take a snapshot: {e}");
         }
     }
 
@@ -417,6 +439,7 @@ impl WorldState {
                         let a = Applied { seq: self.seq, player: p.id, id, cell, block };
                         self.log.push((self.seq, now_unix(), p.name.clone(), cell, old, block));
                         self.dirty.insert(ChunkKey::of(cell));
+                        self.snap_changed.insert(vox_format::region_of(ChunkKey::of(cell)));
                         self.broadcast(&ToClient::Edits(vec![a]), None);
                     }
                 }

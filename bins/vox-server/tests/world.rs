@@ -545,3 +545,62 @@ async fn a_trusting_world_takes_positions_as_they_come() {
         }
     }
 }
+
+#[tokio::test]
+async fn snapshots_restore_to_a_moment_and_the_restore_can_be_undone() {
+    let dir = std::env::temp_dir().join(format!("vox-server-snap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("world.db");
+    let cfg = || {
+        let mut c = config(db.to_str().unwrap());
+        c.snapshots = Some(dir.join("snaps"));
+        c.snapshot_every = Duration::ZERO;
+        c
+    };
+    let unix = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let wait_for = |id: u32| {
+        move |m: &ToClient| matches!(m, ToClient::Edits(e) if e.iter().any(|e| e.id == id))
+    };
+    // build: one block, a moment passes, another block, then close
+    let (server, url) = serve(cfg()).await;
+    let mut a = join(&url, "Ann").await;
+    stand(&mut a).await;
+    send(&mut a.ws, &ToServer::Edit { id: 1, cell: [0, 0, 0], block: 3 }).await;
+    loop {
+        if wait_for(1)(&recv_event(&mut a.ws).await) {
+            break;
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let between = unix();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [1, 0, 0], block: 2 }).await;
+    loop {
+        if wait_for(2)(&recv_event(&mut a.ws).await) {
+            break;
+        }
+    }
+    server.shutdown().await;
+    drop(a);
+    let before = vox_server::list_snapshots(&dir.join("snaps")).unwrap();
+    assert!(before.len() >= 2, "{before:?}");
+    // back to the moment between the two edits
+    let what = vox_server::restore(cfg(), vox_server::Restore::At(between)).unwrap();
+    assert!(what.contains("restored"), "{what}");
+    let (server, url) = serve(cfg()).await;
+    let j = join(&url, "Ann").await;
+    assert_eq!(j.world.get([0, 0, 0]), 3, "the first block is there");
+    assert_eq!(j.world.get([1, 0, 0]), 0, "the second is gone");
+    server.shutdown().await;
+    drop(j);
+    // the restore took a snapshot of what it replaced: going back to it undoes the restore
+    let after = vox_server::list_snapshots(&dir.join("snaps")).unwrap();
+    let undo = after.iter().rev().nth(1).unwrap().0.clone();
+    vox_server::restore(cfg(), vox_server::Restore::Snapshot(undo)).unwrap();
+    let (server, url) = serve(cfg()).await;
+    let j = join(&url, "Ann").await;
+    assert_eq!(j.world.get([1, 0, 0]), 2, "undone: the second block is back");
+    server.shutdown().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}

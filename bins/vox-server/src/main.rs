@@ -1,6 +1,13 @@
 //! Run a world: `vox-server [--listen 127.0.0.1:7780] [--db world.db] [--name void]
 //! [--seed data/levels/void.json] [--blocks data/blocks.json] [--max-players 100] [--max-watchers 200] [--trust-moves]
-//! [--directory-key <hex or file> [--guests]] [--directory-url http://127.0.0.1:7700]`.
+//! [--directory-key <hex or file> [--guests]] [--directory-url http://127.0.0.1:7700]
+//! [--snapshots <dir> | --no-snapshots] [--snapshot-every <seconds>]`.
+//!
+//! Snapshots (vox-format) go to `<db>.snapshots/` by default: the regions that changed, every
+//! five minutes and on closing, kept a week. With the world closed:
+//! `vox-server --db world.db --list-snapshots`, `--restore <id|latest>`, or `--restore-at <unix
+//! time>` (the snapshot before it plus the edits up to it). A restore first snapshots the world
+//! as it is, so it can be undone.
 //!
 //! With `--directory-url` and `VOX_WORLD_SECRET` (the directory's too), the world reports who
 //! is in it each minute (so players earn authority, and raids are won) and takes the plots and
@@ -50,6 +57,37 @@ async fn main() {
         let hex = std::fs::read_to_string(&k).unwrap_or(k);
         cfg.directory = Some(vox_core::auth::public_from_hex(&hex).unwrap_or_else(|e| panic!("--directory-key: {e}")));
         cfg.guests = args.iter().any(|a| a == "--guests");
+    }
+    // snapshots next to the world's database unless told otherwise
+    let in_memory = cfg.db.to_string_lossy() == ":memory:";
+    if !args.iter().any(|a| a == "--no-snapshots") && !in_memory {
+        let mut d = cfg.db.clone().into_os_string();
+        d.push(".snapshots");
+        cfg.snapshots = Some(arg("--snapshots").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(d)));
+    }
+    if let Some(n) = arg("--snapshot-every").and_then(|v| v.parse().ok()) {
+        cfg.snapshot_every = std::time::Duration::from_secs(n);
+    }
+    // the world closed: list or restore snapshots, then stop
+    if args.iter().any(|a| a == "--list-snapshots") {
+        let dir = cfg.snapshots.clone().unwrap_or_else(|| panic!("no snapshots for an in-memory world"));
+        for (id, at, regions) in vox_server::list_snapshots(&dir).unwrap_or_else(|e| panic!("{e}")) {
+            println!("{id}  taken {at}  {regions} regions");
+        }
+        return;
+    }
+    let restore = arg("--restore")
+        .map(vox_server::Restore::Snapshot)
+        .or_else(|| arg("--restore-at").map(|t| vox_server::Restore::At(t.parse().unwrap_or_else(|_| panic!("--restore-at takes a unix time")))));
+    if let Some(which) = restore {
+        match vox_server::restore(cfg, which) {
+            Ok(what) => println!("{what}"),
+            Err(e) => {
+                eprintln!("can't restore: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
     }
     let db = cfg.db.clone();
     let server = vox_server::Server::start(cfg).unwrap_or_else(|e| panic!("can't open {}: {e}", db.display()));

@@ -1,6 +1,9 @@
 # Design: the world format
 
-Status: **proposed** · 2026-11-26 · decisions recorded (see *Decisions*); nothing built yet
+Status: **phase 1 built** · 2026-11-26 · decisions recorded (see *Decisions*). `crates/vox-format`
+has region blobs (blocks), the blob store and snapshots with a week's retention; the world server
+snapshots every five minutes and on closing, and restores (`--restore`, `--restore-at`). Not yet:
+the Oxen prototype, and object storage beyond a local folder (`DirStore`).
 
 Related: [world-scaling.md](world-scaling.md) (regions, streaming, region hashes, simulation
 owners), [world-graph-and-art.md](world-graph-and-art.md) (world graphs and recipes, which
@@ -245,7 +248,7 @@ Depends on `vox-core`, `bevy_ecs`, `bevy_reflect`, `bevy_world_serialization`, `
 
 ## Phases
 
-1. `vox-format` with region blobs for blocks only, the `Snapshots` trait with the plain
+1. (built, but for Oxen) `vox-format` with region blobs for blocks only, the `Snapshots` trait with the plain
    object-storage implementation (manifests), a week's retention; the world server writes
    snapshots alongside SQLite; restore from a snapshot plus the log. Round-trip and
    crafted-input tests. In parallel: an Oxen prototype behind the same trait (commit, checkout,
