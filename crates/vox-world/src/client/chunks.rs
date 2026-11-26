@@ -113,7 +113,7 @@ pub(super) fn spawn_chunk(
         .id();
     commands.entity(e).with_children(|c| {
         if opaque.faces() > 0 {
-            c.spawn((Mesh3d(meshes.add(opaque.into_mesh())), MeshMaterial3d(blocks.world_solid.clone()), crate::NoBevel));
+            c.spawn((Mesh3d(meshes.add(opaque.into_packed_mesh())), MeshMaterial3d(blocks.world_solid.clone()), crate::NoBevel));
         }
         if glass.faces() > 0 {
             c.spawn((Mesh3d(meshes.add(glass.into_mesh())), MeshMaterial3d(blocks.glass.clone()), crate::NoBevel));

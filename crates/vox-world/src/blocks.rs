@@ -329,6 +329,33 @@ const FACES: [(IVec3, Vec3, Vec3); 6] = [
     (IVec3::NEG_Y, Vec3::X, Vec3::NEG_Z),
 ];
 
+/// World chunks' packed vertex (20 bytes instead of 64): the position as usual (shadows and
+/// culling use it), the atlas coordinates as two 16-bit fractions, and one number holding the
+/// face (which of the six, so the shader can rebuild the normal and tangent) and the corner's
+/// shading (`shaders/block_vertex.wgsl` unpacks them).
+pub const ATTRIBUTE_BLOCK_UV: bevy::mesh::MeshVertexAttribute =
+    bevy::mesh::MeshVertexAttribute::new("BlockUv", 0x766f_7801, bevy::mesh::VertexFormat::Unorm16x2);
+/// Bits 0-2: the face (the order of `FACES`); bits 8-15: shading, 255 = full light.
+pub const ATTRIBUTE_BLOCK_FACE: bevy::mesh::MeshVertexAttribute =
+    bevy::mesh::MeshVertexAttribute::new("BlockFace", 0x766f_7802, bevy::mesh::VertexFormat::Uint32);
+
+/// Which of `FACES` a face normal is.
+fn face_index(n: [f32; 3]) -> u32 {
+    match (n[0].round() as i32, n[1].round() as i32, n[2].round() as i32) {
+        (1, 0, 0) => 0,
+        (-1, 0, 0) => 1,
+        (0, 0, 1) => 2,
+        (0, 0, -1) => 3,
+        (0, 1, 0) => 4,
+        _ => 5,
+    }
+}
+
+/// A face's packed number: its face and its shading.
+pub fn pack_face(normal: [f32; 3], shade: f32) -> u32 {
+    face_index(normal) | ((shade.clamp(0.0, 1.0) * 255.0).round() as u32) << 8
+}
+
 #[derive(Default)]
 pub struct MeshData {
     pub pos: Vec<[f32; 3]>,
@@ -350,6 +377,18 @@ impl MeshData {
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
             .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, self.tan)
             .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.col)
+            .with_inserted_indices(Indices::U32(self.idx))
+    }
+
+    /// The packed form for the world's solid blocks ([`ATTRIBUTE_BLOCK_UV`],
+    /// [`ATTRIBUTE_BLOCK_FACE`]), drawn with [`BlockMaterial`]. Only for axis-aligned block faces.
+    pub fn into_packed_mesh(self) -> Mesh {
+        let uv: Vec<[u16; 2]> = self.uv.iter().map(|[u, v]| [(u.clamp(0.0, 1.0) * 65535.0).round() as u16, (v.clamp(0.0, 1.0) * 65535.0).round() as u16]).collect();
+        let face: Vec<u32> = self.nrm.iter().zip(&self.col).map(|(n, c)| pack_face(*n, c[0])).collect();
+        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
+            .with_inserted_attribute(ATTRIBUTE_BLOCK_UV, bevy::mesh::VertexAttributeValues::Unorm16x2(uv))
+            .with_inserted_attribute(ATTRIBUTE_BLOCK_FACE, face)
             .with_inserted_indices(Indices::U32(self.idx))
     }
 }
@@ -620,8 +659,45 @@ pub struct BlockExt {
 }
 
 impl bevy::pbr::MaterialExtension for BlockExt {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        "shaders/block_vertex.wgsl".into()
+    }
+
     fn fragment_shader() -> bevy::shader::ShaderRef {
         "shaders/block.wgsl".into()
+    }
+
+    /// The main pass reads the packed vertex and tells the fragment shader it has normals,
+    /// tangents, coordinates and colours (rebuilt by the vertex shader). Shadows and other
+    /// prepasses keep the standard layout: they only need the position.
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialExtensionPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialExtensionKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        let prepass = descriptor.vertex.shader_defs.iter().any(|d| *d == "PREPASS_PIPELINE".into());
+        if prepass || !layout.0.contains(ATTRIBUTE_BLOCK_FACE) {
+            return Ok(());
+        }
+        let vertex = layout.0.get_layout(&[
+            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+            ATTRIBUTE_BLOCK_UV.at_shader_location(1),
+            ATTRIBUTE_BLOCK_FACE.at_shader_location(2),
+        ])?;
+        descriptor.vertex.buffers = vec![vertex];
+        for def in ["VERTEX_NORMALS", "VERTEX_UVS", "VERTEX_UVS_A", "VERTEX_TANGENTS", "VERTEX_COLORS"] {
+            let d: bevy::shader::ShaderDefVal = def.into();
+            if !descriptor.vertex.shader_defs.contains(&d) {
+                descriptor.vertex.shader_defs.push(d.clone());
+            }
+            if let Some(f) = descriptor.fragment.as_mut() {
+                if !f.shader_defs.contains(&d) {
+                    f.shader_defs.push(d);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -817,5 +893,44 @@ mod tests {
         }
         assert!(level_path("yard").is_some());
         assert!(level_path("../etc").is_none());
+    }
+}
+
+#[cfg(test)]
+mod packed_tests {
+    use super::*;
+
+    #[test]
+    fn faces_and_shading_pack_into_one_number() {
+        // the order the shader's tables follow: +X, -X, +Z, -Z, +Y, -Y
+        for (i, (dir, udir, vdir)) in FACES.iter().enumerate() {
+            let n = dir.as_vec3().to_array();
+            assert_eq!(pack_face(n, 1.0) & 7, i as u32);
+            // and every face's tangent is +u with handedness -1, as block_vertex.wgsl has it
+            assert!(dir.as_vec3().cross(*udir).dot(*vdir) < 0.0, "face {i}");
+        }
+        assert_eq!(pack_face([0.0, 1.0, 0.0], 0.55) >> 8, 140);
+        assert_eq!(pack_face([0.0, -1.0, 0.0], 2.0) >> 8, 255, "clamped");
+    }
+
+    #[test]
+    fn the_packed_mesh_has_the_three_attributes_and_nothing_else() {
+        let mut m = MeshData::default();
+        m.pos = vec![[0.0; 3]; 4];
+        m.nrm = vec![[1.0, 0.0, 0.0]; 4];
+        m.uv = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.25, 0.5]];
+        m.tan = vec![[0.0, 0.0, -1.0, -1.0]; 4];
+        m.col = vec![[0.82, 0.82, 0.82, 1.0]; 4];
+        m.idx = vec![0, 1, 2, 0, 2, 3];
+        let mesh = m.into_packed_mesh();
+        let ids: Vec<_> = mesh.attributes().map(|(a, _)| a.id).collect();
+        assert_eq!(ids.len(), 3);
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
+        let Some(bevy::mesh::VertexAttributeValues::Unorm16x2(uv)) = mesh.attribute(ATTRIBUTE_BLOCK_UV) else { panic!("uv") };
+        assert_eq!(uv[3], [16384, 32768]);
+        let Some(bevy::mesh::VertexAttributeValues::Uint32(f)) = mesh.attribute(ATTRIBUTE_BLOCK_FACE) else { panic!("face") };
+        assert_eq!(f[0], 209 << 8);
+        // 12 + 4 + 4 bytes a vertex
+        assert_eq!(mesh.get_vertex_size(), 20);
     }
 }

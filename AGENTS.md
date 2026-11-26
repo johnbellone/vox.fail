@@ -143,8 +143,11 @@ From the code review; none are regressions, but know they exist before relying o
   50 lines. Check schedule changes with `tools/test/visual_test.py` (render references with the
   old build, `--update`, then compare the new one).
 - Remeshing copies voxels chunk by chunk and runs within a per-frame budget (8 ms desktop,
-  5 ms browser), nearest first; still: a one-block edit rebuilds its whole chunk, vertices are
-  64 bytes, and weather and fog baking run on the main thread.
+  5 ms browser), nearest first, and world faces use a packed 20-byte vertex
+  (`blocks::ATTRIBUTE_BLOCK_UV` and `ATTRIBUTE_BLOCK_FACE`, unpacked by
+  `assets/shaders/block_vertex.wgsl`; anything drawn with `BlockMaterial` must use
+  `into_packed_mesh`). Still: a one-block edit rebuilds its whole chunk, chunk meshes keep a CPU
+  copy, faces aren't merged, and weather and fog baking run on the main thread.
 - Duplicated helpers: several xorshift generators, value noise in both
   `vox-core::weather` and `vox-world::outdoors`, and the child-spawning for opaque, glass, water
   and flame meshes.
