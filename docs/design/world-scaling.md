@@ -193,6 +193,27 @@ movement, ambient creatures that cannot affect anything.
 blocks a player, and anything that crosses region edges in ways that matter. These are
 event-driven, so they stay cheap on the server.
 
+**Rotating authority with server-chosen snapshots** (for when clients share the compute of
+anything that matters, not only cosmetics):
+
+- Each active region runs in **epochs** of 30 to 60 seconds. At each epoch the **server picks**
+  the owner at random from capable nearby clients; nobody can ask for a region, and nobody gets
+  one where they gain from the result (their own plot, a raid they're in).
+- **One chain**: every epoch starts from the last snapshot the server accepted, and the server
+  records which that was. Handoff is "start from snapshot N".
+- **Snapshots must be checkable**, so choosing one means something:
+  1. *Redundancy* for gameplay state: two or three clients run the same epoch from the same
+     snapshot and inputs and send hashes; the server takes the majority and flags the rest.
+  2. *Spot audits* for single-owner (cosmetic) work: the server re-runs a random few percent of
+     epochs itself; a cheater can't know which.
+  3. *Rule checks* on every snapshot: conservation, limits, nothing changed that the rules forbid.
+- A client caught disagreeing loses authority; a per-account trust score decides who is eligible.
+- **This needs a bit-identical simulation** on every machine and target: fixed-point or integer
+  maths in `vox-core` (floats' `sin`, `exp` and the like differ between math libraries), with
+  golden tests on native and wasm. The current float weather would have to move to it first.
+- Cost: redundancy doubles compute and upload for the clients involved (prefer desktops), and
+  accepting a snapshot waits for the hashes.
+
 **Weather in two layers**:
 
 - A **coarse global layer** on the server, for example 1 km cells (60 × 60 = 3,600 cells). It is
