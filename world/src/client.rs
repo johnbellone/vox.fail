@@ -1355,6 +1355,8 @@ pub fn controls(
         run_command(&mut w, &c);
     }
     if !w.ready || w.watch {
+        // arriving (or through a portal): a button already held then doesn't count
+        repeat.armed = false;
         return;
     }
     // a menu is open: it has the input, and the mouse
@@ -1367,6 +1369,7 @@ pub fn controls(
             }
         }
         repeat.held = None;
+        repeat.armed = false;
         return;
     }
     use crate::input::Action as A;
@@ -1491,24 +1494,19 @@ pub fn controls(
         let s = if w.fly { "Flying" } else { "Walking" };
         w.notice(s);
     }
-    // ---- breaking and placing: on press, then again every quarter second while held
+    // ---- breaking and placing: on press, then again while held as long as the aim stays put
+    // (holding the button and looking round must not sweep blocks away)
+    let turned = actions.mouse_delta.length() * settings.mouse_look * w.captured as i32 as f32
+        + actions.look_stick.length() * settings.stick_look * dt;
     let (mut place, mut remove) = (false, false);
     if diablo && !pad_active {
         // from above, the pointer builds: right click places, shift and right click removes
         place = clicked.1 && !shift;
         remove = clicked.1 && shift;
     } else if !swallowed {
-        for (act, out) in [(A::Break, &mut remove), (A::Place, &mut place)] {
-            if actions.just_pressed(act) {
-                *out = true;
-                repeat.held = Some((act, now + 0.3));
-            } else if actions.pressed(act) && repeat.held.is_some_and(|(a, at)| a == act && now >= at) {
-                *out = true;
-                repeat.held = Some((act, now + 0.22));
-            } else if actions.just_released(act) && repeat.held.is_some_and(|(a, _)| a == act) {
-                repeat.held = None;
-            }
-        }
+        let held = (actions.pressed(A::Break), actions.pressed(A::Place));
+        let just = (actions.just_pressed(A::Break), actions.just_pressed(A::Place));
+        (remove, place) = repeat.step(held, just, now, turned);
     }
     let pick = actions.just_pressed(A::Pick);
     // ---- where to walk
@@ -1656,6 +1654,60 @@ pub fn controls(
 pub struct BuildRepeat {
     held: Option<(crate::input::Action, f64)>,
     last_jump: f64,
+    /// how far the view has turned since the button went down (radians)
+    turned: f32,
+    /// both buttons were up since the game last got the input back (arriving, a menu closing):
+    /// a button already held then doesn't count
+    armed: bool,
+}
+
+impl BuildRepeat {
+    /// Turning further than this while holding stops the repeat until the next press.
+    pub const TURN: f32 = 0.06;
+    pub const FIRST: f64 = 0.3;
+    pub const AGAIN: f64 = 0.22;
+
+    /// Given (break, place) held and just pressed this frame, the time, and how far the view
+    /// turned this frame: whether to break and whether to place now.
+    pub fn step(&mut self, held: (bool, bool), just: (bool, bool), now: f64, turned: f32) -> (bool, bool) {
+        use crate::input::Action as A;
+        if !self.armed {
+            self.armed = !held.0 && !held.1;
+            self.held = None;
+            return (false, false);
+        }
+        let mut out = (false, false);
+        for (act, h, j) in [(A::Break, held.0, just.0), (A::Place, held.1, just.1)] {
+            let fire = if j {
+                self.held = Some((act, now + Self::FIRST));
+                self.turned = 0.0;
+                true
+            } else if h && self.held.is_some_and(|(a, _)| a == act) {
+                self.turned += turned;
+                if self.turned > Self::TURN {
+                    // looked away: no more until it's pressed again
+                    self.held = None;
+                    false
+                } else if self.held.is_some_and(|(_, at)| now >= at) {
+                    self.held = Some((act, now + Self::AGAIN));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                if !h && self.held.is_some_and(|(a, _)| a == act) {
+                    self.held = None;
+                }
+                false
+            };
+            if act == A::Break {
+                out.0 = fire;
+            } else {
+                out.1 = fire;
+            }
+        }
+        out
+    }
 }
 
 /// The behind camera: behind and a little right of the head, pulled in if a block is in the
@@ -2026,6 +2078,44 @@ pub fn json(w: &WorldClient) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn armed() -> BuildRepeat {
+        let mut r = BuildRepeat::default();
+        r.step((false, false), (false, false), 0.0, 0.0);
+        r
+    }
+
+    #[test]
+    fn holding_break_repeats_while_the_aim_stays_put() {
+        let mut r = armed();
+        assert_eq!(r.step((true, false), (true, false), 1.0, 0.0), (true, false));
+        assert_eq!(r.step((true, false), (false, false), 1.1, 0.0), (false, false), "not before the first delay");
+        assert_eq!(r.step((true, false), (false, false), 1.31, 0.0), (true, false));
+        assert_eq!(r.step((true, false), (false, false), 1.54, 0.01), (true, false), "small wobbles are fine");
+    }
+
+    #[test]
+    fn looking_round_while_holding_breaks_nothing_more() {
+        let mut r = armed();
+        assert_eq!(r.step((true, false), (true, false), 1.0, 0.0), (true, false));
+        r.step((true, false), (false, false), 1.1, 0.05);
+        r.step((true, false), (false, false), 1.2, 0.05);
+        for t in [1.4, 1.7, 2.0, 3.0] {
+            assert_eq!(r.step((true, false), (false, false), t, 0.0), (false, false), "swept away at {t}");
+        }
+        // a new press works again
+        r.step((false, false), (false, false), 3.1, 0.0);
+        assert_eq!(r.step((true, false), (true, false), 3.2, 0.3), (true, false));
+    }
+
+    #[test]
+    fn a_button_held_on_arrival_does_nothing_until_let_go() {
+        let mut r = BuildRepeat::default();
+        assert_eq!(r.step((true, false), (true, false), 0.0, 0.0), (false, false));
+        assert_eq!(r.step((true, false), (false, false), 1.0, 0.0), (false, false));
+        r.step((false, false), (false, false), 1.1, 0.0);
+        assert_eq!(r.step((false, true), (false, true), 1.2, 0.0), (false, true));
+    }
 
     #[test]
     fn urls() {
