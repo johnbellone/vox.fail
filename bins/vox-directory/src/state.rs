@@ -87,6 +87,7 @@ impl Directory {
                 world_secret: cfg.world_secret.filter(|s| !s.trim().is_empty()),
                 report_every: cfg.report_every,
                 tries: Mutex::new(HashMap::new()),
+                hashing: tokio::sync::Semaphore::new(HASHING_AT_ONCE),
                 dummy: Argon2::default()
                     .hash_password(random_hex(16).as_bytes(), &salt())
                     .map(|h| h.to_string())
@@ -192,6 +193,15 @@ impl Directory {
         addr.ip().to_string()
     }
 
+    /// Work out a password hash (or check one) with at most a few at a time; `None` when it's
+    /// been too busy for a few seconds.
+    pub(super) async fn hash_work<T: Send + 'static>(&self, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let permit = tokio::time::timeout(Duration::from_secs(5), self.0.hashing.acquire()).await.ok()?.ok()?;
+        let out = tokio::task::spawn_blocking(f).await.ok();
+        drop(permit);
+        out
+    }
+
     /// Too many sign-in tries from `who` lately?
     pub(super) fn tried(&self, who: &str) -> bool {
         self.tried_up_to(who, ATTEMPTS)
@@ -201,7 +211,13 @@ impl Directory {
         let mut t = self.0.tries.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         t.retain(|_, (_, at)| now.duration_since(*at) < WINDOW);
-        let e = t.entry(who.to_string()).or_insert((0, now));
+        // keys are bounded (names are cut short), and so is the table: when it's full, anyone
+        // not already in it waits (under attack, refusing beats running out of memory)
+        let who: String = who.chars().take(80).collect();
+        if t.len() >= MAX_TRACKED && !t.contains_key(&who) {
+            return true;
+        }
+        let e = t.entry(who).or_insert((0, now));
         e.0 += 1;
         e.0 > most
     }

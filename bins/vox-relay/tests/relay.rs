@@ -12,7 +12,7 @@ async fn start(expire: Duration) -> (String, Relay) {
     let relay = Relay::new(expire);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    let r = relay.router();
+    let r = relay.service();
     tokio::spawn(async move { axum::serve(listener, r).await.unwrap() });
     (addr, relay)
 }
@@ -358,7 +358,7 @@ async fn simulated_bad_network_delays_everything_and_loses_only_droppables() {
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    let r = relay.router();
+    let r = relay.service();
     tokio::spawn(async move { axum::serve(listener, r).await.unwrap() });
     let s = new_show(&addr, "Show", true).await;
     let mut host = join(&addr, &s.id, &format!("role=host&token={}", s.host_token)).await;
@@ -378,4 +378,58 @@ async fn simulated_bad_network_delays_everything_and_loses_only_droppables() {
     let waited = t0.elapsed();
     assert!(waited >= Duration::from_millis(100), "delayed: {waited:?}");
     assert!(nothing_for(&mut v, 400).await, "the droppable one was lost");
+}
+
+/// The HTTP status a WebSocket connect was refused with (0 if it wasn't refused that way).
+async fn refused_with(url: String) -> u16 {
+    match connect_async(url).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(r)) => r.status().as_u16(),
+        Err(_) => 1,
+        Ok(_) => 0,
+    }
+}
+
+#[tokio::test]
+async fn shows_from_one_address_are_limited() {
+    let (addr, _) = start(Duration::from_secs(30)).await;
+    for i in 0..10 {
+        new_show(&addr, &format!("Show {i}"), true).await;
+    }
+    let (st, _) = http(&addr, "POST", "/sessions", r#"{"title":"One too many"}"#, None).await;
+    assert_eq!(st, 429);
+}
+
+#[tokio::test]
+async fn guessing_a_code_is_stopped() {
+    let (addr, _) = start(Duration::from_secs(30)).await;
+    let s = new_show(&addr, "Private", false).await;
+    let url = |q: &str| format!("ws://{addr}/sessions/{}/ws?{q}", s.id);
+    for _ in 0..20 {
+        assert_eq!(refused_with(url("role=viewer&code=WRONG1")).await, 403);
+    }
+    // now even the right code waits: guessing has to stop
+    assert_eq!(refused_with(url(&format!("role=viewer&code={}", s.code))).await, 429);
+}
+
+#[tokio::test]
+async fn a_guest_cannot_speak_for_the_relay() {
+    let (addr, _) = start(Duration::from_secs(30)).await;
+    let s = new_show(&addr, "Show", true).await;
+    let mut host = join(&addr, &s.id, &format!("role=host&token={}", s.host_token)).await;
+    let mut guest = join(&addr, &s.id, &format!("role=guest&code={}&name=Gus", s.code)).await;
+    next_notice(&mut host).await; // the guest arrived
+    // a forged notice from the guest never reaches the host; its binary messages still do
+    guest.send(Message::Text(r#"{"relay":"guest_left"}"#.into())).await.unwrap();
+    guest.send(Message::Binary(vec![1, 2, 3].into())).await.unwrap();
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(2), host.next()).await.expect("in time").unwrap().unwrap();
+        match m {
+            Message::Text(t) => assert!(!t.as_str().contains("guest_left"), "the forged notice got through"),
+            Message::Binary(b) => {
+                assert_eq!(b.as_ref(), &[1, 2, 3]);
+                break;
+            }
+            _ => {}
+        }
+    }
 }

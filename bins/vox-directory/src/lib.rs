@@ -67,6 +67,10 @@ const SESSION: u64 = 30 * 24 * 3600;
 /// Sign-in and sign-up attempts allowed per address (and per name) in `WINDOW`.
 const ATTEMPTS: u32 = 10;
 const WINDOW: Duration = Duration::from_secs(300);
+/// Password hashes worked out at once.
+const HASHING_AT_ONCE: usize = 4;
+/// Addresses and names whose sign-in tries are counted at once.
+const MAX_TRACKED: usize = 100_000;
 
 /// A world people can go to.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -190,6 +194,8 @@ struct Inner {
     world_secret: Option<String>,
     report_every: u64,
     tries: Mutex<HashMap<String, (u32, Instant)>>,
+    /// password hashes being worked out at once (each takes about 19 MB and a core)
+    hashing: tokio::sync::Semaphore,
     /// a password hash checked when a name doesn't exist, so failing takes as long either way
     dummy: String,
 }

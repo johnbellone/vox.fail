@@ -61,12 +61,11 @@ pub(super) async fn signup(
         return Err(bad("passwords are 8 to 128 characters"));
     }
     let pass = l.password.clone();
-    let hash = tokio::task::spawn_blocking(move || {
-        Argon2::default().hash_password(pass.as_bytes(), &salt()).map(|h| h.to_string())
-    })
-    .await
-    .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "try again".into()))?
-    .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "try again".into()))?;
+    let hash = d
+        .hash_work(move || Argon2::default().hash_password(pass.as_bytes(), &salt()).map(|h| h.to_string()))
+        .await
+        .ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "busy: try again in a moment".into()))?
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "try again".into()))?;
     let id = {
         let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
         match db.execute("INSERT INTO accounts (name, pass, created) VALUES (?1, ?2, ?3)", params![name, hash, now() as i64]) {
@@ -88,7 +87,7 @@ pub(super) async fn signin(
     Json(l): Json<Login>,
 ) -> Res<Response> {
     json_only(&h)?;
-    let lname = l.name.trim().to_lowercase();
+    let lname: String = l.name.trim().to_lowercase().chars().take(32).collect();
     if d.tried(&d.visitor(addr, &h)) || d.tried(&format!("name:{lname}")) {
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too many tries: wait a few minutes".into()));
     }
@@ -103,12 +102,12 @@ pub(super) async fn signin(
     let pass = l.password.clone();
     // check a password even for a name that doesn't exist, so the time taken says nothing
     let stored = row.as_ref().map_or_else(|| d.0.dummy.clone(), |r| r.2.clone());
-    let ok = tokio::task::spawn_blocking(move || {
-        let s = stored;
-        PasswordHash::new(&s).is_ok_and(|p| Argon2::default().verify_password(pass.as_bytes(), &p).is_ok())
-    })
-    .await
-    .unwrap_or(false);
+    let Some(ok) = d
+        .hash_work(move || PasswordHash::new(&stored).is_ok_and(|p| Argon2::default().verify_password(pass.as_bytes(), &p).is_ok()))
+        .await
+    else {
+        return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "busy: try again in a moment".into()));
+    };
     match row {
         Some((id, name, _)) if ok => Ok(([(header::SET_COOKIE, d.session(id as u64))], Json(json!({ "name": name }))).into_response()),
         _ => Err(ApiError(StatusCode::UNAUTHORIZED, "wrong name or password".into())),

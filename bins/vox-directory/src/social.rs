@@ -163,6 +163,11 @@ pub(crate) async fn steam_return(
     if d.tried_up_to(&format!("auth:{}", d.visitor(addr, &h)), 30) {
         return failed("busy");
     }
+    // one of each: Steam checks the whole list, we read the first, and they must agree
+    let mut seen = std::collections::HashSet::new();
+    if q.len() > 40 || !q.iter().filter(|(k, _)| k.starts_with("openid.")).all(|(k, _)| seen.insert(k.as_str())) {
+        return failed("steam");
+    }
     let get = |k: &str| q.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str());
     if !state_ok(&h, "steam", get("state")) {
         return failed("expired");
@@ -176,7 +181,13 @@ pub(crate) async fn steam_return(
         && get("openid.ns") == Some(OPENID_NS)
         && get("openid.op_endpoint") == Some(s.sites.steam_openid.as_str())
         && get("openid.return_to").is_some_and(|r| r.split('?').next() == Some(back.as_str()))
-        && get("openid.claimed_id") == get("openid.identity");
+        && get("openid.claimed_id") == get("openid.identity")
+        && get("openid.response_nonce").is_some()
+        // Steam's signature must cover everything we rely on
+        && get("openid.signed").is_some_and(|list| {
+            let signed: Vec<&str> = list.split(',').collect();
+            ["op_endpoint", "claimed_id", "identity", "return_to", "response_nonce", "assoc_handle"].iter().all(|f| signed.contains(f))
+        });
     let id = get("openid.claimed_id")
         .and_then(|c| c.strip_prefix(STEAM_ID))
         .filter(|id| !id.is_empty() && id.len() <= 20 && id.chars().all(|c| c.is_ascii_digit()))

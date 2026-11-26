@@ -22,6 +22,7 @@
 
 use std::{
     collections::HashMap,
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -29,7 +30,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::{
-        Path, Query, State,
+        ConnectInfo, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
@@ -51,6 +52,14 @@ const QUEUE: usize = 256;
 const MAX_MESSAGE: usize = 1 << 20;
 /// Most shows at once.
 const MAX_SESSIONS: usize = 1000;
+/// Shows one address may start, and wrong codes it may try, per window; wrong codes for one
+/// show from anywhere, per window (so a code can't be guessed from many addresses).
+const SHOWS_PER_ADDRESS: u32 = 10;
+const WRONG_PER_ADDRESS: u32 = 20;
+const WRONG_PER_SHOW: u32 = 50;
+const WINDOW: Duration = Duration::from_secs(600);
+/// Addresses and shows counted at once; when full, newcomers wait.
+const MAX_COUNTED: usize = 100_000;
 
 #[derive(Clone)]
 pub struct Relay {
@@ -59,6 +68,8 @@ pub struct Relay {
     expire: Duration,
     /// testing only: bad-network simulation (see [`Relay::simulate`])
     sim: Option<Sim>,
+    /// behind Cloudflare (or another proxy): the visitor's address is in its header
+    behind_proxy: bool,
 }
 
 /// A bad network, for testing: every relayed message waits `delay` (± half of it, so they
@@ -73,6 +84,39 @@ pub struct Sim {
 struct Inner {
     sessions: HashMap<String, Session>,
     next_peer: u64,
+    /// counts for the limits: ("show:<addr>" | "wrong:<addr>" | "code:<show>") -> (n, since)
+    counts: HashMap<String, (u32, Instant)>,
+}
+
+impl Inner {
+    /// Count one for `key`; true if that's more than `most` in the window.
+    fn over(&mut self, key: String, most: u32) -> bool {
+        let now = Instant::now();
+        self.counts.retain(|_, (_, at)| now.duration_since(*at) < WINDOW);
+        if self.counts.len() >= MAX_COUNTED && !self.counts.contains_key(&key) {
+            return true;
+        }
+        let e = self.counts.entry(key).or_insert((0, now));
+        e.0 += 1;
+        e.0 > most
+    }
+    /// Has `key` already gone over `most`, without counting this one?
+    fn already_over(&self, key: &str, most: u32) -> bool {
+        self.counts.get(key).is_some_and(|(n, at)| *n >= most && at.elapsed() < WINDOW)
+    }
+}
+
+/// Where a request came from: the proxy's header when behind one, else the connection.
+fn visitor(relay: &Relay, addr: SocketAddr, h: &HeaderMap) -> String {
+    if relay.behind_proxy {
+        if let Some(ip) = h.get("cf-connecting-ip").and_then(|v| v.to_str().ok()) {
+            return ip.trim().to_string();
+        }
+        if let Some(ip) = h.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()) {
+            return ip.trim().to_string();
+        }
+    }
+    addr.ip().to_string()
 }
 
 struct Session {
@@ -198,7 +242,19 @@ impl Relay {
             inner: Arc::new(Mutex::new(Inner::default())),
             expire,
             sim: None,
+            behind_proxy: false,
         }
+    }
+
+    /// Behind Cloudflare or another proxy: count visitors by the address it passes on.
+    pub fn behind_proxy(mut self) -> Relay {
+        self.behind_proxy = true;
+        self
+    }
+
+    /// The router as a service that knows who's connecting (the limits count by address).
+    pub fn service(&self) -> axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
+        self.router().into_make_service_with_connect_info::<SocketAddr>()
     }
 
     /// Simulate a bad network on everything this relay passes on.
@@ -245,12 +301,16 @@ impl Relay {
     }
 }
 
-async fn create(State(relay): State<Relay>, Json(req): Json<NewSession>) -> Response {
+async fn create(State(relay): State<Relay>, ConnectInfo(addr): ConnectInfo<SocketAddr>, h: HeaderMap, Json(req): Json<NewSession>) -> Response {
     let title = clean(&req.title, 60);
     if title.is_empty() {
         return (StatusCode::BAD_REQUEST, "a title is needed").into_response();
     }
+    let who = visitor(&relay, addr, &h);
     let mut inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
+    if inner.over(format!("show:{who}"), SHOWS_PER_ADDRESS) {
+        return (StatusCode::TOO_MANY_REQUESTS, "too many shows from here: wait a few minutes").into_response();
+    }
     if inner.sessions.len() >= MAX_SESSIONS {
         return (StatusCode::SERVICE_UNAVAILABLE, "too many shows").into_response();
     }
@@ -334,10 +394,13 @@ async fn end(State(relay): State<Relay>, Path(id): Path<String>, headers: Header
 
 async fn connect(
     State(relay): State<Relay>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    h: HeaderMap,
     Path(id): Path<String>,
     Query(join): Query<Join>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    let who = visitor(&relay, addr, &h);
     let role = match join.role.as_str() {
         "host" => Role::Host,
         "guest" => Role::Guest,
@@ -352,7 +415,11 @@ async fn connect(
     };
     // check before upgrading, so a refusal is a plain HTTP status
     {
-        let inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
+        // too many wrong codes, from here or for this show: no more guesses for a while
+        if inner.already_over(&format!("wrong:{who}"), WRONG_PER_ADDRESS) || inner.already_over(&format!("code:{id}"), WRONG_PER_SHOW) {
+            return (StatusCode::TOO_MANY_REQUESTS, "too many wrong codes: wait a few minutes").into_response();
+        }
         let Some(s) = inner.sessions.get(&id) else {
             return (StatusCode::NOT_FOUND, "no such show").into_response();
         };
@@ -362,8 +429,13 @@ async fn connect(
             Role::Viewer => s.public || same(&join.code.to_uppercase(), &s.code),
         };
         if !ok {
+            inner.over(format!("wrong:{who}"), WRONG_PER_ADDRESS);
+            inner.over(format!("code:{id}"), WRONG_PER_SHOW);
             return (StatusCode::FORBIDDEN, "wrong token or code").into_response();
         }
+        let Some(s) = inner.sessions.get(&id) else {
+            return (StatusCode::NOT_FOUND, "no such show").into_response();
+        };
         if role == Role::Guest && s.guest.is_some() {
             return (StatusCode::CONFLICT, "the guest spot is taken").into_response();
         }
@@ -466,6 +538,9 @@ async fn run(relay: Relay, id: String, role: Role, name: String, socket: WebSock
                 }
                 continue;
             }
+            // text is the relay's own voice ({"relay": ...}): a guest's or viewer's text could
+            // pass for it, so only the host's goes on
+            Message::Text(_) if role != Role::Host => continue,
             _ => {}
         }
         if let Some(sim) = relay.sim {

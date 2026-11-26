@@ -1,4 +1,4 @@
-//! Run the relay: `vox-relay [--listen 0.0.0.0:7779]`.
+//! Run the relay: `vox-relay [--listen 0.0.0.0:7779] [--behind-proxy]`.
 //! Put it behind TLS (a reverse proxy or Cloudflare) for `wss://` in production.
 //!
 //! For testing a bad network: `--simulate-delay 200` (ms, ± half) and `--simulate-loss 0.05`
@@ -20,6 +20,10 @@ async fn main() {
             .and_then(|i| args.get(i + 1).cloned())
     };
     let mut relay = vox_relay::Relay::new(Duration::from_secs(30));
+    // behind Cloudflare: count visitors by the address it passes on
+    if args.iter().any(|a| a == "--behind-proxy") {
+        relay = relay.behind_proxy();
+    }
     let delay: u64 = arg("--simulate-delay")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -47,5 +51,5 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
     eprintln!("vox-relay listening on {listen}");
-    axum::serve(listener, relay.router()).await.expect("server");
+    axum::serve(listener, relay.service()).await.expect("server");
 }

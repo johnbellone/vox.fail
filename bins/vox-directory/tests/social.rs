@@ -129,6 +129,11 @@ async fn me(c: &Client, base: &str) -> Value {
 
 /// Off to Steam and back as `id`, Steam's signature `sig`: where the directory sends you.
 async fn via_steam(c: &Client, base: &str, sites: &Sites, id: &str, sig: &str) -> String {
+    via_steam_with(c, base, sites, id, sig, "signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle", &[]).await
+}
+
+/// The same, with Steam's list of what it signed and anything added to the answer.
+async fn via_steam_with(c: &Client, base: &str, sites: &Sites, id: &str, sig: &str, signed: &str, extra: &[(&str, &str)]) -> String {
     let at = go(c, &format!("{base}/auth/steam")).await;
     assert!(at.starts_with(&sites.steam_openid), "{at}");
     assert_eq!(param(&at, "openid.mode"), "checkid_setup");
@@ -138,7 +143,7 @@ async fn via_steam(c: &Client, base: &str, sites: &Sites, id: &str, sig: &str) -
     let claimed = format!("{STEAM_ID}{id}");
     let ret = Url::parse_with_params(
         &back,
-        &[
+        [
             ("openid.ns", "http://specs.openid.net/auth/2.0"),
             ("openid.mode", "id_res"),
             ("openid.op_endpoint", sites.steam_openid.as_str()),
@@ -147,9 +152,11 @@ async fn via_steam(c: &Client, base: &str, sites: &Sites, id: &str, sig: &str) -
             ("openid.return_to", back.as_str()),
             ("openid.response_nonce", "2026-11-25T00:00:00Zabc"),
             ("openid.assoc_handle", "1234567890"),
-            ("openid.signed", "signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle"),
+            ("openid.signed", signed),
             ("openid.sig", sig),
-        ],
+        ]
+        .into_iter()
+        .chain(extra.iter().copied()),
     )
     .unwrap();
     go(c, ret.as_str()).await
@@ -259,4 +266,20 @@ fn names_from_other_sites() {
     assert_eq!(name_from("★★★", "Steam player"), "Steam player");
     assert_eq!(name_from("a very long name that goes on", "x"), "a very long name tha");
     assert_eq!(name_from("Zoë Ångström", "x"), "Zoë Ångström");
+}
+
+#[tokio::test]
+async fn steam_answers_must_be_plain_and_fully_signed() {
+    let (_d, base, sites) = serve().await;
+    // a second claimed id after the signed one: Steam would vouch for the list, we'd read the first
+    let c = browser();
+    let other = format!("{STEAM_ID}76561190000000099");
+    let at = via_steam_with(&c, &base, &sites, "76561190000000005", "good", "signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle", &[("openid.claimed_id", other.as_str())]).await;
+    assert_eq!(at, "/?error=steam");
+    assert_eq!(me(&c, &base).await["name"], Value::Null);
+    // a signature that doesn't cover who you are
+    let c = browser();
+    let at = via_steam_with(&c, &base, &sites, "76561190000000006", "good", "signed,op_endpoint,return_to,response_nonce,assoc_handle", &[]).await;
+    assert_eq!(at, "/?error=steam");
+    assert_eq!(me(&c, &base).await["name"], Value::Null);
 }

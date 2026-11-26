@@ -133,10 +133,10 @@ From the code review; none are regressions, but know they exist before relying o
   is impossible; `--trust-moves` turns this off for test and automation worlds (the control
   page's `world:goto` teleports). Still taken on trust: the first position after joining,
   because a portal's arrival point is set by the world you came from.
-- Steam OpenID return validation does not check which fields were signed or reject
-  duplicate `openid.*` keys.
-- Argon2 hashing has no concurrency cap; the relay's session creation and private codes have
-  no per-IP limit.
+- Sign-in hardening is in: Steam answers must be plain (no repeated `openid.*` keys) and signed
+  over every field we read; password hashing runs at most four at a time; the relay limits shows
+  and wrong codes per address (and wrong codes per show) and drops text from guests and viewers.
+  Not yet: a world's sign-in token is valid on any world (no audience in the token).
 - `bins/block-avatar/src/main.rs`'s `main()` (about 690 lines) registers every system itself;
   one Bevy plugin per folder (`app`, `sound`, `scene`, ...) is the next step. The big files are
   split into folders (`client/`, `questions/`, `ask/`, `chat/`, `guest/`, `bevel/`), each with
@@ -144,7 +144,7 @@ From the code review; none are regressions, but know they exist before relying o
 - Remeshing reads every voxel through a slow lookup, rebuilds a whole chunk for a one-block
   edit, and meshes all dirty chunks in the frame a world becomes ready; weather and fog baking
   run on the main thread.
-- Duplicated helpers: two WAV parsers, several xorshift generators, value noise in both
+- Duplicated helpers: several xorshift generators, value noise in both
   `vox-core::weather` and `vox-world::outdoors`, and the child-spawning for opaque, glass, water
   and flame meshes.
 - The Linux webcam output does not exist: the `W` virtual camera is Windows-only (it writes
