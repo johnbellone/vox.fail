@@ -330,12 +330,15 @@ const FACES: [(IVec3, Vec3, Vec3); 6] = [
 ];
 
 /// World chunks' packed vertex (20 bytes instead of 64): the position as usual (shadows and
-/// culling use it), the atlas coordinates as two 16-bit fractions, and one number holding the
-/// face (which of the six, so the shader can rebuild the normal and tangent) and the corner's
-/// shading (`shaders/block_vertex.wgsl` unpacks them).
+/// culling use it), the corner of the face's tile in the atlas as two 16-bit fractions, and one
+/// number holding the face (which of the six, so the shader can rebuild the normal and
+/// tangent), the corner's shading, and where the vertex is across the face in blocks (a merged
+/// face spans several; the fragment shader repeats the tile across it). See
+/// `shaders/block_vertex.wgsl` and `shaders/block.wgsl`.
 pub const ATTRIBUTE_BLOCK_UV: bevy::mesh::MeshVertexAttribute =
     bevy::mesh::MeshVertexAttribute::new("BlockUv", 0x766f_7801, bevy::mesh::VertexFormat::Unorm16x2);
-/// Bits 0-2: the face (the order of `FACES`); bits 8-15: shading, 255 = full light.
+/// Bits 0-2: the face (the order of `FACES`); bits 8-15: shading, 255 = full light; bits
+/// 16-21 and 22-27: the vertex's place across the face along u and v, in blocks.
 pub const ATTRIBUTE_BLOCK_FACE: bevy::mesh::MeshVertexAttribute =
     bevy::mesh::MeshVertexAttribute::new("BlockFace", 0x766f_7802, bevy::mesh::VertexFormat::Uint32);
 
@@ -364,6 +367,10 @@ pub struct MeshData {
     pub tan: Vec<[f32; 4]>,
     pub col: Vec<[f32; 4]>,
     pub idx: Vec<u32>,
+    /// for the packed form: where the vertex is across the face, in blocks (0 to 32: a merged
+    /// face spans several), and the corner of its tile in the atlas
+    pub local: Vec<[u8; 2]>,
+    pub tile: Vec<[f32; 2]>,
 }
 
 impl MeshData {
@@ -383,13 +390,30 @@ impl MeshData {
     /// The packed form for the world's solid blocks ([`ATTRIBUTE_BLOCK_UV`],
     /// [`ATTRIBUTE_BLOCK_FACE`]), drawn with [`BlockMaterial`]. Only for axis-aligned block faces.
     pub fn into_packed_mesh(self) -> Mesh {
-        let uv: Vec<[u16; 2]> = self.uv.iter().map(|[u, v]| [(u.clamp(0.0, 1.0) * 65535.0).round() as u16, (v.clamp(0.0, 1.0) * 65535.0).round() as u16]).collect();
-        let face: Vec<u32> = self.nrm.iter().zip(&self.col).map(|(n, c)| pack_face(*n, c[0])).collect();
-        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
+        let tile: Vec<[u16; 2]> =
+            self.tile.iter().map(|[u, v]| [(u.clamp(0.0, 1.0) * 65535.0).round() as u16, (v.clamp(0.0, 1.0) * 65535.0).round() as u16]).collect();
+        let face: Vec<u32> = self
+            .nrm
+            .iter()
+            .zip(&self.col)
+            .zip(&self.local)
+            .map(|((n, c), l)| pack_face(*n, c[0]) | (l[0].min(63) as u32) << 16 | (l[1].min(63) as u32) << 22)
+            .collect();
+        // the GPU's copy is the only one: nothing reads a chunk's mesh back (the caller sets
+        // its bounds, see `bounds`)
+        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
-            .with_inserted_attribute(ATTRIBUTE_BLOCK_UV, bevy::mesh::VertexAttributeValues::Unorm16x2(uv))
+            .with_inserted_attribute(ATTRIBUTE_BLOCK_UV, bevy::mesh::VertexAttributeValues::Unorm16x2(tile))
             .with_inserted_attribute(ATTRIBUTE_BLOCK_FACE, face)
             .with_inserted_indices(Indices::U32(self.idx))
+    }
+
+    /// The box round every vertex (for culling a mesh whose data lives only on the GPU).
+    pub fn bounds(&self) -> Option<bevy::camera::primitives::Aabb> {
+        let mut it = self.pos.iter().map(|p| Vec3::from(*p));
+        let first = it.next()?;
+        let (lo, hi) = it.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
+        Some(bevy::camera::primitives::Aabb::from_min_max(lo, hi))
     }
 }
 
@@ -439,17 +463,21 @@ pub struct Meshes {
 pub fn mesh_level(cells: &HashMap<IVec3, u16>, pal: &Palette, rects: &HashMap<String, [f32; 4]>) -> Meshes {
     let mut keys: Vec<(IVec3, u16)> = cells.iter().map(|(p, b)| (*p, *b)).collect();
     keys.sort_by_key(|(p, _)| (p.y, p.z, p.x));
-    mesh_cells(keys, |p| cells.get(&p).copied().unwrap_or(0), pal, rects)
+    mesh_cells(keys, |p| cells.get(&p).copied().unwrap_or(0), pal, rects, false)
 }
 
 /// [`mesh_level`] for some of a bigger world's blocks (a chunk): `cells` are the blocks to
 /// draw, `get` reads any block (0 = air), so faces and corner shading at the edges see the
-/// neighbours.
+/// neighbours. With `merge`, neighbouring solid faces with the same tile and even light
+/// become one bigger face (for [`MeshData::into_packed_mesh`] and [`BlockMaterial`], whose
+/// shader repeats the tile across it); without, every face is its own (for the standard
+/// material).
 pub fn mesh_cells(
     cells: impl IntoIterator<Item = (IVec3, u16)>,
     get: impl Fn(IVec3) -> u16,
     pal: &Palette,
     rects: &HashMap<String, [f32; 4]>,
+    merge: bool,
 ) -> Meshes {
     // see-through: glass and water
     let clear = |id: u16| pal.def(id).is_some_and(|d| d.glass || d.liquid || d.flame);
@@ -460,13 +488,15 @@ pub fn mesh_cells(
     };
     let mut m = Meshes::default();
     let s = pal.size;
+    // faces waiting to be merged: (face, slice) -> (u, v) across it -> (tile, shade)
+    let mut flat: HashMap<(usize, i32), HashMap<(i32, i32), ([f32; 4], f32)>> = HashMap::new();
     for (p, id) in cells {
         let Some(def) = pal.def(id) else { continue };
         if def.flame {
             flame_quads(&mut m.flame, p, s);
             continue;
         }
-        for (dir, udir, vdir) in FACES {
+        for (fi, (dir, udir, vdir)) in FACES.into_iter().enumerate() {
             let n = p + dir;
             // hidden behind a solid block, or glass next to the same glass
             match get(n) {
@@ -483,7 +513,27 @@ pub fn mesh_cells(
                     _ => def.side(),
                 },
             };
-            let Some(r) = rects.get(tile) else { continue };
+            let Some(r) = rects.get(tile).copied() else { continue };
+            // the top of a pool sits a little below the block's top
+            let surface = def.liquid && !liquid(get(p + IVec3::Y));
+            let nrm = dir.as_vec3();
+            // corner shading: the blocks in front of the face around each corner
+            let mut ao = [0.0f32; 4];
+            for (k, (cu, cv)) in CORNERS.into_iter().enumerate() {
+                let side1 = n + (udir * cu).round().as_ivec3();
+                let side2 = n + (vdir * cv).round().as_ivec3();
+                let diag = n + (udir * cu + vdir * cv).round().as_ivec3();
+                let (a, b, c) = (solid_at(side1), solid_at(side2), solid_at(diag));
+                let occ = if a && b { 3 } else { a as u8 + b as u8 + c as u8 };
+                ao[k] = [1.0, 0.82, 0.68, 0.55][occ as usize];
+            }
+            let plain = !def.liquid && !def.glass;
+            if merge && plain && ao.iter().all(|a| *a == ao[0]) {
+                // a candidate for merging: by its slice, and where it is across the face
+                let (u, v) = (p.as_vec3().dot(udir).round() as i32, p.as_vec3().dot(vdir).round() as i32);
+                flat.entry((fi, p.as_vec3().dot(nrm).round() as i32)).or_default().insert((u, v), (r, ao[0]));
+                continue;
+            }
             let out = if def.liquid {
                 &mut m.water
             } else if def.glass {
@@ -491,49 +541,91 @@ pub fn mesh_cells(
             } else {
                 &mut m.opaque
             };
-            // the top of a pool sits a little below the block's top
-            let surface = def.liquid && !liquid(get(p + IVec3::Y));
             let top = (p.y as f32 + 1.0) * s;
-            let nrm = dir.as_vec3();
-            // the face's corners: centre of the face plus or minus half a block along u and v
             let centre = (p.as_vec3() + Vec3::splat(0.5) + nrm * 0.5) * s;
-            let base = out.pos.len() as u32;
-            let w = if nrm.cross(udir).dot(vdir) >= 0.0 { 1.0 } else { -1.0 };
-            let mut ao = [0.0f32; 4];
-            for (k, (cu, cv)) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].into_iter().enumerate() {
-                let mut corner = centre + (udir * cu + vdir * cv) * (s * 0.5);
-                if surface && (corner.y - top).abs() < 1e-4 {
-                    corner.y -= 0.12 * s;
+            let corners = CORNERS.map(|(cu, cv)| {
+                let mut c = centre + (udir * cu + vdir * cv) * (s * 0.5);
+                if surface && (c.y - top).abs() < 1e-4 {
+                    c.y -= 0.12 * s;
                 }
-                out.pos.push(corner.to_array());
-                out.nrm.push(nrm.to_array());
-                out.tan.push([udir.x, udir.y, udir.z, w]);
-                let (u, v) = (if cu < 0.0 { r[0] } else { r[2] }, if cv < 0.0 { r[1] } else { r[3] });
-                out.uv.push([u, v]);
-                // corner shading: the blocks in front of the face around this corner
-                let side1 = n + (udir * cu).round().as_ivec3();
-                let side2 = n + (vdir * cv).round().as_ivec3();
-                let diag = n + (udir * cu + vdir * cv).round().as_ivec3();
-                let (a, b, c) = (solid_at(side1), solid_at(side2), solid_at(diag));
-                let occ = if a && b { 3 } else { a as u8 + b as u8 + c as u8 };
-                ao[k] = [1.0, 0.82, 0.68, 0.55][occ as usize];
-                out.col.push([ao[k], ao[k], ao[k], 1.0]);
+                c
+            });
+            quad(out, corners, (dir, udir, vdir), r, [1, 1], ao);
+        }
+    }
+    // merge: the greedy way, row by row, each face as wide and then as tall as it can go
+    for ((fi, slice), mut faces) in flat {
+        let (dir, udir, vdir) = FACES[fi];
+        let nrm = dir.as_vec3();
+        let mut keys: Vec<(i32, i32)> = faces.keys().copied().collect();
+        keys.sort_by_key(|(u, v)| (*v, *u));
+        for (u0, v0) in keys {
+            let Some(&(r, shade)) = faces.get(&(u0, v0)) else { continue };
+            let same = |f: Option<&([f32; 4], f32)>| f.is_some_and(|(r2, s2)| *r2 == r && *s2 == shade);
+            let mut w = 1;
+            while w < 32 && same(faces.get(&(u0 + w, v0))) {
+                w += 1;
             }
-            // split the square along the brighter diagonal, so the shading doesn't zigzag
-            if ao[0] + ao[2] >= ao[1] + ao[3] {
-                out.idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-            } else {
-                out.idx.extend_from_slice(&[base + 1, base + 2, base + 3, base + 1, base + 3, base]);
+            let mut h = 1;
+            'grow: while h < 32 {
+                for du in 0..w {
+                    if !same(faces.get(&(u0 + du, v0 + h))) {
+                        break 'grow;
+                    }
+                }
+                h += 1;
             }
-            // counter-clockwise seen from outside
-            let (a, b, c) = (Vec3::from(out.pos[base as usize]), Vec3::from(out.pos[base as usize + 1]), Vec3::from(out.pos[base as usize + 2]));
-            if (b - a).cross(c - a).dot(nrm) < 0.0 {
-                let l = out.idx.len();
-                out.idx[l - 6..].chunks_mut(3).for_each(|t| t.swap(1, 2));
+            for dv in 0..h {
+                for du in 0..w {
+                    faces.remove(&(u0 + du, v0 + dv));
+                }
             }
+            // the block at (u, v) in this slice, and a corner of it
+            let block = |u: i32, v: i32| nrm * slice as f32 + udir * u as f32 + vdir * v as f32;
+            let corner = |b: Vec3, cu: f32, cv: f32| (b + Vec3::splat(0.5) + nrm * 0.5 + (udir * cu + vdir * cv) * 0.5) * s;
+            let (u1, v1) = (u0 + w - 1, v0 + h - 1);
+            let corners = [
+                corner(block(u0, v0), -1.0, -1.0),
+                corner(block(u1, v0), 1.0, -1.0),
+                corner(block(u1, v1), 1.0, 1.0),
+                corner(block(u0, v1), -1.0, 1.0),
+            ];
+            quad(&mut m.opaque, corners, (dir, udir, vdir), r, [w as u8, h as u8], [shade; 4]);
         }
     }
     m
+}
+
+/// A face's corners, as (u, v) signs: they go round the face in this order.
+const CORNERS: [(f32, f32); 4] = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+
+/// One face (`size` blocks across along u and v) into `out`: its corners in [`CORNERS`] order,
+/// counter-clockwise seen from outside, split along the brighter diagonal.
+fn quad(out: &mut MeshData, corners: [Vec3; 4], (dir, udir, vdir): (IVec3, Vec3, Vec3), r: [f32; 4], size: [u8; 2], ao: [f32; 4]) {
+    let nrm = dir.as_vec3();
+    let base = out.pos.len() as u32;
+    let w = if nrm.cross(udir).dot(vdir) >= 0.0 { 1.0 } else { -1.0 };
+    for (k, (cu, cv)) in CORNERS.into_iter().enumerate() {
+        out.pos.push(corners[k].to_array());
+        out.nrm.push(nrm.to_array());
+        out.tan.push([udir.x, udir.y, udir.z, w]);
+        out.uv.push([if cu < 0.0 { r[0] } else { r[2] }, if cv < 0.0 { r[1] } else { r[3] }]);
+        out.col.push([ao[k], ao[k], ao[k], 1.0]);
+        out.local.push([if cu < 0.0 { 0 } else { size[0] }, if cv < 0.0 { 0 } else { size[1] }]);
+        out.tile.push([r[0], r[1]]);
+    }
+    // split the square along the brighter diagonal, so the shading doesn't zigzag
+    if ao[0] + ao[2] >= ao[1] + ao[3] {
+        out.idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    } else {
+        out.idx.extend_from_slice(&[base + 1, base + 2, base + 3, base + 1, base + 3, base]);
+    }
+    // counter-clockwise seen from outside
+    let (a, b, c) = (corners[0], corners[1], corners[2]);
+    if (b - a).cross(c - a).dot(nrm) < 0.0 {
+        let l = out.idx.len();
+        out.idx[l - 6..].chunks_mut(3).for_each(|t| t.swap(1, 2));
+    }
 }
 
 // ------------------------------------------------------------------------------------------
@@ -686,7 +778,7 @@ impl bevy::pbr::MaterialExtension for BlockExt {
             ATTRIBUTE_BLOCK_FACE.at_shader_location(2),
         ])?;
         descriptor.vertex.buffers = vec![vertex];
-        for def in ["VERTEX_NORMALS", "VERTEX_UVS", "VERTEX_UVS_A", "VERTEX_TANGENTS", "VERTEX_COLORS"] {
+        for def in ["VERTEX_NORMALS", "VERTEX_UVS", "VERTEX_UVS_A", "VERTEX_UVS_B", "VERTEX_TANGENTS", "VERTEX_COLORS"] {
             let d: bevy::shader::ShaderDefVal = def.into();
             if !descriptor.vertex.shader_defs.contains(&d) {
                 descriptor.vertex.shader_defs.push(d.clone());
@@ -922,15 +1014,65 @@ mod packed_tests {
         m.tan = vec![[0.0, 0.0, -1.0, -1.0]; 4];
         m.col = vec![[0.82, 0.82, 0.82, 1.0]; 4];
         m.idx = vec![0, 1, 2, 0, 2, 3];
+        // a face three blocks wide and two high, its tile's corner at (0.25, 0.5)
+        m.local = vec![[0, 0], [3, 0], [3, 2], [0, 2]];
+        m.tile = vec![[0.25, 0.5]; 4];
         let mesh = m.into_packed_mesh();
         let ids: Vec<_> = mesh.attributes().map(|(a, _)| a.id).collect();
         assert_eq!(ids.len(), 3);
         assert!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
-        let Some(bevy::mesh::VertexAttributeValues::Unorm16x2(uv)) = mesh.attribute(ATTRIBUTE_BLOCK_UV) else { panic!("uv") };
-        assert_eq!(uv[3], [16384, 32768]);
+        let Some(bevy::mesh::VertexAttributeValues::Unorm16x2(tile)) = mesh.attribute(ATTRIBUTE_BLOCK_UV) else { panic!("tile") };
+        assert_eq!(tile[2], [16384, 32768]);
         let Some(bevy::mesh::VertexAttributeValues::Uint32(f)) = mesh.attribute(ATTRIBUTE_BLOCK_FACE) else { panic!("face") };
-        assert_eq!(f[0], 209 << 8);
+        // +X face, shading 209, 3 blocks along u and 2 along v at the far corner
+        assert_eq!(f[2], 209 << 8 | 3 << 16 | 2 << 22);
         // 12 + 4 + 4 bytes a vertex
         assert_eq!(mesh.get_vertex_size(), 20);
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn level(name: &str) -> (Palette, HashMap<String, [f32; 4]>, HashMap<IVec3, u16>) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pal = Palette::load(&root.join("data/blocks.json")).unwrap();
+        let tiles: Vec<_> = pal.tiles().into_iter().map(|t| load_tile(&root.join("assets/blocks/tiles"), &t).map(|px| (t, px)).unwrap()).collect();
+        let atlas = build_atlas(&pal, &tiles);
+        let text = std::fs::read_to_string(root.join(format!("data/levels/{name}.json"))).unwrap();
+        let cells = load_level(&text, &pal).unwrap();
+        (pal, atlas.rects, cells)
+    }
+
+    #[test]
+    fn merging_draws_the_same_surface_with_far_fewer_faces() {
+        // the yard is flat and built (most faces merge); the islands are crags, where shaded
+        // corners keep faces apart so the shading stays right
+        for (name, at_least) in [("yard", 0.6), ("islands", 0.2)] {
+            let (pal, rects, cells) = level(name);
+            let mut keys: Vec<(IVec3, u16)> = cells.iter().map(|(p, b)| (*p, *b)).collect();
+            keys.sort_by_key(|(p, _)| (p.y, p.z, p.x));
+            let get = |p: IVec3| cells.get(&p).copied().unwrap_or(0);
+            let each = mesh_cells(keys.clone(), get, &pal, &rects, false);
+            let merged = mesh_cells(keys, get, &pal, &rects, true);
+            // the same area of solid surface, in blocks
+            let area = |m: &MeshData| -> f32 {
+                m.idx.chunks(3).map(|t| {
+                    let p = |i: u32| Vec3::from(m.pos[i as usize]);
+                    (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0])).length() / 2.0
+                }).sum::<f32>() / (pal.size * pal.size)
+            };
+            let (a, b) = (area(&each.opaque), area(&merged.opaque));
+            assert!((a - b).abs() < 0.5, "{name}: {a} vs {b}");
+            // glass and water are untouched
+            assert_eq!(each.glass.faces(), merged.glass.faces());
+            assert_eq!(each.water.faces(), merged.water.faces());
+            println!("{name}: {} faces each, {} merged ({:.0}% fewer)", each.opaque.faces(), merged.opaque.faces(),
+                100.0 * (1.0 - merged.opaque.faces() as f32 / each.opaque.faces() as f32));
+            assert!((merged.opaque.faces() as f32) < each.opaque.faces() as f32 * (1.0 - at_least), "{name}");
+            // every merged face's place across it stays within what the vertex can hold
+            assert!(merged.opaque.local.iter().all(|l| l[0] <= 32 && l[1] <= 32));
+        }
     }
 }

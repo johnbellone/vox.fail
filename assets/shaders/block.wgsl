@@ -1,5 +1,11 @@
 // The world's block faces: parallax occlusion mapping on the texture atlas.
 //
+// A face may span several blocks (the mesher merges neighbours with the same tile and light):
+// the tile repeats across it, so the coordinates are wrapped into the tile here, and every
+// texture is sampled with how fast the unwrapped coordinates change on screen. (Sampled with
+// the wrapped ones, the jump where the tile repeats would pick the wrong detail level and draw
+// a seam along every block's edge.)
+//
 // Each face's texture is moved along the view direction by its height map, marched in steps
 // and refined between the last two, so mortar, cracks and the gaps between planks look sunken
 // and hide behind the raised parts at a slant. The shifted coordinates stay inside the face's
@@ -8,10 +14,14 @@
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing, calculate_tbn_mikktspace, apply_normal_mapping},
+    pbr_types,
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::{view, globals},
 }
+#ifndef BINDLESS
+#import bevy_pbr::pbr_bindings
+#endif
 
 // x: depth as a fraction of a block face, y: steps, z: tile size in pixels
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> params: vec4<f32>;
@@ -24,8 +34,7 @@ fn depth_at(uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> f32 {
     return 1.0 - textureSampleGrad(height_tex, height_smp, uv, ddx, ddy).r;
 }
 
-fn parallax(in: VertexOutput) -> vec2<f32> {
-    let uv = in.uv;
+fn parallax(in: VertexOutput, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> vec2<f32> {
 #ifdef VERTEX_TANGENTS
     let size = atlas.xy;
     // which tile this face shows, and its rectangle in the atlas
@@ -39,9 +48,6 @@ fn parallax(in: VertexOutput) -> vec2<f32> {
     let b = cross(n, t) * in.world_tangent.w;
     let v = normalize(view.world_position.xyz - in.world_position.xyz);
     let vt = vec3(dot(v, t), dot(v, b), dot(v, n));
-    // derivatives first, while every pixel of the quad is still here (WebGPU insists)
-    let ddx = dpdx(uv);
-    let ddy = dpdy(uv);
     if vt.z <= 0.02 {
         return uv;
     }
@@ -95,10 +101,42 @@ fn noise3(p: vec3<f32>) -> f32 {
 @fragment
 fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var in = vertex_output;
-#ifdef VERTEX_UVS_A
-    in.uv = parallax(vertex_output);
+#ifdef VERTEX_UVS_B
+    // where in the tile: the place across the face (in blocks) wrapped, inside the tile's
+    // rectangle; and how fast the unwrapped place changes, for every sample below (derivatives
+    // first, while every pixel of the quad is still here: WebGPU insists)
+    let ext = (params.z - 1.0) / atlas.xy;
+    let ddx = dpdx(vertex_output.uv) * ext;
+    let ddy = dpdy(vertex_output.uv) * ext;
+    let wrapped = vertex_output.uv_b + fract(vertex_output.uv) * ext;
+    in.uv = parallax(vertex_output, wrapped, ddx, ddy);
 #endif
     var pbr_input = pbr_input_from_standard_material(in, is_front);
+#ifdef VERTEX_UVS_B
+#ifndef BINDLESS
+    // sampled again with the smooth rates (the standard material used the wrapped ones)
+    let m = pbr_bindings::material;
+    let flags = pbr_input.material.flags;
+    let uv = in.uv;
+    if (flags & pbr_types::STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
+        pbr_input.material.base_color = m.base_color * in.color
+            * textureSampleGrad(pbr_bindings::base_color_texture, pbr_bindings::base_color_sampler, uv, ddx, ddy);
+    }
+    if (flags & pbr_types::STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT) != 0u {
+        let glow = textureSampleGrad(pbr_bindings::emissive_texture, pbr_bindings::emissive_sampler, uv, ddx, ddy);
+        pbr_input.material.emissive = vec4(m.emissive.rgb * glow.rgb, m.emissive.a);
+    }
+    if (flags & pbr_types::STANDARD_MATERIAL_FLAGS_METALLIC_ROUGHNESS_TEXTURE_BIT) != 0u {
+        let mr = textureSampleGrad(pbr_bindings::metallic_roughness_texture, pbr_bindings::metallic_roughness_sampler, uv, ddx, ddy);
+        pbr_input.material.metallic = m.metallic * mr.b;
+        pbr_input.material.perceptual_roughness = m.perceptual_roughness * mr.g;
+    }
+    let tbn = calculate_tbn_mikktspace(pbr_input.world_normal, in.world_tangent);
+    let nt = textureSampleGrad(pbr_bindings::normal_map_texture, pbr_bindings::normal_map_sampler, uv, ddx, ddy).rgb;
+    let double_sided = (flags & pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u;
+    pbr_input.N = apply_normal_mapping(flags, tbn, double_sided, is_front, nt);
+#endif
+#endif
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
     // molten glow (deep orange-red, unlike a lamp's warm white) breathes and flows slowly
     let e = pbr_input.material.emissive;

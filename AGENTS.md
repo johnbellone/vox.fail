@@ -143,11 +143,13 @@ From the code review; none are regressions, but know they exist before relying o
   50 lines. Check schedule changes with `tools/test/visual_test.py` (render references with the
   old build, `--update`, then compare the new one).
 - Remeshing copies voxels chunk by chunk and runs within a per-frame budget (8 ms desktop,
-  5 ms browser), nearest first, and world faces use a packed 20-byte vertex
-  (`blocks::ATTRIBUTE_BLOCK_UV` and `ATTRIBUTE_BLOCK_FACE`, unpacked by
-  `assets/shaders/block_vertex.wgsl`; anything drawn with `BlockMaterial` must use
-  `into_packed_mesh`). Still: a one-block edit rebuilds its whole chunk, chunk meshes keep a CPU
-  copy, faces aren't merged, and weather and fog baking run on the main thread.
+  5 ms browser), nearest first. World faces use a packed 20-byte vertex (`blocks::ATTRIBUTE_BLOCK_UV`
+  and `ATTRIBUTE_BLOCK_FACE`, unpacked by `assets/shaders/block_vertex.wgsl`); neighbouring
+  solid faces with the same tile and even light are merged (`mesh_cells(.., merge: true)`), and
+  `assets/shaders/block.wgsl` repeats the tile across them, sampling every texture with the
+  unwrapped coordinates' derivatives (no seams). Anything drawn with `BlockMaterial` must use
+  `into_packed_mesh`; chunk meshes live only on the GPU (`bounds()` gives their `Aabb`). Still:
+  a one-block edit rebuilds its whole chunk, and weather and fog baking run on the main thread.
 - Duplicated helpers: several xorshift generators, value noise in both
   `vox-core::weather` and `vox-world::outdoors`, and the child-spawning for opaque, glass, water
   and flame meshes.

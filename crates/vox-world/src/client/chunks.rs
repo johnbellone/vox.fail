@@ -102,7 +102,7 @@ pub(super) fn spawn_chunk(
             w.local(w.view.get(p.to_array()))
         }
     };
-    let crate::blocks::Meshes { opaque, glass, water, flame } = crate::blocks::mesh_cells(cells, get, pal, &blocks.rects);
+    let crate::blocks::Meshes { opaque, glass, water, flame } = crate::blocks::mesh_cells(cells, get, pal, &blocks.rects, true);
     let e = commands
         .spawn((
             ChunkMesh,
@@ -113,7 +113,12 @@ pub(super) fn spawn_chunk(
         .id();
     commands.entity(e).with_children(|c| {
         if opaque.faces() > 0 {
-            c.spawn((Mesh3d(meshes.add(opaque.into_packed_mesh())), MeshMaterial3d(blocks.world_solid.clone()), crate::NoBevel));
+            // (its data lives only on the GPU, so its bounds are given, not worked out from it)
+            let aabb = opaque.bounds();
+            let mut e = c.spawn((Mesh3d(meshes.add(opaque.into_packed_mesh())), MeshMaterial3d(blocks.world_solid.clone()), crate::NoBevel));
+            if let Some(b) = aabb {
+                e.insert(b);
+            }
         }
         if glass.faces() > 0 {
             c.spawn((Mesh3d(meshes.add(glass.into_mesh())), MeshMaterial3d(blocks.glass.clone()), crate::NoBevel));

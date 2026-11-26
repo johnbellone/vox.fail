@@ -411,7 +411,11 @@ pub fn update(
         let Meshes { opaque, glass, water, flame } = m;
         let o = s.offset;
         if opaque.faces() > 0 {
-            commands.spawn((Mesh3d(meshes.add(opaque.into_packed_mesh())), MeshMaterial3d(blocks.world_solid.clone()), Transform::from_translation(o), layer.clone(), crate::NoBevel));
+            let aabb = opaque.bounds();
+            let mut e = commands.spawn((Mesh3d(meshes.add(opaque.into_packed_mesh())), MeshMaterial3d(blocks.world_solid.clone()), Transform::from_translation(o), layer.clone(), crate::NoBevel));
+            if let Some(b) = aabb {
+                e.insert(b);
+            }
         }
         if glass.faces() > 0 {
             commands.spawn((Mesh3d(meshes.add(glass.into_mesh())), MeshMaterial3d(blocks.glass.clone()), Transform::from_translation(o), layer.clone(), crate::NoBevel));

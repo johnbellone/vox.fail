@@ -1,8 +1,10 @@
 // The world's block faces, packed: 20 bytes a vertex instead of 64. The position comes as
-// usual; the atlas coordinates as two 16-bit fractions; and one number holds which of the six
-// faces this is (bits 0-2, in the mesher's FACES order) and the corner's shading (bits 8-15).
-// The normal and tangent are the face's, rebuilt here, and the shading becomes the vertex
-// colour the standard material multiplies in, as before.
+// usual; the corner of the face's tile in the atlas as two 16-bit fractions; and one number
+// holds which of the six faces this is (bits 0-2, in the mesher's FACES order), the corner's
+// shading (bits 8-15) and where the vertex is across the face, in blocks (bits 16-21 along u,
+// 22-27 along v: a merged face spans several). The normal and tangent are the face's, rebuilt
+// here; the shading becomes the vertex colour; `uv` carries the place across the face and
+// `uv_b` the tile, for block.wgsl to repeat the tile across the face.
 
 #import bevy_pbr::{
     mesh_functions,
@@ -13,7 +15,7 @@
 struct BlockVertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
-    @location(1) uv: vec2<f32>,
+    @location(1) tile: vec2<f32>,
     @location(2) face: u32,
 };
 
@@ -51,7 +53,8 @@ fn vertex(v: BlockVertex) -> VertexOutput {
     out.position = position_world_to_clip(out.world_position.xyz);
     out.world_normal = mesh_functions::mesh_normal_local_to_world(face_normal(f), v.instance_index);
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, face_tangent(f), v.instance_index);
-    out.uv = v.uv;
+    out.uv = vec2<f32>(f32((v.face >> 16u) & 63u), f32((v.face >> 22u) & 63u));
+    out.uv_b = v.tile;
     out.color = vec4<f32>(shade, shade, shade, 1.0);
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX
     out.instance_index = v.instance_index;
