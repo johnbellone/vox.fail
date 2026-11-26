@@ -6802,6 +6802,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vox-host"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "vox-core",
+ "vox-server",
+]
+
+[[package]]
 name = "vox-link"
 version = "0.1.0"
 dependencies = [

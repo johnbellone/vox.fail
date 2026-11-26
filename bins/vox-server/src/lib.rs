@@ -18,6 +18,7 @@
 //! they opened (added to the settings new arrivals get).
 
 mod connection;
+pub mod flags;
 mod snapshot;
 mod world;
 #[allow(unused_imports)]
@@ -217,10 +218,12 @@ impl Server {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone(), cfg.report_every, cfg.rules_every)),
             _ => None,
         };
+        // named after the world, so a host running many can tell them apart
+        let thread_name = format!("world-{}", cfg.name);
         let state = WorldState::open(cfg)?;
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
-            .name("world".into())
+            .name(thread_name)
             .spawn(move || state.run(rx))
             .map_err(|e| e.to_string())?;
         let ticker = tx.clone();
@@ -246,6 +249,15 @@ impl Server {
             // (vox.fail/w/7780/ws), which the tunnel passes on as it is
             .route("/w/{port}/", get(status_page))
             .route("/w/{port}/ws", get(connect))
+            .with_state(self.clone())
+    }
+
+    /// This world's pages under `prefix` (`/w/void`): `<prefix>/` its status and `<prefix>/ws`
+    /// a player's connection. For a host running several worlds on one port (`vox-host`).
+    pub fn mount(&self, prefix: &str) -> Router {
+        Router::new()
+            .route(&format!("{prefix}/"), get(status_page))
+            .route(&format!("{prefix}/ws"), get(connect))
             .with_state(self.clone())
     }
 
