@@ -80,6 +80,9 @@ pub fn receive(
                             if let Some(y) = c.get("yaw").and_then(|v| v.as_f64()) {
                                 w.cam_yaw = (y as f32).to_radians();
                             }
+                            if let Some(p) = c.get("pitch").and_then(|v| v.as_f64()).filter(|p| p.is_finite()) {
+                                w.cam_pitch = (p as f32).to_radians().clamp(-1.45, 1.3);
+                            }
                             if let Some(z) = c.get("zoom").and_then(|v| v.as_f64()) {
                                 w.zoom = (z as f32).clamp(4.0, 45.0);
                                 w.zoom_now = w.zoom;

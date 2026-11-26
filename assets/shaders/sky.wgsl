@@ -113,6 +113,122 @@ fn stars(dir: vec3<f32>, density: f32, scale: f32) -> vec3<f32> {
     return tint * smoothstep(0.32, 0.0, d) * (0.6 + 3.0 * k * k) * tw;
 }
 
+// Stars in space: steady (no air to make them twinkle), each a soft point; the brightest
+// (`spikes` > 0) with a cross of diffraction spikes. Colour by temperature: mostly white,
+// some blue-white, some yellow and orange, a few red.
+fn space_stars(dir: vec3<f32>, density: f32, scale: f32, gain: f32, spikes: f32) -> vec3<f32> {
+    let p = dir * scale;
+    let cell = floor(p);
+    let h = hash3(cell);
+    if h < 1.0 - density {
+        return vec3(0.0);
+    }
+    let centre = cell + vec3(0.3) + 0.4 * vec3(hash3(cell + 7.1), hash3(cell + 3.3), hash3(cell + 9.9));
+    // how far from the star across the sky (its direction, not the cell's corner, or stars
+    // smear as the view turns)
+    let o = (dir - normalize(centre)) * scale;
+    // across the sky at this point (the star's own little plane)
+    let t1 = normalize(cross(dir, vec3(0.0, 1.0, 0.0001)));
+    let t2 = cross(dir, t1);
+    let x = dot(o, t1);
+    let y = dot(o, t2);
+    let k = (h - (1.0 - density)) / density;
+    let temp = hash3(cell + 1.7);
+    var tint = vec3(1.0, 0.97, 0.94);
+    if temp < 0.18 {
+        tint = vec3(0.68, 0.78, 1.0);
+    } else if temp < 0.32 {
+        tint = vec3(1.0, 0.86, 0.62);
+    } else if temp < 0.4 {
+        tint = vec3(1.0, 0.62, 0.4);
+    } else if temp < 0.43 {
+        tint = vec3(1.0, 0.42, 0.3);
+    }
+    let bright = (0.35 + 2.6 * k * k) * gain;
+    let d2 = x * x + y * y;
+    // kept inside the star's own cell (anything wider is cut off at its edges)
+    var v = exp(-d2 * 110.0) + 0.1 * exp(-d2 * 35.0);
+    if spikes > 0.0 {
+        v += spikes * k * (exp(-abs(x) * 45.0 - y * y * 30.0) + exp(-abs(y) * 45.0 - x * x * 30.0));
+    }
+    return tint * v * bright;
+}
+
+// A planet far off: a lit sphere (`n` its kind) with its own surface, phased by the sun, and
+// for the ringed one its rings. Returns the colour and how much of what's behind it it covers.
+// 0: a banded giant with a great storm, 1: a ringed giant, 2: a red desert world, 3: an ice world.
+fn far_world(dir: vec3<f32>, at: vec3<f32>, r: f32, n: i32, sun: vec3<f32>) -> vec4<f32> {
+    let c = normalize(at);
+    let cosd = clamp(dot(dir, c), -1.0, 1.0);
+    let ang = acos(cosd);
+    // the ring plane, tilted, for the ringed giant
+    let ring_n = normalize(vec3(0.25, 0.9, 0.35));
+    var ring = vec4(0.0);
+    if n == 1 && ang < r * 2.6 {
+        let t = dot(c, ring_n) / dot(dir, ring_n);
+        let rho = length(dir * t - c) / sin(r);
+        if t > 0.0 && rho > 1.35 && rho < 2.35 {
+            let bands = 0.55 + 0.45 * sin(rho * 38.0) * sin(rho * 11.0 + 1.0);
+            let gap = smoothstep(0.02, 0.06, abs(rho - 1.92));
+            // lit on the face the sun shines on, dimmer seen from the other side
+            let lit = 0.25 + 0.75 * abs(dot(ring_n, sun));
+            ring = vec4(vec3(0.85, 0.76, 0.58) * bands * lit * 0.9, 0.85 * gap * bands);
+            // behind the planet: hidden where the planet's disc is
+            if t > 1.0 && ang < r {
+                ring.w = 0.0;
+            }
+        }
+    }
+    if ang >= r {
+        // a faint glow round it, the light it sends
+        return ring;
+    }
+    let side = normalize(cross(c, vec3(0.0, 1.0, 0.0001)));
+    let up = cross(side, c);
+    let off = dir - c * cosd;
+    let p = vec2(dot(off, side), dot(off, up)) / sin(r);
+    let z = sqrt(max(1.0 - dot(p, p), 0.0));
+    let nrm = normalize(side * p.x + up * p.y - c * z);
+    let lat = p.y;
+    let lon = atan2(p.x, z);
+    var col = vec3(0.5);
+    if n == 0 {
+        let wob = fbm(vec2(lon * 3.0, lat * 4.0) + globals.time * 0.002) * 0.25;
+        let b = sin((lat + wob) * 22.0);
+        col = mix(vec3(0.82, 0.72, 0.58), vec3(0.6, 0.42, 0.3), smoothstep(-0.2, 0.5, b));
+        col = mix(col, vec3(0.92, 0.88, 0.8), smoothstep(0.7, 0.95, sin((lat + wob) * 9.0 + 1.0)) * 0.6);
+        // the storm: an oval eye in the southern bands
+        let storm = length((p - vec2(0.28, -0.32)) * vec2(1.0, 1.9));
+        col = mix(col, vec3(0.78, 0.38, 0.26), smoothstep(0.17, 0.1, storm));
+    } else if n == 1 {
+        let b = sin(lat * 16.0 + fbm(vec2(lon * 2.0, lat * 6.0)) * 0.8);
+        col = mix(vec3(0.9, 0.8, 0.6), vec3(0.78, 0.66, 0.46), smoothstep(-0.3, 0.6, b));
+    } else if n == 2 {
+        let land = fbm(p * 3.5 + 7.0);
+        col = mix(vec3(0.72, 0.36, 0.2), vec3(0.42, 0.2, 0.13), smoothstep(0.45, 0.65, land));
+        col = mix(col, vec3(0.95, 0.92, 0.9), smoothstep(0.82, 0.9, abs(lat)));
+    } else {
+        let swirl = fbm(p * 2.5 + 3.0);
+        col = mix(vec3(0.5, 0.78, 0.86), vec3(0.35, 0.6, 0.78), smoothstep(0.4, 0.7, swirl));
+        col = mix(col, vec3(0.95, 0.97, 1.0), smoothstep(0.62, 0.75, lat));
+    }
+    // lit by the sun, a soft terminator, darker towards the rim (and a thin bright atmosphere
+    // on the worlds that have one)
+    let light = smoothstep(-0.08, 0.3, dot(nrm, sun));
+    let limb = 0.65 + 0.35 * z;
+    var surface = col * limb * (0.012 + 1.15 * light);
+    if n == 3 || n == 2 {
+        surface += vec3(0.3, 0.5, 0.8) * pow(1.0 - z, 4.0) * light * 0.4;
+    }
+    let edge = smoothstep(r, r * 0.97, ang);
+    // the rings in front of the planet cover it
+    var out = vec4(surface, edge);
+    if ring.w > 0.0 {
+        out = vec4(mix(out.rgb, ring.rgb, ring.w), max(edge, ring.w));
+    }
+    return out;
+}
+
 // A moon: a lit sphere with craters, a soft halo. Returns the colour to add and how much of
 // what's behind it the disc covers.
 fn moon(dir: vec3<f32>, m: vec4<f32>, col: vec4<f32>, seed: f32) -> vec4<f32> {
@@ -202,17 +318,52 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             col += vec3(1.0, 0.62, 0.28) * city * 0.35;
             // looking through more air towards the rim: blue haze, and the sunset's orange
             // along the line between day and night
-            let graze = pow(1.0 - clamp(-dot(dir, n), 0.0, 1.0), 3.0);
+            let graze = pow(1.0 - clamp(-dot(dir, n), 0.0, 1.0), 6.0);
             let dusk = smoothstep(0.25, 0.0, abs(ndl)) * smoothstep(-0.2, 0.05, ndl);
-            col = mix(col, vec3(0.25, 0.45, 0.95) * (0.08 + 0.92 * day) + vec3(0.6, 0.25, 0.05) * dusk * 0.5, graze * 0.75);
+            col = mix(col, vec3(0.25, 0.45, 0.95) * (0.08 + 0.92 * day) + vec3(0.6, 0.25, 0.05) * dusk * 0.5, graze * 0.65);
             c = col;
         } else {
             c = sky.zenith.rgb;
-            // stars, dense and steady (no air to make them twinkle), and the Milky Way's band
-            c += stars(dir, 0.025, 420.0) * 0.7 + stars(dir, 0.006, 140.0) * 1.2;
+            // the Milky Way: a band of faint light across the sky, brightest towards the
+            // galaxy's heart, cut by dark lanes of dust, with a few glowing clouds of gas
             let galaxy = normalize(vec3(0.35, 0.62, -0.7));
-            let band = exp(-abs(dot(dir, galaxy)) * 7.0);
-            c += vec3(0.05, 0.045, 0.06) * band * (0.3 + fbm3(dir * 7.0)) * (0.4 + 0.6 * night);
+            let gd = dot(dir, galaxy);
+            let band = exp(-gd * gd * 26.0);
+            let heart_dir = normalize(vec3(-0.85, 0.15, -0.5) - galaxy * dot(vec3(-0.85, 0.15, -0.5), galaxy));
+            let heart = pow(max(dot(dir, heart_dir), 0.0), 5.0) * exp(-gd * gd * 60.0);
+            // grainy, made of countless unresolved stars, and threaded with dust: thin dark
+            // filaments (ridges of noise) rather than blobs
+            let grain = fbm3(dir * 9.0) * (0.75 + 0.5 * noise3(dir * 160.0));
+            let lanes = 1.0 - abs(fbm3(dir * 6.0 + 2.0) * 2.0 - 1.0);
+            let dust = smoothstep(0.72, 0.95, lanes) * smoothstep(0.35, 0.6, fbm3(dir * 14.0 + 8.0)) * min(band + heart, 1.0);
+            var glow = vec3(0.022, 0.022, 0.03) * band * (0.35 + grain) + vec3(0.06, 0.045, 0.032) * heart * (0.5 + grain);
+            glow *= 1.0 - 0.75 * dust;
+            let gas = smoothstep(0.6, 0.82, fbm3(dir * 3.2 + 11.0)) * (0.3 + band);
+            glow += mix(vec3(0.05, 0.01, 0.032), vec3(0.008, 0.035, 0.045), fbm3(dir * 4.5 + 5.0)) * gas * (0.3 + fbm3(dir * 16.0));
+            // the sun's glare drowns the faintest of it
+            let glare_dim = 1.0 - 0.6 * day_here * pow(towards, 4.0);
+            c += glow * glare_dim;
+            // stars: many faint ones (more of them along the Milky Way), fewer bright, and a
+            // handful brightest of all with spikes
+            let more = 1.0 + 3.0 * band + 4.0 * heart;
+            c += space_stars(dir, min(0.05 * more, 0.6), 900.0, 0.32, 0.0) * glare_dim;
+            c += space_stars(dir, 0.02 * more, 380.0, 0.7, 0.0) * glare_dim;
+            c += space_stars(dir, 0.02, 110.0, 1.4, 0.0);
+            c += space_stars(dir, 0.012, 38.0, 2.2, 0.6);
+            // the planets of this system, far off, lit by the sun
+            var worlds = array<vec4<f32>, 4>(
+                vec4(-0.55, 0.42, 0.72, 0.032),
+                vec4(-0.45, 0.3, -0.84, 0.022),
+                vec4(-0.95, 0.15, -0.1, 0.014),
+                vec4(0.3, 0.8, -0.5, 0.017),
+            );
+            for (var i = 0; i < 4; i++) {
+                let wd = far_world(dir, worlds[i].xyz, worlds[i].w, i, sun);
+                c = mix(c, wd.rgb, wd.w);
+            }
+            // and the bright evening star, too small to show a disc
+            let star_dir = normalize(vec3(0.82, 0.12, -0.56));
+            c += vec3(1.0, 0.97, 0.9) * (exp(-acos(clamp(dot(dir, star_dir), -1.0, 1.0)) * 900.0) * 6.0);
             // the rim of the atmosphere: a thin bright line just above the planet's edge,
             // brightest on the sun's side
             let above = e - (-sqrt(1.0 - 1.0 / (h * h)));
@@ -220,10 +371,24 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             let flat_sun = normalize(vec3(sun.x, 0.0, sun.z) + vec3(1e-4, 0.0, 0.0));
             let sunside = 0.25 + 0.75 * smoothstep(-0.6, 0.8, dot(flat_dir, flat_sun));
             c += sky.horizon.rgb * (exp(-above / 0.006) * 1.6 + exp(-above / 0.03) * 0.3) * sunside;
-            // the sun: a hard white disc and a little glare (no air to spread it)
-            c += sky.sun_colour.rgb * day_here * (pow(towards, 2000.0) * 3.0 + pow(towards, 80.0) * 0.05);
-            let sun_disc = smoothstep(0.99990, 0.99995, towards);
-            c += sky.sun_colour.rgb * sun_disc * 60.0 * day_here;
+            // the sun: a white disc darker towards its edge, a corona streaming out in rays,
+            // and a little glare (no air to spread it)
+            let sa = acos(clamp(dot(dir, sun), -1.0, 1.0));
+            let sr = 0.014;
+            let s_side = normalize(cross(sun, vec3(0.0, 1.0, 0.0001)));
+            let s_up = cross(s_side, sun);
+            let around = atan2(dot(dir, s_up), dot(dir, s_side));
+            // the corona: streamers of different lengths all round, fading out over a few
+            // of the sun's widths, and a faint wider glow
+            let streak = fbm(vec2(around * 4.0, globals.time * 0.01)) * fbm(vec2(around * 11.0, 3.0 + globals.time * 0.007));
+            let reach = sr * (0.6 + 3.5 * streak * streak);
+            let out_by = max(sa - sr, 0.0);
+            let corona = exp(-out_by / reach) * 1.2 + exp(-out_by / (sr * 0.35)) * 1.5 + exp(-sa / (sr * 5.0)) * 0.06;
+            c += vec3(1.0, 0.93, 0.82) * day_here * corona + sky.sun_colour.rgb * day_here * pow(towards, 300.0) * 0.15;
+            if sa < sr {
+                let mu = sqrt(max(1.0 - (sa / sr) * (sa / sr), 0.0));
+                c += vec3(1.0, 0.96, 0.88) * day_here * 70.0 * (0.45 + 0.55 * mu);
+            }
         }
     } else if luminous {
         // the luminous void: white light everywhere, warmest and brightest at eye level, a
