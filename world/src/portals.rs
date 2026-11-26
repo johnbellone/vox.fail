@@ -266,7 +266,7 @@ fn target(px: UVec2) -> Image {
 fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Option<Loaded>>>> {
     let slot = Arc::new(Mutex::new(None));
     let Some(path) = crate::blocks::level_path(level) else {
-        *slot.lock().unwrap() = Some(Err(format!("no level called {level}")));
+        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("no level called {level}")));
         return Some(slot);
     };
     let Some(text) = crate::files::read_string(&path) else {
@@ -285,7 +285,7 @@ fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Opti
             if let Err(e) = &made {
                 crate::note!("[portal] echo of {level}: {e}");
             }
-            *out.lock().unwrap() = Some(made);
+            *out.lock().unwrap_or_else(|e| e.into_inner()) = Some(made);
         })
         .detach();
     Some(slot)
@@ -394,7 +394,7 @@ pub fn update(
             s.loading = load(&s.level, &blocks.rects);
         }
         let Some(slot) = &s.loading else { continue };
-        let Some(made) = slot.lock().unwrap().take() else { continue };
+        let Some(made) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() else { continue };
         s.loading = None;
         let (m, set) = match made {
             Ok(x) => x,
@@ -464,7 +464,7 @@ pub fn update(
     }
 
     // ---- going through, by command
-    if let Some(name) = w.portal_go.take() {
+    if let Some(name) = w.portal_go.take().filter(|_| !w.travelling()) {
         match w.portals.iter().find(|d| d.name == name).cloned() {
             Some(def) => {
                 let here = Vec3::from(w.body.pos);

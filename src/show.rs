@@ -275,7 +275,7 @@ pub fn update(
     }
     let row_visible = show.press && polls.poll.is_none();
     let wanted: Vec<(u32, String)> = if row_visible {
-        let q = guest.queue.lock().unwrap();
+        let q = guest.queue.lock().unwrap_or_else(|e| e.into_inner());
         q.waiting()
             .into_iter()
             .filter(|x| x.status == Status::Approved)

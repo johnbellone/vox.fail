@@ -50,7 +50,7 @@ fn names(db: &Connection, sql: &str, id: u64) -> Res<Vec<String>> {
 
 pub(crate) async fn people(State(d): State<Directory>, h: HeaderMap) -> Res<Json<Value>> {
     let (id, _) = d.who(&h)?;
-    let db = d.0.db.lock().unwrap();
+    let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let friends: Vec<Value> = {
         let mut st = db
             .prepare(
@@ -136,7 +136,7 @@ pub(crate) struct Name {
 pub(crate) async fn befriend(State(d): State<Directory>, h: HeaderMap, Json(n): Json<Name>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (other, oname) = named(&tx, &n.name)?;
     if other == id {
@@ -178,7 +178,7 @@ pub(crate) struct Answer {
 pub(crate) async fn answer_friend(State(d): State<Directory>, h: HeaderMap, Json(a): Json<Answer>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (other, oname) = named(&tx, &a.name)?;
     let asked = tx.query_row("SELECT 1 FROM friend_requests WHERE src = ?1 AND dst = ?2", params![other as i64, id as i64], |_| Ok(())).optional().map_err(oops)?.is_some();
@@ -197,7 +197,7 @@ pub(crate) async fn answer_friend(State(d): State<Directory>, h: HeaderMap, Json
 pub(crate) async fn unfriend(State(d): State<Directory>, h: HeaderMap, Json(n): Json<Name>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let db = d.0.db.lock().unwrap();
+    let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let (other, oname) = named(&db, &n.name)?;
     db.execute(
         "DELETE FROM friends WHERE (a = ?1 AND b = ?2) OR (a = ?2 AND b = ?1)",
@@ -222,7 +222,7 @@ pub(crate) async fn new_crew(State(d): State<Directory>, h: HeaderMap, Json(c): 
         return Err(bad("a group or a party"));
     }
     let name = check_name(&c.name).map_err(|e| bad(e.replace("names", "crew names")))?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM crew_members WHERE account = ?1", params![id as i64], |r| r.get(0)).map_err(oops)?;
     if count >= CREWS_EACH {
@@ -260,7 +260,7 @@ pub(crate) struct Invite {
 pub(crate) async fn invite(State(d): State<Directory>, h: HeaderMap, Json(i): Json<Invite>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (kind, _, leader, n) = crew_of(&tx, i.crew, id)?;
     if kind == "party" && leader != id as i64 {
@@ -297,7 +297,7 @@ pub(crate) struct CrewAnswer {
 pub(crate) async fn answer_invite(State(d): State<Directory>, h: HeaderMap, Json(a): Json<CrewAnswer>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let gone = tx.execute("DELETE FROM crew_invites WHERE crew = ?1 AND account = ?2", params![a.crew, id as i64]).map_err(oops)?;
     if gone == 0 {
@@ -323,7 +323,7 @@ pub(crate) struct Leave {
 pub(crate) async fn leave(State(d): State<Directory>, h: HeaderMap, Json(l): Json<Leave>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (kind, _, leader, n) = crew_of(&tx, l.crew, id)?;
     tx.execute("DELETE FROM crew_members WHERE crew = ?1 AND account = ?2", params![l.crew, id as i64]).map_err(oops)?;

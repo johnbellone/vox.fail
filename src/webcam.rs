@@ -100,7 +100,7 @@ impl Webcam {
         if !self.enabled {
             return "Webcam: off (W to turn on)".into();
         }
-        let s = self.stats.lock().unwrap();
+        let s = self.stats.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(e) = &s.error {
             return format!("Webcam: {e}");
         }
@@ -125,7 +125,7 @@ impl Webcam {
             self.sink.clone(),
             self.stats.clone(),
         );
-        *stats.lock().unwrap() = Stats::default();
+        *stats.lock().unwrap_or_else(|e| e.into_inner()) = Stats::default();
         std::thread::Builder::new()
             .name("webcam".into())
             .spawn(move || {
@@ -134,12 +134,12 @@ impl Webcam {
                     Ok(o) => o,
                     Err(e) => {
                         crate::problem!("[webcam] {e}");
-                        stats.lock().unwrap().error = Some(e);
+                        stats.lock().unwrap_or_else(|e| e.into_inner()).error = Some(e);
                         return;
                     }
                 };
                 crate::note!("[webcam] sending {w}x{h} @ {fps} fps");
-                stats.lock().unwrap().running = true;
+                stats.lock().unwrap_or_else(|e| e.into_inner()).running = true;
                 let mut nv12 = vec![0u8; w * h * 3 / 2];
                 let mut have_frame = false;
                 let start = Instant::now();
@@ -157,18 +157,18 @@ impl Webcam {
                     }
                     if have_frame {
                         if let Err(e) = out.write(&nv12, start.elapsed().as_nanos() as u64) {
-                            stats.lock().unwrap().error = Some(e);
+                            stats.lock().unwrap_or_else(|e| e.into_inner()).error = Some(e);
                             break;
                         }
                     }
                     let el = window.elapsed().as_secs_f32();
                     if el >= 1.0 {
-                        stats.lock().unwrap().sent_fps = count as f32 / el;
+                        stats.lock().unwrap_or_else(|e| e.into_inner()).sent_fps = count as f32 / el;
                         count = 0;
                         window = Instant::now();
                     }
                 }
-                stats.lock().unwrap().running = false;
+                stats.lock().unwrap_or_else(|e| e.into_inner()).running = false;
                 crate::note!("[webcam] stopped");
             })
             .expect("spawn webcam thread");
@@ -574,7 +574,7 @@ mod sys {
         }
         pub unsafe fn OpenFileMappingW(_a: u32, _i: i32, name: *const u16) -> Handle {
             let n = unsafe { name_of(name) };
-            let mut maps = MAPS.lock().unwrap();
+            let mut maps = MAPS.lock().unwrap_or_else(|e| e.into_inner());
             match find(&maps, &n) {
                 Some(i) => {
                     maps[i].as_mut().unwrap().refs += 1;
@@ -592,7 +592,7 @@ mod sys {
             name: *const u16,
         ) -> Handle {
             let n = unsafe { name_of(name) };
-            let mut maps = MAPS.lock().unwrap();
+            let mut maps = MAPS.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(i) = find(&maps, &n) {
                 maps[i].as_mut().unwrap().refs += 1;
                 return i as Handle + 1;
@@ -611,7 +611,7 @@ mod sys {
             _lo: u32,
             _b: usize,
         ) -> *mut c_void {
-            let mut maps = MAPS.lock().unwrap();
+            let mut maps = MAPS.lock().unwrap_or_else(|e| e.into_inner());
             maps.get_mut(h as usize - 1)
                 .and_then(|m| m.as_mut())
                 .map(|m| m.mem.as_mut_ptr() as *mut c_void)
@@ -621,7 +621,7 @@ mod sys {
             1
         }
         pub unsafe fn CloseHandle(h: Handle) -> i32 {
-            let mut maps = MAPS.lock().unwrap();
+            let mut maps = MAPS.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(slot) = maps.get_mut(h as usize - 1) {
                 if let Some(m) = slot.as_mut() {
                     m.refs -= 1;

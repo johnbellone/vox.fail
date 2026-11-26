@@ -369,10 +369,13 @@ fn save_keys(pairs: &[(&str, String)]) {
                 .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
         })
         .collect();
+    // one line per key: a newline in a value would write extra keys into the file
+    let one_line = |t: &str| t.chars().filter(|c| !c.is_control()).collect::<String>();
     for (k, v) in pairs {
+        let v = one_line(v);
         match m.iter_mut().find(|e| e.0 == *k) {
-            Some(e) => e.1 = v.clone(),
-            None => m.push((k.to_string(), v.clone())),
+            Some(e) => e.1 = v,
+            None => m.push((k.to_string(), v)),
         }
     }
     let _ = std::fs::write(
@@ -754,7 +757,7 @@ fn main() {
         applog::user_dir().join("questions"),
     )));
     {
-        let mut q = queue.lock().unwrap();
+        let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
         q.open = saved.get("ask_open").is_some_and(|v| v == "true");
         if let Some(m) = saved
             .get("ask_max_secs")
@@ -1098,7 +1101,7 @@ fn main() {
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Block Avatar".into(),
+                        title: "Vox".into(),
                         resolution: (900, 900).into(),
                         transparent: args.transparent,
                         composite_alpha_mode: if args.transparent {
@@ -1490,7 +1493,7 @@ fn start_whisper(
         }
         match bubbles::stt::start(path.to_string_lossy().into_owned()) {
             Ok((tap, rx)) => {
-                *mic.0.tap.lock().unwrap() = Some(tap);
+                *mic.0.tap.lock().unwrap_or_else(|e| e.into_inner()) = Some(tap);
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -1801,14 +1804,14 @@ fn update_hud(
             }
         })
         .collect();
-    let mic_line = if let Some(e) = mic.0.error.lock().unwrap().clone() {
+    let mic_line = if let Some(e) = mic.0.error.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         format!("Mic: {e}")
     } else if !mic.0.running.load(Ordering::Relaxed) {
         "Mic: starting...".into()
     } else {
         format!(
             "Mic: {}{}",
-            mic.0.device.lock().unwrap(),
+            mic.0.device.lock().unwrap_or_else(|e| e.into_inner()),
             if av.muted { "  [MUTED]" } else { "" }
         )
     };
@@ -1833,7 +1836,7 @@ fn update_hud(
             "off".into()
         },
         {
-            let q = guest.queue.lock().unwrap();
+            let q = guest.queue.lock().unwrap_or_else(|e| e.into_inner());
             let approved = q
                 .items
                 .iter()
@@ -1948,8 +1951,8 @@ fn publish_state(
     // pieces that come as JSON text
     let raw = |s: String| serde_json::from_str::<serde_json::Value>(&s).unwrap_or(serde_json::Value::Null);
     let ask_login = match &guest.ask {
-        Some(a) if a.shared.cfg.lock().unwrap().twitch_client_id.is_some() => "twitch",
-        Some(a) if a.shared.cfg.lock().unwrap().open_names => "names",
+        Some(a) if a.shared.cfg.lock().unwrap_or_else(|e| e.into_inner()).twitch_client_id.is_some() => "twitch",
+        Some(a) if a.shared.cfg.lock().unwrap_or_else(|e| e.into_inner()).open_names => "names",
         Some(_) => "none",
         None => "off",
     };
@@ -1981,7 +1984,7 @@ fn publish_state(
         "caption_source": caps.source,
         "ask_url": guest.ask_url(),
         "ask_login": ask_login,
-        "ask_names": guest.ask.as_ref().is_some_and(|a| a.shared.cfg.lock().unwrap().open_names),
+        "ask_names": guest.ask.as_ref().is_some_and(|a| a.shared.cfg.lock().unwrap_or_else(|e| e.into_inner()).open_names),
         "guest": on_stage,
         "guest_status": guest.status,
         "wardrobe": raw(wardrobe.json()),
@@ -2003,7 +2006,7 @@ fn publish_state(
         },
         "world": world::json(&worldr),
         "show": {"set": sh.set, "sets": show::SETS, "director": sh.director, "press": sh.press},
-        "shorts": {"on": cl.on, "auto": cl.auto, "comics": cl.comics, "cards": cl.cards, "status": *cl.status.lock().unwrap(), "saved": *cl.saved.lock().unwrap()},
+        "shorts": {"on": cl.on, "auto": cl.auto, "comics": cl.comics, "cards": cl.cards, "status": *cl.status.lock().unwrap_or_else(|e| e.into_inner()), "saved": *cl.saved.lock().unwrap_or_else(|e| e.into_inner())},
         "models": av.models.iter().map(|m| m.0.clone()).collect::<Vec<_>>(),
         "mic_level": (av.level * 100.0).round() / 100.0,
         "problems": applog::problems(),
@@ -2029,7 +2032,7 @@ fn publish_state(
         "clips": av.clip_order,
     })
     .to_string();
-    *state.0.lock().unwrap() = json;
+    *state.0.lock().unwrap_or_else(|e| e.into_inner()) = json;
 }
 
 /// Tell the world code about your character and the quality to draw at.

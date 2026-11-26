@@ -62,12 +62,12 @@ fn key(p: &Path) -> String {
 
 /// Keep a fetched file (the browser client does this before the world starts).
 pub fn put(path: &str, bytes: Vec<u8>) {
-    FETCHED.lock().unwrap().get_or_insert_with(HashMap::new).insert(path.trim_start_matches('/').to_string(), bytes);
+    FETCHED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(path.trim_start_matches('/').to_string(), bytes);
 }
 
 /// A file's bytes.
 pub fn read(p: &Path) -> Option<Vec<u8>> {
-    if let Some(b) = FETCHED.lock().unwrap().as_ref().and_then(|m| m.get(&key(p)).cloned()) {
+    if let Some(b) = FETCHED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key(p)).cloned()) {
         return Some(b);
     }
     if cfg!(target_arch = "wasm32") {
@@ -81,7 +81,7 @@ pub fn read_string(p: &Path) -> Option<String> {
 }
 
 pub fn exists(p: &Path) -> bool {
-    if FETCHED.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&key(p))) {
+    if FETCHED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|m| m.contains_key(&key(p))) {
         return true;
     }
     // in the browser a level may be fetched later: say yes for the built-in ones
@@ -94,13 +94,13 @@ pub fn exists(p: &Path) -> bool {
 /// Ask for a file that isn't here yet (in the browser; on the desktop everything is).
 pub fn want(p: &Path) {
     if cfg!(target_arch = "wasm32") {
-        WANTED.lock().unwrap().get_or_insert_with(HashSet::new).insert(key(p));
+        WANTED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashSet::new).insert(key(p));
     }
 }
 
 /// The files asked for since last time (the browser client fetches them).
 pub fn take_wanted() -> Vec<String> {
-    WANTED.lock().unwrap().take().map(|s| s.into_iter().collect()).unwrap_or_default()
+    WANTED.lock().unwrap_or_else(|e| e.into_inner()).take().map(|s| s.into_iter().collect()).unwrap_or_default()
 }
 
 #[cfg(test)]

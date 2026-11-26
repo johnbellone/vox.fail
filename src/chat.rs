@@ -378,7 +378,7 @@ pub fn start_twitch(
             let addr = (host.as_str(), port).to_socket_addrs().ok().and_then(|mut a| a.next());
             let conn = addr.and_then(|a| TcpStream::connect_timeout(&a, Duration::from_secs(8)).ok());
             let Some(stream) = conn else {
-                *status.lock().unwrap() = format!("Twitch: can't reach chat, retrying ({channel})");
+                *status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Twitch: can't reach chat, retrying ({channel})");
                 std::thread::sleep(Duration::from_secs(5));
                 continue;
             };
@@ -389,7 +389,7 @@ pub fn start_twitch(
             if w.write_all(format!("CAP REQ :twitch.tv/commands twitch.tv/tags\r\nPASS SCHMOOPIIE\r\nNICK {nick}\r\nJOIN #{channel}\r\n").as_bytes()).is_err() {
                 continue;
             }
-            *status.lock().unwrap() = format!("Twitch: reading #{channel}");
+            *status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Twitch: reading #{channel}");
             let mut r = BufReader::new(&stream);
             let mut line = String::new();
             loop {
@@ -420,7 +420,7 @@ pub fn start_twitch(
                     },
                 }
             }
-            *status.lock().unwrap() = format!("Twitch: disconnected from #{channel}, reconnecting");
+            *status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Twitch: disconnected from #{channel}, reconnecting");
             std::thread::sleep(Duration::from_secs(3));
         })
         .expect("spawn twitch thread");
@@ -508,13 +508,20 @@ impl Chat {
     }
     pub fn connect(&mut self, channel: String) {
         let ch = channel.trim().trim_start_matches('#').to_ascii_lowercase();
+        // a Twitch login: letters, digits and underscores (anything else could add IRC lines)
+        if !ch.is_empty() && (ch.len() > 25 || !ch.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')) {
+            self.rx = None;
+            self.channel = None;
+            *self.status.lock().unwrap_or_else(|e| e.into_inner()) = "Twitch: not a channel name".into();
+            return;
+        }
         if ch.is_empty() {
             self.rx = None;
             self.channel = None;
-            *self.status.lock().unwrap() = "Twitch: off".into();
+            *self.status.lock().unwrap_or_else(|e| e.into_inner()) = "Twitch: off".into();
             return;
         }
-        *self.status.lock().unwrap() = format!("Twitch: connecting to #{ch}");
+        *self.status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Twitch: connecting to #{ch}");
         self.rx = Some(Mutex::new(start_twitch(
             self.twitch_host.0.clone(),
             self.twitch_host.1,
@@ -531,9 +538,9 @@ impl Chat {
         }
     }
     pub fn status_line(&self) -> String {
-        let mut s = self.status.lock().unwrap().clone();
+        let mut s = self.status.lock().unwrap_or_else(|e| e.into_inner()).clone();
         for f in &self.feeds {
-            s += &format!(" | {}", f.1.status.lock().unwrap());
+            s += &format!(" | {}", f.1.status.lock().unwrap_or_else(|e| e.into_inner()));
         }
         format!(
             "{s} | chat throws {}",
@@ -605,7 +612,7 @@ pub fn launch(
     let mut events: Vec<ChatEvent> = chat
         .rx
         .as_ref()
-        .map(|rx| rx.lock().unwrap().try_iter().collect())
+        .map(|rx| rx.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect())
         .unwrap_or_default();
     for f in &chat.feeds {
         // (an empty ban is a feed's "are you still there" ping)

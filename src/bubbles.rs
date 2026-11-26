@@ -277,7 +277,7 @@ pub fn poll(mut caps: ResMut<Captions>, time: Res<Time>, av: Res<crate::Avatar>)
     let got: Vec<String> = caps
         .whisper_rx
         .as_ref()
-        .map(|rx| rx.lock().unwrap().try_iter().collect())
+        .map(|rx| rx.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect())
         .unwrap_or_default();
     for t in got {
         caps.set(&t, now);

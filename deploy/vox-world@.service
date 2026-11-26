@@ -11,6 +11,12 @@ EnvironmentFile=/etc/vox/%i.env
 # VOX_WORLD_SECRET, the same as the directory's
 EnvironmentFile=/etc/vox/worlds.env
 ExecStart=/opt/vox/bin/vox-server --listen 127.0.0.1:${PORT} --db /var/lib/vox/%i.db --name %i --seed ${SEED} --directory-key /var/lib/vox/directory.key.pub --directory-url http://127.0.0.1:7700
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vox
 Restart=on-failure
 KillSignal=SIGINT
 

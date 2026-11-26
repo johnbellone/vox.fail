@@ -27,9 +27,9 @@ pub(crate) struct MicShared {
 
 impl MicShared {
     pub(crate) fn publish(&self, f: Frame) {
-        *self.frame.lock().unwrap() = f;
+        *self.frame.lock().unwrap_or_else(|e| e.into_inner()) = f;
         self.frames.fetch_add(1, Ordering::Relaxed);
-        let mut h = self.hist.lock().unwrap();
+        let mut h = self.hist.lock().unwrap_or_else(|e| e.into_inner());
         if h.len() < 2000 {
             h.push(f);
         }
@@ -59,11 +59,11 @@ pub(crate) struct Mic(pub(crate) Arc<MicShared>);
 
 impl Mic {
     pub(crate) fn frame(&self) -> Frame {
-        *self.0.frame.lock().unwrap()
+        *self.0.frame.lock().unwrap_or_else(|e| e.into_inner())
     }
     /// All frames since the last call.
     pub(crate) fn drain(&self) -> Vec<Frame> {
-        std::mem::take(&mut *self.0.hist.lock().unwrap())
+        std::mem::take(&mut *self.0.hist.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
@@ -76,17 +76,17 @@ pub(crate) fn device_name(d: &cpal::Device) -> String {
 /// and for recording demos.
 pub(crate) fn start_wav(path: String) -> Mic {
     let shared = Arc::new(MicShared::default());
-    shared.frame.lock().unwrap().db = -100.0;
+    shared.frame.lock().unwrap_or_else(|e| e.into_inner()).db = -100.0;
     let s = shared.clone();
     std::thread::spawn(move || {
         let (rate, ch, samples) = match lipsync::read_wav(&path) {
             Ok(w) => w,
             Err(e) => {
-                *s.error.lock().unwrap() = Some(format!("{path}: {e}"));
+                *s.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("{path}: {e}"));
                 return;
             }
         };
-        *s.device.lock().unwrap() = format!("file {path}");
+        *s.device.lock().unwrap_or_else(|e| e.into_inner()) = format!("file {path}");
         s.running.store(true, Ordering::Relaxed);
         let mut an = Analyzer::new(rate);
         let block = (rate as usize / 100) * ch;
@@ -123,14 +123,14 @@ pub(crate) fn start_mic(want: Option<String>) -> Mic {
 /// `fallback`: use the default input if no device matches `want` (not for a second mic).
 pub(crate) fn start_input(want: Option<String>, fallback: bool) -> Mic {
     let shared = Arc::new(MicShared::default());
-    shared.frame.lock().unwrap().db = -100.0;
+    shared.frame.lock().unwrap_or_else(|e| e.into_inner()).db = -100.0;
     let s = shared.clone();
     std::thread::Builder::new()
         .name("mic".into())
         .spawn(move || {
             let fail = |msg: String| {
                 crate::problem!("[mic] {msg}");
-                *s.error.lock().unwrap() = Some(msg);
+                *s.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
             };
             let host = cpal::default_host();
             let device = match &want {
@@ -157,16 +157,16 @@ pub(crate) fn start_input(want: Option<String>, fallback: bool) -> Mic {
                 Err(e) => return fail(format!("can't read input config: {e}")),
             };
             let (rate, ch) = (config.sample_rate(), config.channels() as usize);
-            *s.device.lock().unwrap() =
+            *s.device.lock().unwrap_or_else(|e| e.into_inner()) =
                 format!("{} ({} Hz, {} ch)", device_name(&device), rate, ch);
-            crate::note!("[mic] using {}", s.device.lock().unwrap());
+            crate::note!("[mic] using {}", s.device.lock().unwrap_or_else(|e| e.into_inner()));
             let mut analyzer = Analyzer::new(rate);
             let out = s.clone();
             let tap = s.clone();
             let publish = move |f: Frame| out.publish(f);
             let err_s = s.clone();
             let on_err = move |e: cpal::StreamError| {
-                *err_s.error.lock().unwrap() = Some(format!("stream error: {e}"));
+                *err_s.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("stream error: {e}"));
             };
             let stream_cfg: cpal::StreamConfig = config.config();
             let stream = match config.sample_format() {

@@ -675,11 +675,13 @@ impl Weather {
     /// Weather from a keyframe.
     pub fn from_keyframe(k: &Keyframe) -> Result<Weather, String> {
         let n = [k.size[0] as usize, k.size[1] as usize, k.size[2] as usize];
-        let len = n[0] * n[1] * n[2];
-        if k.fields.len() != len * 7 || k.rain.len() != n[0] * n[2] || len == 0 || len > 1 << 20 {
-            return Err("a weather keyframe of the wrong size".into());
+        let bad = || "a weather keyframe of the wrong size".to_string();
+        let len = n[0].checked_mul(n[1]).and_then(|v| v.checked_mul(n[2])).ok_or_else(bad)?;
+        let rain = n[0].checked_mul(n[2]).ok_or_else(bad)?;
+        if len == 0 || len > 1 << 20 || k.fields.len() != len * 7 || k.rain.len() != rain {
+            return Err(bad());
         }
-        let mut w = Weather::with_grid(k.climate, k.seed, n, k.cell, k.origin);
+        let mut w = Weather::with_grid(k.climate.sane(), k.seed, n, k.cell, k.origin);
         let d = |b: u16, lo: f32, hi: f32| lo + (b as f32 / 65535.0) * (hi - lo);
         for c in 0..len {
             let f = &k.fields[c * 7..c * 7 + 7];

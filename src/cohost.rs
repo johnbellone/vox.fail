@@ -151,13 +151,13 @@ pub fn update(
     }
     av.cohost_on = true;
     let Some(mic) = c.mic.clone() else { return };
-    if let Some(e) = mic.0.error.lock().unwrap().clone() {
+    if let Some(e) = mic.0.error.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         c.status = format!("Co-host mic: {e}");
     } else {
         c.status = format!(
             "Co-host: {} on {}",
             c.model.rsplit('/').next().unwrap_or(""),
-            mic.0.device.lock().unwrap()
+            mic.0.device.lock().unwrap_or_else(|e| e.into_inner())
         );
     }
     // calibrate the gate on the first 1.5 s, like your own mic

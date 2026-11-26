@@ -282,11 +282,13 @@ impl Directory {
         let db = Connection::open(&cfg.db).map_err(|e| e.to_string())?;
         db.execute_batch(
             "PRAGMA journal_mode = WAL;
+             PRAGMA busy_timeout = 5000;
              CREATE TABLE IF NOT EXISTS accounts (
                  id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
                  pass TEXT NOT NULL, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS sessions (
                  hash TEXT PRIMARY KEY, account INTEGER NOT NULL, expires INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS sessions_expires ON sessions (expires);
              CREATE TABLE IF NOT EXISTS characters (
                  account INTEGER PRIMARY KEY, model TEXT NOT NULL, wear TEXT NOT NULL,
                  updated INTEGER NOT NULL);
@@ -371,7 +373,7 @@ impl Directory {
     /// Make `name` the owner of world `world` (they can then issue its currency).
     pub fn own_world(&self, world: &str, name: &str) -> Result<String, String> {
         let w = self.0.worlds.iter().find(|w| w.id == world).ok_or_else(|| format!("there's no world {world} (worlds: {})", self.world_ids()))?;
-        let db = self.0.db.lock().unwrap();
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
         let (id, name) = people::named(&db, name).map_err(|e| e.1)?;
         db.execute(
             "INSERT INTO world_owners (world, account) VALUES (?1, ?2) ON CONFLICT(world) DO UPDATE SET account = ?2",
@@ -386,7 +388,7 @@ impl Directory {
         if amount <= 0 {
             return Err("grant at least 1".into());
         }
-        let db = self.0.db.lock().unwrap();
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
         let (id, name) = people::named(&db, name).map_err(|e| e.1)?;
         game::mint(&db, id, game::AUTH, amount, memo).map_err(|e| e.to_string())?;
         Ok(format!("{name} has {} authority", game::balance(&db, id, game::AUTH)))
@@ -470,7 +472,7 @@ impl Directory {
     }
 
     fn tried_up_to(&self, who: &str, most: u32) -> bool {
-        let mut t = self.0.tries.lock().unwrap();
+        let mut t = self.0.tries.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         t.retain(|_, (_, at)| now.duration_since(*at) < WINDOW);
         let e = t.entry(who.to_string()).or_insert((0, now));
@@ -481,7 +483,7 @@ impl Directory {
     /// The account a request's session cookie belongs to.
     fn account(&self, h: &HeaderMap) -> Option<(u64, String)> {
         let cookie = cookie(h, COOKIE)?;
-        let db = self.0.db.lock().unwrap();
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
         db.query_row(
             "SELECT a.id, a.name FROM sessions s JOIN accounts a ON a.id = s.account WHERE s.hash = ?1 AND s.expires > ?2",
             params![sha(&cookie), now() as i64],
@@ -493,7 +495,7 @@ impl Directory {
     }
 
     fn character(&self, account: u64) -> Option<Character> {
-        let db = self.0.db.lock().unwrap();
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
         db.query_row("SELECT model, wear FROM characters WHERE account = ?1", params![account as i64], |r| {
             Ok(Character {
                 model: r.get(0)?,
@@ -508,7 +510,7 @@ impl Directory {
     /// A new session for `account`: its cookie.
     fn session(&self, account: u64) -> HeaderValue {
         let token = random_hex(32);
-        let db = self.0.db.lock().unwrap();
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
         let _ = db.execute("DELETE FROM sessions WHERE expires < ?1", params![now() as i64]);
         let _ = db.execute(
             "INSERT INTO sessions (hash, account, expires) VALUES (?1, ?2, ?3)",
@@ -543,7 +545,7 @@ async fn headers(req: axum::extract::Request, next: axum::middleware::Next) -> R
     h.insert(
         "content-security-policy",
         HeaderValue::from_static(
-            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; \
              img-src 'self' data: blob:; connect-src 'self' blob: data: ws: wss: http: https:; frame-ancestors 'none'",
         ),
     );
@@ -583,7 +585,7 @@ async fn signup(
     .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "try again".into()))?
     .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "try again".into()))?;
     let id = {
-        let db = d.0.db.lock().unwrap();
+        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
         match db.execute("INSERT INTO accounts (name, pass, created) VALUES (?1, ?2, ?3)", params![name, hash, now() as i64]) {
             Ok(_) => {
                 let id = db.last_insert_rowid() as u64;
@@ -608,7 +610,7 @@ async fn signin(
         return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too many tries: wait a few minutes".into()));
     }
     let row: Option<(i64, String, String)> = {
-        let db = d.0.db.lock().unwrap();
+        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
         db.query_row("SELECT id, name, pass FROM accounts WHERE name = ?1", params![l.name.trim()], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?))
         })
@@ -634,7 +636,7 @@ async fn signout(State(d): State<Directory>, h: HeaderMap) -> Response {
     if let Some(c) = h.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
         for part in c.split(';') {
             if let Some((COOKIE, v)) = part.trim().split_once('=') {
-                let _ = d.0.db.lock().unwrap().execute("DELETE FROM sessions WHERE hash = ?1", params![sha(v)]);
+                let _ = d.0.db.lock().unwrap_or_else(|e| e.into_inner()).execute("DELETE FROM sessions WHERE hash = ?1", params![sha(v)]);
             }
         }
     }
@@ -660,7 +662,7 @@ async fn set_character(State(d): State<Directory>, h: HeaderMap, Json(c): Json<C
     json_only(&h)?;
     let (id, _) = d.account(&h).ok_or(ApiError(StatusCode::UNAUTHORIZED, "sign in first".into()))?;
     let c = d.0.catalogue.check(&c).map_err(bad)?;
-    let db = d.0.db.lock().unwrap();
+    let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     db.execute(
         "INSERT INTO characters (account, model, wear, updated) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(account) DO UPDATE SET model = ?2, wear = ?3, updated = ?4",

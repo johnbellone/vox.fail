@@ -178,7 +178,7 @@ fn youtube_loop(
     tx: &Sender<ChatEvent>,
     st: &Mutex<String>,
 ) {
-    let set = |s: String| *st.lock().unwrap() = s;
+    let set = |s: String| *st.lock().unwrap_or_else(|e| e.into_inner()) = s;
     let chat_id = loop {
         match get_json(&format!(
             "{base}/videos?part=liveStreamingDetails&id={video}&key={key}"
@@ -338,7 +338,7 @@ pub fn start_kick(ws: String, channel: String) -> Feed {
 }
 
 fn kick_loop(ws: &str, channel: &str, tx: &Sender<ChatEvent>, st: &Mutex<String>) {
-    let set = |s: String| *st.lock().unwrap() = s;
+    let set = |s: String| *st.lock().unwrap_or_else(|e| e.into_inner()) = s;
     let room = match channel.parse::<u64>() {
         Ok(n) => n,
         Err(_) => match get_json(&format!("https://kick.com/api/v2/channels/{channel}"))
@@ -515,6 +515,6 @@ mod tests {
                 .unwrap();
         let ChatEvent::Msg(m) = ev else { panic!() };
         assert_eq!(m.user, "New");
-        assert!(f.status.lock().unwrap().contains("reading"));
+        assert!(f.status.lock().unwrap_or_else(|e| e.into_inner()).contains("reading"));
     }
 }

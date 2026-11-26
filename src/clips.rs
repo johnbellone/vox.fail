@@ -49,7 +49,7 @@ const COMIC_BAR: usize = 72;
 static LATEST: Mutex<Option<Arc<Vec<u8>>>> = Mutex::new(None);
 
 pub fn latest_jpeg() -> Option<Arc<Vec<u8>>> {
-    LATEST.lock().unwrap().clone()
+    LATEST.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 // One clock for frames and sound
@@ -150,7 +150,7 @@ pub fn program_mic(rate: u32, d: &[f32], ch: usize) {
 
 /// Something the app plays out loud (a viewer's question, a gag sound), starting about now.
 pub fn program_play(rate: u32, s: &[f32]) {
-    audio().lock().unwrap().add(now_s() + 0.03, s, rate);
+    audio().lock().unwrap_or_else(|e| e.into_inner()).add(now_s() + 0.03, s, rate);
 }
 
 // ------------------------------------------------------------------------------------------
@@ -244,8 +244,8 @@ impl Clips {
                         continue;
                     }
                     let jpg = Arc::new(out);
-                    *LATEST.lock().unwrap() = Some(jpg.clone());
-                    let mut f = frames.lock().unwrap();
+                    *LATEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(jpg.clone());
+                    let mut f = frames.lock().unwrap_or_else(|e| e.into_inner());
                     f.push_back((t, jpg));
                     while f.front().is_some_and(|x| t - x.0 > KEEP_S) {
                         f.pop_front();
@@ -328,12 +328,12 @@ impl Clips {
                 std::thread::spawn(move || {
                     let msg = match reel(&clips_dir(), &shorts) {
                         Ok(name) => {
-                            saved.lock().unwrap().push(name.clone());
+                            saved.lock().unwrap_or_else(|e| e.into_inner()).push(name.clone());
                             format!("Highlight reel saved: {name}")
                         }
                         Err(e) => format!("Highlight reel failed: {e}"),
                     };
-                    *status.lock().unwrap() = msg;
+                    *status.lock().unwrap_or_else(|e| e.into_inner()) = msg;
                 });
                 format!("Making a highlight reel of {n} shorts")
             }
@@ -379,7 +379,7 @@ fn check_ffmpeg(status: Arc<Mutex<String>>) {
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success());
-        *status.lock().unwrap() = if ok {
+        *status.lock().unwrap_or_else(|e| e.into_inner()) = if ok {
             "ffmpeg found: clips are saved as .mp4".into()
         } else {
             "ffmpeg not found: clips are saved as frames + sound (winget install Gyan.FFmpeg)"
@@ -580,7 +580,7 @@ pub fn update(
             .cloned()
             .collect();
         if frames.len() < 10 {
-            *clips.status.lock().unwrap() = format!("Not enough recorded for \"{}\" yet", e.label);
+            *clips.status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Not enough recorded for \"{}\" yet", e.label);
             continue;
         }
         crate::note!(
@@ -608,8 +608,8 @@ pub fn update(
             let r = save(&e, &frames, &sound, comics, cards);
             match r {
                 Ok(names) => {
-                    *status.lock().unwrap() = format!("Saved: {}", names.join(", "));
-                    let mut s = saved.lock().unwrap();
+                    *status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Saved: {}", names.join(", "));
+                    let mut s = saved.lock().unwrap_or_else(|e| e.into_inner());
                     s.extend(names);
                     let len = s.len();
                     if len > 20 {
@@ -617,7 +617,7 @@ pub fn update(
                     }
                 }
                 Err(err) => {
-                    *status.lock().unwrap() = format!("Couldn't save \"{}\": {err}", e.label)
+                    *status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Couldn't save \"{}\": {err}", e.label)
                 }
             }
         });

@@ -104,7 +104,7 @@ impl Chunk {
             let n = read_varint(data, &mut pos)? as usize;
             let b = read_varint(data, &mut pos)?;
             let b = u16::try_from(b).map_err(|_| "block id too big")?;
-            if n == 0 || at + n > VOL {
+            if n == 0 || n > VOL - at {
                 return Err("chunk data has the wrong length".into());
             }
             c.blocks[at..at + n].fill(b);
@@ -296,6 +296,13 @@ impl Bucket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunk_decode_rejects_runs_past_the_end_without_overflowing() {
+        // a run of 1, then a run of u32::MAX: `at + n` would wrap on a 32-bit target
+        let data = [1, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 1];
+        assert!(Chunk::decode(&data, 0).is_err());
+    }
 
     #[test]
     fn chunk_keys_round_down() {

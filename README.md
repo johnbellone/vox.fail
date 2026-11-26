@@ -1,3 +1,31 @@
+# Vox and Block Avatar
+
+This repository holds two things in one Cargo workspace. **Vox** is a shared voxel world you
+sign into and walk around in with friends (live at https://vox.fail). **Block Avatar** is a
+mic-driven avatar app for streams. Contributors and AI agents: start with
+[AGENTS.md](AGENTS.md) for the crate layout, commands and conventions.
+
+## Quick start: walk around in Vox
+
+```bash
+tools/play-local.sh                                   # the Void, the yard and the islands, then a client
+tools/play-local.sh --name Sam --model models/dog.glb # pick your name and character
+```
+
+That builds in release mode (the first build compiles Bevy and takes several minutes), starts
+three local worlds with guests allowed, and opens the client in the Void. Walk into a doorway
+to cross to another world; the screen sweeps while it loads. A frame-rate counter sits in the
+top right. Closing the window stops the servers. If a port is taken by a leftover server, run
+`pkill vox-server`.
+
+Note that a bare `cargo build` builds only the avatar app. For the client use
+`cargo build -p vox-client`, or `cargo build --workspace` for everything.
+
+The rest of this file is the manual for the avatar app, then the worlds ([Worlds: build
+together](#worlds-build-together) and [Play Vox from a web page](#play-vox-from-a-web-page)).
+
+---
+
 # Block Avatar
 
 Your block-style characters as a live, mic-driven avatar for streams and videos, built on Bevy.

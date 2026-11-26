@@ -8,12 +8,13 @@
 //! can't reach in and press buttons here).
 
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver},
     },
+    time::Duration,
 };
 
 use bevy::prelude::Resource;
@@ -397,12 +398,14 @@ poll();qpoll();setInterval(()=>{if(!$('q').matches(':focus'))poll();if(!document
 
 pub fn decode(s: &str) -> String {
     let b = s.as_bytes();
+    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
+        // work on bytes: slicing the &str here could land inside a multi-byte character
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h << 4 | l);
                 i += 3;
                 continue;
             }
@@ -433,7 +436,10 @@ pub fn start(
         .name("control".into())
         .spawn(move || {
             for stream in listener.incoming().flatten() {
-                let mut reader = BufReader::new(&stream);
+                // a browser's idle speculative socket must not hold up the page
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
+                let mut reader = BufReader::new((&stream).take(16 * 1024));
                 let mut line = String::new();
                 if reader.read_line(&mut line).is_err() {
                     continue;
@@ -460,12 +466,12 @@ pub fn start(
                 if let Some(id) = path.strip_prefix("/q/").and_then(|p| p.strip_suffix(".wav")).and_then(|i| i.parse::<u32>().ok()) {
                     // the private preview: only from this machine, and it counts as "heard"
                     let file = {
-                        let q = queue.lock().unwrap();
+                        let q = queue.lock().unwrap_or_else(|e| e.into_inner());
                         std::fs::read(q.wav_path(id)).ok()
                     };
                     match file {
                         Some(b) => {
-                            queue.lock().unwrap().mark_previewed(id);
+                            queue.lock().unwrap_or_else(|e| e.into_inner()).mark_previewed(id);
                             let head = format!("HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", b.len());
                             let _ = out.write_all(head.as_bytes());
                             let _ = out.write_all(&b);
@@ -501,14 +507,14 @@ pub fn start(
                         body
                     )
                 } else if path == "/questions" {
-                    let body = queue.lock().unwrap().to_json();
+                    let body = queue.lock().unwrap_or_else(|e| e.into_inner()).to_json();
                     format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     )
                 } else if path == "/state" {
-                    let body = state.0.lock().unwrap().clone();
+                    let body = state.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{}",
                         body.len(),
@@ -648,6 +654,13 @@ pub fn allowed(host: &str, fetch_site: &str, port: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decode_survives_multibyte_text_after_a_percent() {
+        assert_eq!(super::decode("a%aé"), "a%aé");
+        assert_eq!(super::decode("%41+%42"), "A B");
+        assert_eq!(super::decode("100%"), "100%");
+    }
+
     use super::*;
 
     #[test]

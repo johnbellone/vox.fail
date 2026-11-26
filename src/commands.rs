@@ -259,7 +259,7 @@ pub(crate) fn handle_remote(
     (mut chat, mut caps, mut stages, mut guest, mut show): Extras,
 ) {
     let mut msgs: Vec<String> = std::mem::take(&mut show.3.0);
-    msgs.extend(rx.0.lock().unwrap().try_iter());
+    msgs.extend(rx.0.lock().unwrap_or_else(|e| e.into_inner()).try_iter());
     for m in msgs {
         match parse_cmd(&m) {
             Some(cmd) => apply_cmd(
@@ -318,7 +318,7 @@ pub(crate) fn apply_extra(
             match (what, &guest.ask) {
                 ("client", Some(a)) => {
                     let id = val.trim().to_string();
-                    a.shared.cfg.lock().unwrap().twitch_client_id =
+                    a.shared.cfg.lock().unwrap_or_else(|e| e.into_inner()).twitch_client_id =
                         Some(id.clone()).filter(|s| !s.is_empty());
                     save_keys(&[("twitch_client_id", id.clone())]);
                     av.status = if id.is_empty() {
@@ -578,13 +578,13 @@ pub(crate) fn apply_extra(
                 return false;
             };
             if m == "ask:open" || m == "ask:close" || m == "ask:toggle" {
-                save_keys(&[("ask_open", guest.queue.lock().unwrap().open.to_string())]);
+                save_keys(&[("ask_open", guest.queue.lock().unwrap_or_else(|e| e.into_inner()).open.to_string())]);
             }
             if m == "ask:names" {
                 if let Some(a) = &guest.ask {
                     save_keys(&[(
                         "ask_names",
-                        a.shared.cfg.lock().unwrap().open_names.to_string(),
+                        a.shared.cfg.lock().unwrap_or_else(|e| e.into_inner()).open_names.to_string(),
                     )]);
                 }
             }

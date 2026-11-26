@@ -828,7 +828,7 @@ pub fn start_transcriber(
     let (tx, rx) = std::sync::mpsc::channel::<(u32, PathBuf)>();
     // anything waiting without text (from before a restart) gets a pass too
     {
-        let mut q = queue.lock().unwrap();
+        let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
         for x in q
             .items
             .iter()
@@ -875,7 +875,7 @@ pub fn start_transcriber(
                     }
                 }
                 let text = crate::bubbles::clean_transcript(&text);
-                let mut q = queue.lock().unwrap();
+                let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
                 // the streamer may have typed something already: keep theirs
                 if q.get(id).is_some_and(|x| x.text.is_empty()) {
                     q.set_text(id, &text);

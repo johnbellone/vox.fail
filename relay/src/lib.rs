@@ -218,7 +218,7 @@ impl Relay {
 
     /// Drop shows whose host has been gone longer than `expire`. Run every few seconds.
     pub fn reap(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let expire = self.expire;
         inner
             .sessions
@@ -226,7 +226,7 @@ impl Relay {
     }
 
     fn listed(&self) -> Vec<Listed> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let mut v: Vec<Listed> = inner
             .sessions
             .iter()
@@ -250,7 +250,7 @@ async fn create(State(relay): State<Relay>, Json(req): Json<NewSession>) -> Resp
     if title.is_empty() {
         return (StatusCode::BAD_REQUEST, "a title is needed").into_response();
     }
-    let mut inner = relay.inner.lock().unwrap();
+    let mut inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
     if inner.sessions.len() >= MAX_SESSIONS {
         return (StatusCode::SERVICE_UNAVAILABLE, "too many shows").into_response();
     }
@@ -320,7 +320,7 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 }
 
 async fn end(State(relay): State<Relay>, Path(id): Path<String>, headers: HeaderMap) -> StatusCode {
-    let mut inner = relay.inner.lock().unwrap();
+    let mut inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = inner.sessions.get(&id) else {
         return StatusCode::NOT_FOUND;
     };
@@ -352,7 +352,7 @@ async fn connect(
     };
     // check before upgrading, so a refusal is a plain HTTP status
     {
-        let inner = relay.inner.lock().unwrap();
+        let inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = inner.sessions.get(&id) else {
             return (StatusCode::NOT_FOUND, "no such show").into_response();
         };
@@ -393,7 +393,7 @@ async fn run(relay: Relay, id: String, role: Role, name: String, socket: WebSock
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Message>(QUEUE);
     let me = {
-        let mut inner = relay.inner.lock().unwrap();
+        let mut inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.next_peer += 1;
         let peer = Peer {
             id: inner.next_peer,
@@ -491,7 +491,7 @@ async fn run(relay: Relay, id: String, role: Role, name: String, socket: WebSock
 
     // leaving
     {
-        let mut inner = relay.inner.lock().unwrap();
+        let mut inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(s) = inner.sessions.get_mut(&id) {
             match role {
                 Role::Host => {
@@ -526,7 +526,7 @@ async fn run(relay: Relay, id: String, role: Role, name: String, socket: WebSock
 /// Pass a message on from `role`. Returns false when this connection should stop (the show is
 /// gone, or a newer host connection replaced it).
 fn route(relay: &Relay, id: &str, role: Role, me_id: u64, msg: &Message) -> bool {
-    let mut inner = relay.inner.lock().unwrap();
+    let mut inner = relay.inner.lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = inner.sessions.get_mut(id) else {
         return false;
     };

@@ -233,7 +233,7 @@ impl Hotkeys {
 
     fn apply(&mut self) -> Result<(), String> {
         std::fs::write(path(), write(&self.bindings)).map_err(|e| e.to_string())?;
-        *self.shared.lock().unwrap() = self.bindings.clone();
+        *self.shared.lock().unwrap_or_else(|e| e.into_inner()) = self.bindings.clone();
         self.reload_thread();
         Ok(())
     }
@@ -287,7 +287,7 @@ impl Hotkeys {
                 let (b, bad) = parse(&std::fs::read_to_string(path()).unwrap_or_default());
                 self.bindings = b;
                 self.problems = bad;
-                *self.shared.lock().unwrap() = self.bindings.clone();
+                *self.shared.lock().unwrap_or_else(|e| e.into_inner()) = self.bindings.clone();
                 self.reload_thread();
                 return Some(format!(
                     "{} hotkeys loaded from hotkeys.txt",
@@ -307,7 +307,7 @@ impl Hotkeys {
     }
 
     pub fn json(&self) -> serde_json::Value {
-        let st = self.state.lock().unwrap();
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let list: Vec<serde_json::Value> = self
             .bindings
             .iter()
@@ -322,7 +322,7 @@ impl Hotkeys {
 
 /// Pressed hotkeys go in with the control page's commands.
 pub fn pump(hk: Res<Hotkeys>, mut inject: ResMut<crate::Inject>) {
-    for cmd in hk.rx.lock().unwrap().try_iter() {
+    for cmd in hk.rx.lock().unwrap_or_else(|e| e.into_inner()).try_iter() {
         crate::note!("[hotkeys] {cmd}");
         inject.0.push(cmd);
     }
@@ -334,7 +334,7 @@ fn start_thread(
     state: Arc<Mutex<Vec<(String, Result<(), String>)>>>,
     _tx: mpsc::Sender<String>,
 ) -> Option<u32> {
-    *state.lock().unwrap() = shared
+    *state.lock().unwrap_or_else(|e| e.into_inner()) = shared
         .lock()
         .unwrap()
         .iter()
@@ -384,7 +384,7 @@ fn start_thread(
                 for i in 0..live.len() {
                     UnregisterHotKey(std::ptr::null_mut(), i as i32 + 1);
                 }
-                *live = shared.lock().unwrap().clone();
+                *live = shared.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 let mut st = vec![];
                 for (i, b) in live.iter().enumerate() {
                     let ok = RegisterHotKey(
@@ -405,7 +405,7 @@ fn start_thread(
                         },
                     ));
                 }
-                *state.lock().unwrap() = st;
+                *state.lock().unwrap_or_else(|e| e.into_inner()) = st;
             };
             register(&mut live);
             loop {

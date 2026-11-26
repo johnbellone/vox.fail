@@ -98,7 +98,7 @@ impl Playback {
                 };
                 match open_output(samples.clone(), rate, want, p.clone(), st.clone()) {
                     Ok((stream, name)) => {
-                        *dev.lock().unwrap() = name;
+                        *dev.lock().unwrap_or_else(|e| e.into_inner()) = name;
                         while !st.load(Ordering::Relaxed)
                             && (p.load(Ordering::Relaxed) as usize) < samples.len()
                         {
@@ -110,7 +110,7 @@ impl Playback {
                         drop(stream);
                     }
                     Err(e) => {
-                        *dev.lock().unwrap() = format!("no sound output ({e}); timing only");
+                        *dev.lock().unwrap_or_else(|e| e.into_inner()) = format!("no sound output ({e}); timing only");
                         let t0 = std::time::Instant::now();
                         while !st.load(Ordering::Relaxed) {
                             let n = (t0.elapsed().as_secs_f64() * rate as f64) as u64;
@@ -416,7 +416,7 @@ impl Guest {
         let rest = m.strip_prefix("ask:")?;
         let (verb, arg) = rest.split_once(':').unwrap_or((rest, ""));
         let id = arg.split(':').next().and_then(|x| x.parse::<u32>().ok());
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         let msg = match verb {
             "open" | "close" | "toggle" => {
                 q.open = match verb {
@@ -430,7 +430,7 @@ impl Guest {
                 let Some(a) = &self.ask else {
                     return Some("The ask page isn't running".into());
                 };
-                let mut c = a.shared.cfg.lock().unwrap();
+                let mut c = a.shared.cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.open_names = !c.open_names;
                 format!(
                     "Typed names (no Twitch login) {}",
@@ -504,7 +504,7 @@ impl Guest {
                         }
                         if let Some(old) = self.pending.replace(x) {
                             // a question that was waiting for the stage goes back in line
-                            let mut q = self.queue.lock().unwrap();
+                            let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
                             q.finish_back(old.id);
                         }
                         return Some(format!("Question {i} going on air"));
@@ -523,7 +523,7 @@ impl Guest {
             "cut" => {
                 drop(q);
                 if let Some(p) = self.pending.take() {
-                    self.queue.lock().unwrap().finish(p.id, Status::Skipped);
+                    self.queue.lock().unwrap_or_else(|e| e.into_inner()).finish(p.id, Status::Skipped);
                 }
                 return Some(if self.leave(now, Status::Skipped, true) {
                     "Cut".into()
@@ -606,7 +606,7 @@ pub fn update(
     g.lip_mode = lip.picker.mode;
     // chat: votes and moderators' bans
     if !chat.votes.is_empty() || !chat.bans.is_empty() {
-        let mut q = g.queue.lock().unwrap();
+        let mut q = g.queue.lock().unwrap_or_else(|e| e.into_inner());
         for (voter, id) in std::mem::take(&mut chat.votes) {
             q.vote(id, &voter);
         }
@@ -617,7 +617,7 @@ pub fn update(
     // next one up, once the stage is clear
     if g.stage.is_none() {
         if let Some(q) = g.pending.take() {
-            let path = g.queue.lock().unwrap().wav_path(q.id);
+            let path = g.queue.lock().unwrap_or_else(|e| e.into_inner()).wav_path(q.id);
             match std::fs::read(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|b| parse_wav_mono16(&b))
@@ -632,7 +632,7 @@ pub fn update(
                         g.lip_mode,
                     );
                     picker.use_formants = lip.picker.use_formants;
-                    let name = g.queue.lock().unwrap().display_name(&q);
+                    let name = g.queue.lock().unwrap_or_else(|e| e.into_inner()).display_name(&q);
                     g.status = format!("On air: question {} from {}", q.id, name);
                     g.stage = Some(OnStage {
                         gltf: assets.load::<Gltf>(q.model.clone()),
@@ -663,7 +663,7 @@ pub fn update(
                 }
                 Err(e) => {
                     g.status = format!("Question {}: can't read the recording ({e})", q.id);
-                    g.queue.lock().unwrap().finish(q.id, Status::Skipped);
+                    g.queue.lock().unwrap_or_else(|e| e.into_inner()).finish(q.id, Status::Skipped);
                 }
             }
         }
@@ -746,7 +746,7 @@ pub fn update(
             }
             let id = s.q.id;
             g.stage = None;
-            g.queue.lock().unwrap().finish(id, status);
+            g.queue.lock().unwrap_or_else(|e| e.into_inner()).finish(id, status);
             g.status = format!(
                 "Question {id} {}",
                 if status == Status::Done {
@@ -764,7 +764,7 @@ pub fn update(
         .stage
         .as_ref()
         .and_then(|s| s.audio.as_ref())
-        .map(|a| a.device.lock().unwrap().clone())
+        .map(|a| a.device.lock().unwrap_or_else(|e| e.into_inner()).clone())
     {
         let line = format!(
             "On air: question {} from {} | sound: {dev}",

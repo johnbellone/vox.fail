@@ -291,7 +291,7 @@ impl Directory {
     fn signed_in_with(&self, h: &HeaderMap, site: &str, subject: &str, name: &str, fallback: &str) -> Response {
         let current = self.account(h).map(|(id, _)| id);
         let account = {
-            let mut db = self.0.db.lock().unwrap();
+            let mut db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
             let Ok(tx) = db.transaction() else { return failed("busy") };
             let known: Option<i64> = tx
                 .query_row("SELECT account FROM identities WHERE site = ?1 AND subject = ?2", params![site, subject], |r| r.get(0))
@@ -355,7 +355,7 @@ impl Directory {
 
     /// The sites an account can sign in with.
     pub(crate) fn linked(&self, account: u64) -> Vec<String> {
-        let db = self.0.db.lock().unwrap();
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
         let Ok(mut st) = db.prepare("SELECT site FROM identities WHERE account = ?1 ORDER BY site") else { return vec![] };
         st.query_map(params![account as i64], |r| r.get(0)).map(|rows| rows.flatten().collect()).unwrap_or_default()
     }

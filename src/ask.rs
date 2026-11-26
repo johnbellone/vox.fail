@@ -227,7 +227,7 @@ fn handle(sh: &AskShared, mut req: Request) {
             Response::from_data(APP_CSS.as_bytes().to_vec()),
             "text/css; charset=utf-8",
         ),
-        (Method::Get, "/font.ttf") => match sh.cfg.lock().unwrap().font.clone() {
+        (Method::Get, "/font.ttf") => match sh.cfg.lock().unwrap_or_else(|e| e.into_inner()).font.clone() {
             Some(f) => with_common(Response::from_data(f.to_vec()), "font/ttf"),
             None => err(404, "no font"),
         },
@@ -241,7 +241,7 @@ fn handle(sh: &AskShared, mut req: Request) {
         },
         (Method::Post, "/api/logout") => {
             if let Some(t) = req_header(&req, SESSION_HEADER) {
-                sh.sessions.lock().unwrap().remove(&t);
+                sh.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&t);
             }
             json_resp(200, json!({ "ok": true }))
         }
@@ -286,14 +286,14 @@ fn portrait(sh: &AskShared, p: &str) -> Response<std::io::Cursor<Vec<u8>>> {
 
 fn session_login(sh: &AskShared, req: &Request) -> Option<Login> {
     let t = req_header(req, SESSION_HEADER)?;
-    let mut s = sh.sessions.lock().unwrap();
+    let mut s = sh.sessions.lock().unwrap_or_else(|e| e.into_inner());
     let sess = s.get_mut(&t)?;
     sess.last = Instant::now();
     sess.login.clone()
 }
 
 fn new_session(sh: &AskShared, login: Option<Login>, device: Option<Device>) -> Option<String> {
-    let mut s = sh.sessions.lock().unwrap();
+    let mut s = sh.sessions.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
     if s.len() >= MAX_SESSIONS {
         s.retain(|_, v| {
@@ -317,9 +317,9 @@ fn new_session(sh: &AskShared, login: Option<Login>, device: Option<Device>) -> 
 }
 
 fn info(sh: &AskShared, req: &Request, ip: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    let cfg = sh.cfg.lock().unwrap().clone();
+    let cfg = sh.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let me = session_login(sh, req);
-    let q = sh.queue.lock().unwrap();
+    let q = sh.queue.lock().unwrap_or_else(|e| e.into_inner());
     let mode = if cfg.twitch_client_id.is_some() {
         "twitch"
     } else if cfg.open_names {
@@ -346,7 +346,7 @@ fn info(sh: &AskShared, req: &Request, ip: &str) -> Response<std::io::Cursor<Vec
 }
 
 fn login_name(sh: &AskShared, body: &[u8], ip: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    let cfg = sh.cfg.lock().unwrap().clone();
+    let cfg = sh.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if cfg.twitch_client_id.is_some() || !cfg.open_names {
         return err(403, "Log in with Twitch instead.");
     }
@@ -405,7 +405,7 @@ fn post_form(url: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
 
 /// Step 1 of the device code flow: ask Twitch for a code the viewer approves on twitch.tv.
 fn login_twitch(sh: &AskShared, ip: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    let cfg = sh.cfg.lock().unwrap().clone();
+    let cfg = sh.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let Some(client_id) = cfg.twitch_client_id.clone() else {
         return err(403, "Twitch login isn't set up for this stream.");
     };
@@ -423,7 +423,7 @@ fn login_twitch(sh: &AskShared, ip: &str) -> Response<std::io::Cursor<Vec<u8>>> 
     ) {
         Ok(x) => x,
         Err(e) => {
-            *sh.status.lock().unwrap() = format!("Twitch login: {e}");
+            *sh.status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Twitch login: {e}");
             return err(502, "Couldn't reach Twitch. Try again.");
         }
     };
@@ -431,7 +431,7 @@ fn login_twitch(sh: &AskShared, ip: &str) -> Response<std::io::Cursor<Vec<u8>>> 
     let (Some(device_code), Some(user_code), Some(uri)) =
         (s("device_code"), s("user_code"), s("verification_uri"))
     else {
-        *sh.status.lock().unwrap() = format!(
+        *sh.status.lock().unwrap_or_else(|e| e.into_inner()) = format!(
             "Twitch login: device request failed ({code}: {})",
             v.get("message")
                 .and_then(|m| m.as_str())
@@ -474,7 +474,7 @@ fn login_twitch(sh: &AskShared, ip: &str) -> Response<std::io::Cursor<Vec<u8>>> 
 
 /// Step 2: the page polls; we ask Twitch (no more often than it allows) whether it's approved.
 fn login_poll(sh: &AskShared, req: &Request) -> Response<std::io::Cursor<Vec<u8>>> {
-    let cfg = sh.cfg.lock().unwrap().clone();
+    let cfg = sh.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let Some(client_id) = cfg.twitch_client_id.clone() else {
         return err(403, "Twitch login isn't set up.");
     };
@@ -482,7 +482,7 @@ fn login_poll(sh: &AskShared, req: &Request) -> Response<std::io::Cursor<Vec<u8>
         return err(401, "No login in progress.");
     };
     let device_code = {
-        let mut s = sh.sessions.lock().unwrap();
+        let mut s = sh.sessions.lock().unwrap_or_else(|e| e.into_inner());
         let Some(sess) = s.get_mut(&t) else {
             return err(401, "No login in progress.");
         };
@@ -536,7 +536,7 @@ fn login_poll(sh: &AskShared, req: &Request) -> Response<std::io::Cursor<Vec<u8>
             }
             return json_resp(200, json!({ "state": "pending" }));
         }
-        sh.sessions.lock().unwrap().remove(&t);
+        sh.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&t);
         return json_resp(
             200,
             json!({ "state": if msg.contains("denied") { "denied" } else { "expired" } }),
@@ -570,7 +570,7 @@ fn login_poll(sh: &AskShared, req: &Request) -> Response<std::io::Cursor<Vec<u8>
         || !same_app
         || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
-        sh.sessions.lock().unwrap().remove(&t);
+        sh.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&t);
         return json_resp(200, json!({ "state": "expired" }));
     }
     let l = Login {
@@ -578,7 +578,7 @@ fn login_poll(sh: &AskShared, req: &Request) -> Response<std::io::Cursor<Vec<u8>
         verified: true,
         account: format!("tw:{login}"),
     };
-    if let Some(sess) = sh.sessions.lock().unwrap().get_mut(&t) {
+    if let Some(sess) = sh.sessions.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&t) {
         sess.login = Some(l);
         sess.device = None;
     }
@@ -604,7 +604,7 @@ fn ask(
     let Some(me) = session_login(sh, req) else {
         return err(401, "Please log in first.");
     };
-    let cfg = sh.cfg.lock().unwrap().clone();
+    let cfg = sh.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let Some(ch) = query_get(query, "c")
         .and_then(|c| c.parse::<usize>().ok())
         .and_then(|i| cfg.characters.get(i).cloned())
@@ -613,7 +613,7 @@ fn ask(
     };
     // check before reading the upload, so a closed queue or a ban costs nothing
     let (limit, pre) = {
-        let q = sh.queue.lock().unwrap();
+        let q = sh.queue.lock().unwrap_or_else(|e| e.into_inner());
         let limit =
             (q.limits.max_secs.min(crate::questions::MAX_SECS_HARD) + 1.0) as usize * 48000 * 2
                 + 4096;
@@ -637,7 +637,7 @@ fn ask(
         Ok(b) => b,
         Err(_) => return err(413, "That recording is too big."),
     };
-    let mut q = sh.queue.lock().unwrap();
+    let mut q = sh.queue.lock().unwrap_or_else(|e| e.into_inner());
     match q.submit(
         &me.user,
         me.verified,
@@ -667,7 +667,7 @@ fn mine(sh: &AskShared, req: &Request) -> Response<std::io::Cursor<Vec<u8>>> {
     let Some(me) = session_login(sh, req) else {
         return err(401, "Please log in first.");
     };
-    let q = sh.queue.lock().unwrap();
+    let q = sh.queue.lock().unwrap_or_else(|e| e.into_inner());
     let now = unix_now();
     let list: Vec<Value> = q
         .items
@@ -696,7 +696,7 @@ fn withdraw(sh: &AskShared, req: &Request, query: &str) -> Response<std::io::Cur
     let Some(id) = query_get(query, "id").and_then(|i| i.parse::<u32>().ok()) else {
         return err(400, "Which question?");
     };
-    let mut q = sh.queue.lock().unwrap();
+    let mut q = sh.queue.lock().unwrap_or_else(|e| e.into_inner());
     match q.get(id) {
         Some(x) if x.account == me.account && x.status.waiting() => {
             q.finish(id, Status::Skipped);
@@ -1010,7 +1010,7 @@ mod tests {
         assert_eq!(code, 200, "{a}");
         let id = a["id"].as_u64().unwrap() as u32;
         {
-            let q = q.lock().unwrap();
+            let q = q.lock().unwrap_or_else(|e| e.into_inner());
             let x = q.get(id).unwrap();
             assert_eq!(
                 (
@@ -1060,7 +1060,7 @@ mod tests {
             .0,
             200
         );
-        assert_eq!(q.lock().unwrap().get(id).unwrap().status, Status::Skipped);
+        assert_eq!(q.lock().unwrap_or_else(|e| e.into_inner()).get(id).unwrap().status, Status::Skipped);
     }
 
     #[test]
@@ -1137,13 +1137,13 @@ mod tests {
         let (code, a) = call("POST", &u("/api/ask?c=0"), Some(&s), Some(real_question()));
         assert_eq!(code, 200, "{a}");
         let id = a["id"].as_u64().unwrap() as u32;
-        assert!(!q.lock().unwrap().get(id).unwrap().verified);
+        assert!(!q.lock().unwrap_or_else(|e| e.into_inner()).get(id).unwrap().verified);
         // closing the queue stops new questions
-        q.lock().unwrap().open = false;
+        q.lock().unwrap_or_else(|e| e.into_inner()).open = false;
         let (_, info) = call("GET", &u("/api/info"), Some(&s), None);
         assert_eq!(info["open"], false);
         // with names turned off, nobody can log in
-        srv.shared.cfg.lock().unwrap().open_names = false;
+        srv.shared.cfg.lock().unwrap_or_else(|e| e.into_inner()).open_names = false;
         assert_eq!(
             call(
                 "POST",

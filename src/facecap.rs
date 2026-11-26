@@ -285,7 +285,7 @@ impl FaceCap {
         let status = Arc::new(Mutex::new(String::new()));
         // listen either way, so turning it on later needs no restart (the ports are only read)
         let rx = Some(Mutex::new(start(vmc_port, ifm_port, status.clone())));
-        *status.lock().unwrap() = if on { format!("Face capture: waiting for a tracker (VMC on port {vmc_port}, iFacialMocap on {ifm_port})") } else { "Face capture off".into() };
+        *status.lock().unwrap_or_else(|e| e.into_inner()) = if on { format!("Face capture: waiting for a tracker (VMC on port {vmc_port}, iFacialMocap on {ifm_port})") } else { "Face capture off".into() };
         FaceCap { on, rx, status, latest: None, head: Vec3::ZERO, mirror: false }
     }
 
@@ -312,7 +312,7 @@ impl FaceCap {
 
     pub fn json(&self, now: f32) -> serde_json::Value {
         let from = self.latest.as_ref().filter(|(t, _, _)| now - t < STALE).map(|(_, f, _)| *f);
-        serde_json::json!({"on": self.on, "mirror": self.mirror, "tracking": from, "status": *self.status.lock().unwrap()})
+        serde_json::json!({"on": self.on, "mirror": self.mirror, "tracking": from, "status": *self.status.lock().unwrap_or_else(|e| e.into_inner())})
     }
 }
 
@@ -325,7 +325,7 @@ fn start(vmc_port: u16, ifm_port: u16, status: Arc<Mutex<String>>) -> Receiver<(
             .spawn(move || {
                 let Ok(sock) = UdpSocket::bind(("0.0.0.0", port)) else {
                     crate::note!("[facecap] can't listen for {name} on port {port}");
-                    *status.lock().unwrap() = format!("Face capture: port {port} ({name}) is taken by another app");
+                    *status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Face capture: port {port} ({name}) is taken by another app");
                     return;
                 };
                 let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
@@ -351,11 +351,11 @@ fn start(vmc_port: u16, ifm_port: u16, status: Arc<Mutex<String>>) -> Receiver<(
 pub fn update(mut cap: ResMut<FaceCap>, time: Res<Time>) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    let got: Vec<(&'static str, Reading)> = cap.rx.as_ref().map(|rx| rx.lock().unwrap().try_iter().collect()).unwrap_or_default();
+    let got: Vec<(&'static str, Reading)> = cap.rx.as_ref().map(|rx| rx.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect()).unwrap_or_default();
     if let Some((from, r)) = got.into_iter().last() {
         let first = cap.latest.as_ref().is_none_or(|(t, _, _)| now - t > STALE);
         if first {
-            *cap.status.lock().unwrap() = format!("Face capture: tracking ({from})");
+            *cap.status.lock().unwrap_or_else(|e| e.into_inner()) = format!("Face capture: tracking ({from})");
         }
         cap.latest = Some((now, from, r));
     }

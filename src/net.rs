@@ -575,7 +575,7 @@ pub fn receive(
     let Some(link) = &net.link else {
         return;
     };
-    let msgs: Vec<Incoming> = link.inbox.lock().unwrap().try_iter().collect();
+    let msgs: Vec<Incoming> = link.inbox.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect();
     let role = net.role;
     for m in msgs {
         match m {
@@ -781,12 +781,12 @@ pub fn voice(mut net: ResMut<Net>, mic: Option<Res<crate::Mic>>) {
     let Some(mic) = mic else { return };
     if !sending || mic.is_changed() {
         if net.voice_out.take().is_some() {
-            *mic.0.net_tap.lock().unwrap() = None;
+            *mic.0.net_tap.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
     if sending && net.voice_out.is_none() {
         let (tx, rx) = mpsc::sync_channel(64);
-        *mic.0.net_tap.lock().unwrap() = Some(tx);
+        *mic.0.net_tap.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
         let who = if net.role == Some(Role::Host) { HOST } else { GUEST };
         if let Some(l) = &net.link {
             net.voice_out = Some(crate::netvoice::Sender::start(who, rx, l.out.clone()));

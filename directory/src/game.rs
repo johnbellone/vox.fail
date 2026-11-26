@@ -50,6 +50,9 @@ pub const DAILY: i64 = 60;
 pub const RAID_LENGTH: u64 = 3600;
 pub const RAID_TOGETHER: i64 = 10;
 pub const RAID_REWARD: i64 = 15;
+/// Raids pay out at most this many times per account per day (a throwaway pair of accounts
+/// could otherwise raid in a loop for authority).
+pub const RAID_REWARDS_PER_DAY: i64 = 2;
 /// A plot is twice this across, and keeps this far from the world's spawn.
 pub const PLOT_HALF: i32 = 8;
 pub const SPAWN_CLEAR: f32 = 24.0;
@@ -161,7 +164,7 @@ impl Directory {
 
 pub(crate) async fn wallet(State(d): State<Directory>, h: HeaderMap) -> Res<Json<Value>> {
     let (id, _) = d.who(&h)?;
-    let db = d.0.db.lock().unwrap();
+    let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let mut balances = vec![json!({
         "code": AUTH, "name": "Authority", "world": null, "amount": balance(&db, id, AUTH), "tradeable": false,
     })];
@@ -236,7 +239,7 @@ pub(crate) async fn send(State(d): State<Directory>, h: HeaderMap, Json(s): Json
         return Err(bad("send a whole number, at least 1"));
     }
     let memo: String = s.memo.trim().chars().filter(|c| !c.is_control()).take(80).collect();
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (to, to_name) = crate::people::named(&tx, &s.to)?;
     if to == id {
@@ -265,7 +268,7 @@ pub(crate) async fn inventory(State(d): State<Directory>, h: HeaderMap) -> Res<J
     let worn = d.character(id).map(|c| c.wear).unwrap_or_default();
     let mut items: Vec<Value> = Vec::new();
     {
-        let db = d.0.db.lock().unwrap();
+        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = db
             .prepare("SELECT id, kind, name, world, ref, detail, acquired FROM items WHERE account = ?1 ORDER BY acquired DESC, id DESC")
             .map_err(oops)?;
@@ -324,7 +327,7 @@ pub(crate) async fn inventory(State(d): State<Directory>, h: HeaderMap) -> Res<J
 
 pub(crate) async fn feats(State(d): State<Directory>, h: HeaderMap) -> Res<Json<Value>> {
     let (id, _) = d.who(&h)?;
-    let db = d.0.db.lock().unwrap();
+    let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let since = now().saturating_sub(SEEN_FOR) as i64;
     let mut st = db.prepare("SELECT world, x, y, z, at FROM whereabouts WHERE account = ?1 AND at > ?2 ORDER BY at DESC").map_err(oops)?;
     let seen: Vec<(String, f64, f64, f64, i64)> =
@@ -372,11 +375,13 @@ pub(crate) async fn claim_plot(State(d): State<Directory>, h: HeaderMap, Json(c)
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
     let wname = d.world(&c.world)?.name.clone();
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (x, z) = where_you_stood(&tx, id, &c.world)?;
+    // `as` saturates, and so does the arithmetic: a wild position can't overflow
     let (cx, cz) = (x.floor() as i32, z.floor() as i32);
-    let (x0, z0, x1, z1) = (cx - PLOT_HALF, cz - PLOT_HALF, cx + PLOT_HALF, cz + PLOT_HALF);
+    let (x0, z0) = (cx.saturating_sub(PLOT_HALF), cz.saturating_sub(PLOT_HALF));
+    let (x1, z1) = (cx.saturating_add(PLOT_HALF), cz.saturating_add(PLOT_HALF));
     // clear of the spawn
     if let Some(spawn) = spawn_of(&tx, &c.world) {
         let dx = (spawn[0] as f32).clamp(x0 as f32, x1 as f32) - spawn[0] as f32;
@@ -439,7 +444,7 @@ pub(crate) struct SharePlot {
 pub(crate) async fn share_plot(State(d): State<Directory>, h: HeaderMap, Json(s): Json<SharePlot>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     owns_plot(&tx, id, s.plot)?;
     let mut shared = Value::Null;
@@ -480,7 +485,7 @@ pub(crate) struct ReleasePlot {
 pub(crate) async fn release_plot(State(d): State<Directory>, h: HeaderMap, Json(r): Json<ReleasePlot>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     owns_plot(&tx, id, r.plot)?;
     // its portals close with it
@@ -512,7 +517,7 @@ pub(crate) async fn open_portal(State(d): State<Directory>, h: HeaderMap, Json(o
     if o.world == o.to {
         return Err(bad("a portal leads to another world"));
     }
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     if spawn_of(&tx, &o.to).is_none() {
         return Err(bad(format!("{there} hasn't been opened yet: try again once it's running")));
@@ -576,7 +581,7 @@ pub(crate) async fn issue_currency(State(d): State<Directory>, h: HeaderMap, Jso
     if !(1..=1_000_000_000).contains(&i.supply) {
         return Err(bad("the supply is 1 to 1,000,000,000"));
     }
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let owner: Option<i64> = tx.query_row("SELECT account FROM world_owners WHERE world = ?1", params![i.world], |r| r.get(0)).optional().map_err(oops)?;
     if owner != Some(id as i64) {
@@ -610,7 +615,7 @@ pub(crate) async fn start_raid(State(d): State<Directory>, h: HeaderMap, Json(s)
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
     let wname = d.world(&s.world)?.name.clone();
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (pname, leader, ends, done): (String, i64, Option<i64>, i64) = tx
         .query_row("SELECT name, leader, ends, done FROM crews WHERE id = ?1 AND kind = 'party'", params![s.party], |r| {
@@ -660,7 +665,7 @@ pub(crate) async fn report(State(d): State<Directory>, h: HeaderMap, Json(r): Js
     d.from_world(&h)?;
     d.world(&r.world)?;
     let t = now() as i64;
-    let mut db = d.0.db.lock().unwrap();
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let last: Option<i64> = tx.query_row("SELECT reported FROM world_state WHERE world = ?1", params![r.world], |r| r.get(0)).optional().map_err(oops)?;
     if last.is_some_and(|l| t - l < d.0.report_every as i64) {
@@ -755,7 +760,16 @@ fn raids(db: &Connection, world: &str, wname: &str, here: &[u64]) -> Res<usize> 
         db.execute("UPDATE crews SET done = 1 WHERE id = ?1", params![party]).map_err(oops)?;
         finished += 1;
         for m in present {
-            mint(db, m, AUTH, RAID_REWARD, &format!("{pname} raided {wname}")).map_err(oops)?;
+            let paid: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM ledger WHERE dst = ?1 AND currency = ?2 AND memo LIKE '% raided %' AND at > ?3",
+                    params![m as i64, AUTH, t - 86_400],
+                    |r| r.get(0),
+                )
+                .map_err(oops)?;
+            if paid < RAID_REWARDS_PER_DAY {
+                mint(db, m, AUTH, RAID_REWARD, &format!("{pname} raided {wname}")).map_err(oops)?;
+            }
             give(db, m, "trophy", &format!("Raided {wname}"), Some(world), Some(party), json!({ "party": pname, "finished": t, "with": members.len() }))?;
         }
     }
@@ -767,7 +781,7 @@ fn raids(db: &Connection, world: &str, wname: &str, here: &[u64]) -> Res<usize> 
 pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world): Path<String>) -> Res<Json<Value>> {
     d.from_world(&h)?;
     d.world(&world)?;
-    let db = d.0.db.lock().unwrap();
+    let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let mut groups: HashMap<i64, Vec<i64>> = HashMap::new();
     let mut st = db.prepare("SELECT id, owner, x0, z0, x1, z1, grp FROM plots WHERE world = ?1").map_err(oops)?;
     let rows: Vec<(i64, i64, i64, i64, i64, i64, Option<i64>)> = st
