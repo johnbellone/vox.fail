@@ -2,8 +2,9 @@
 
 Status: **phase 1 built** · 2026-11-26 · decisions recorded (see *Decisions*). `crates/vox-format`
 has region blobs (blocks), the blob store and snapshots with a week's retention; the world server
-snapshots every five minutes and on closing, and restores (`--restore`, `--restore-at`). Not yet:
-the Oxen prototype, and object storage beyond a local folder (`DirStore`).
+snapshots every five minutes and on closing, and restores (`--restore`, `--restore-at`). The Oxen
+prototype is measured (see *Oxen*): the plain store stays. Not yet: object storage beyond a local
+folder (`DirStore`).
 
 Related: [world-scaling.md](world-scaling.md) (regions, streaming, region hashes, simulation
 owners), [world-graph-and-art.md](world-graph-and-art.md) (world graphs and recipes, which
@@ -206,6 +207,40 @@ of edits, before the world server depends on it. The store layer in `vox-format`
 trait (`Snapshots`: commit, list, restore, prune), with a plain object-storage implementation
 (the manifests above) as the fallback.
 
+### The prototype (2026-11-26, Oxen 0.68.2)
+
+`tools/dev/oxen_probe.sh` (with the `oxen_probe` example in `vox-format`) builds a world of
+tiled islands, makes rounds of building (a small house in each of a few regions per round), and
+stores every round both ways: as a `DirStore` snapshot, and as the changed `.voxr` files
+committed to an Oxen repository. The pushes went to a local `oxen-server`.
+
+| | 16 regions, 20 rounds × 3 | 256 regions (4 × 4 km), 100 rounds × 10 |
+| --- | --- | --- |
+| plain store | 4.8 MB | 85.7 MB |
+| Oxen store | 10.2 MB (4.6 MB of it a fixed cache) | 97.4 MB, and a 17.4 MB working tree beside it |
+| Oxen commit | 22 ms | 29 ms |
+| Oxen checkout, oldest or newest | 10 ms | 13 ms |
+| push all to `oxen-server` / one round | 110 ms / 21 ms | |
+| fresh clone (latest only, 1 MB) / pull one round | 66 ms / 26 ms | |
+
+What it showed:
+
+- **Speed is no problem.** Commits, checkouts, pushes and pulls are tens of milliseconds, far
+  inside a five-minute snapshot interval.
+- **No saving on bytes.** Region blobs are already compressed and addressed by hash, so Oxen
+  stores the same changed regions the manifests do, plus about 14% of its own (and the CLI
+  needs a working tree: one more copy of the newest world).
+- **Retention doesn't fit.** Oxen has no way to rewrite history (no squash, reset or rebase);
+  `oxen prune` only removes what no commit refers to. Keeping a week means starting a new
+  repository each week, or keeping everything and listing only the last week as restorable.
+- **It is one more server.** The CLI or `oxen-server` runs beside each world (no wasm, and
+  `liboxen` brings RocksDB and DuckDB into the world server's build).
+
+**Decision: the plain store is the snapshot store**: `DirStore` now, an object-storage
+`BlobStore` (R2) next. Oxen stays an option for **long-term history** (pushing a world's weekly
+state to an `oxen-server` for diffs, branches to copy a world, and an off-site record), behind the
+same blobs, if that turns out to be wanted. It does not change the format.
+
 ## Compression in the browser
 
 - The `zstd` crate wraps C, which is awkward for wasm. `ruzstd` is pure Rust, decodes zstd and is
@@ -248,7 +283,7 @@ Depends on `vox-core`, `bevy_ecs`, `bevy_reflect`, `bevy_world_serialization`, `
 
 ## Phases
 
-1. (built, but for Oxen) `vox-format` with region blobs for blocks only, the `Snapshots` trait with the plain
+1. (built; Oxen measured, not adopted) `vox-format` with region blobs for blocks only, the `Snapshots` trait with the plain
    object-storage implementation (manifests), a week's retention; the world server writes
    snapshots alongside SQLite; restore from a snapshot plus the log. Round-trip and
    crafted-input tests. In parallel: an Oxen prototype behind the same trait (commit, checkout,

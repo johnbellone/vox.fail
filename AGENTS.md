@@ -35,7 +35,7 @@ Two products share one Cargo workspace:
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
 | `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail. See `deploy/README.md`. |
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
-| `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client). |
+| `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
 | `docs/` | | `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
 | `source/vox/` | | MagicaVoxel sources for the characters and props. |
