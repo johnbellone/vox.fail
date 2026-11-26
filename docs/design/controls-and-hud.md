@@ -124,7 +124,9 @@ A modified client must not be able to give itself blocks or health, so **the ser
 authoritative**, and the client predicts, as it already does for edits:
 
 - **World modes** (a world setting): `creative` (today's unlimited building; no damage) and
-  `survival` (blocks come from breaking them; damage on).
+  `survival` (blocks come from breaking them; damage on). **New worlds default to creative**
+  (decided 2026-11-25); survival is opted into per world. In creative the inventory screen is a
+  palette of every block to drag onto the hotbar, and health is hidden.
 - **Block inventory** belongs to the player *in that world*: 9 hotbar slots + 27 backpack slots,
   stacks of up to 64. Breaking a block adds it; placing removes one. The server applies both
   with the edit itself, so they cannot drift apart. New messages: `ToClient::Inventory` (full on
@@ -199,11 +201,11 @@ predict. Glyph sheets live in `assets/ui/glyphs/<brand>.png`.
    hint bar; first-person view with pointer lock.
 2. HUD in `bevy_ui`: crosshair, hotbar with block icons, notices.
 3. Menus with directional navigation: pause, controls (rebinding), settings.
-4. Server-side inventory and world modes; the inventory screen.
-5. Health and damage, after server-side movement checks.
+4. The inventory screen as a creative block palette (the default mode); then server-side
+   survival inventories for worlds that opt in.
+5. Health and damage for survival worlds, after server-side movement checks.
 
 ## Open questions
 
-- Should new worlds default to creative (today's behaviour) or survival?
 - Which damage sources come first, and is there a penalty for dying beyond respawning?
 - Does the account inventory (coins, wardrobe) need actions in game, or only viewing?
