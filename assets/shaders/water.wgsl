@@ -39,7 +39,9 @@ fn swell_at(p: vec2<f32>, t: f32) -> vec3<f32> {
     if swell.x <= 0.0 {
         return vec3(0.0);
     }
-    // direction, wavelength (m), share of the height: long and slow, all roughly downwind
+    // direction, wavelength (m), share of the height: long and slow, all roughly downwind.
+    // Bigger seas are longer seas too: a 1.5 m swell rolls in waves half again as long.
+    let long = 1.0 + 0.33 * swell.x;
     let w = array<vec4<f32>, 4>(
         vec4(0.8, 0.6, 31.0, 0.38),
         vec4(0.97, 0.24, 19.0, 0.28),
@@ -50,7 +52,7 @@ fn swell_at(p: vec2<f32>, t: f32) -> vec3<f32> {
     var out = vec3(0.0);
     for (var i = 0; i < 4; i++) {
         let d = normalize(rot * w[i].xy);
-        let k = 6.2831853 / w[i].z;
+        let k = 6.2831853 / (w[i].z * long);
         let c = sqrt(9.8 / k);
         let phase = k * dot(d, p) - k * c * t;
         // sharper crests than troughs: lift the sine towards its peak
@@ -134,16 +136,29 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     let up = in.world_normal.y > 0.5;
     var crest = 0.0;
+    // a gale (wave height over 2) roughens everything: no mirror, the lights smeared
+    let gale = smoothstep(1.6, 2.5, waves.x);
     if up {
         let sw = swell_at(in.world_position.xz, globals.time);
         let g = slope(in.world_position.xz, globals.time) + sw.yz;
         pbr_input.N = normalize(vec3(-g.x, 1.0, -g.y));
         // pale where the swell peaks and the water is steep: wind-torn crests
         if swell.x > 0.0 {
-            let high = smoothstep(0.45, 0.95, sw.x / swell.x);
-            let steep = smoothstep(0.08, 0.3, length(sw.yz));
-            let streak = 0.5 + 0.5 * sin(dot(in.world_position.xz, vec2(3.1, 1.7)) + sin(in.world_position.z * 2.3 + globals.time));
-            crest = clamp(high * (0.55 + 0.45 * steep) * (0.6 + 0.4 * streak), 0.0, 1.0) * swell.y;
+            let high = smoothstep(0.3, 0.85, sw.x / swell.x);
+            let steep = smoothstep(0.06, 0.25, length(sw.yz));
+            // foam is torn into streaks running with the wind: it varies across the wind fast
+            // and along it slowly, and drifts downwind
+            var wd = waves.zw;
+            if dot(wd, wd) < 1e-4 {
+                wd = vec2(0.8, 0.6);
+            }
+            wd = normalize(wd);
+            let across = dot(in.world_position.xz, vec2(-wd.y, wd.x));
+            let along = dot(in.world_position.xz, wd) - globals.time * 1.5;
+            let streak = 0.5 + 0.5 * sin(across * 4.1 + 1.7 * sin(along * 0.35) + sin(across * 1.3));
+            // whitecaps on the crests; in a gale (wave height over 2) thin streaks everywhere
+            let lanes = gale * 0.3 * smoothstep(0.75, 0.98, streak) * (0.5 + 0.5 * sin(along * 0.11 + across * 0.07));
+            crest = clamp(high * (0.5 + 0.5 * steep) * (0.55 + 0.45 * streak) + lanes, 0.0, 1.0) * swell.y;
         }
     }
     let ndv = max(dot(pbr_input.N, pbr_input.V), 0.0);
@@ -151,9 +166,9 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     let fresnel = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
     var colour = pbr_input.material.base_color;
     colour.a = clamp(mix(swell.z, 1.0, fresnel), 0.0, 1.0);
-    colour = mix(colour, vec4(0.62, 0.68, 0.7, 0.95), crest);
+    colour = mix(colour, vec4(0.86, 0.9, 0.92, 0.97), crest);
     pbr_input.material.base_color = colour;
-    pbr_input.material.perceptual_roughness = mix(0.035, 0.6, crest);
+    pbr_input.material.perceptual_roughness = mix(mix(0.035, 0.08, gale), 0.7, crest);
     pbr_input.material.reflectance = vec3(0.5);
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);

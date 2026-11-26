@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Dark Sea: black water under a storm, rolling in long swells to the edge of the fog.
+"""The Dark Sea: black water under a gale, rolling in big swells to the edge of the fog.
 
     the Landing      a basalt island where you arrive, with the Tide Door (back to the void)
     the Pier         planks on log posts running north, lanterns burning along it
@@ -13,7 +13,7 @@ roll, `"colour"` how dark the water is, `"opacity"` how much of the seabed shows
     python3 tools/assets/build_sea.py        # writes data/levels/sea.json
 
 Coordinates are blocks (half a metre). Everything is built as if the sea's surface were the
-top of y = -1 and the Landing's the top of y = 1, then lowered by `DROP` so that you walk at
+top of y = -3 and the Landing's the top of y = 1 (two metres up: the crests come close), then lowered by `DROP` so that you walk at
 y = 0 like every other level (the avatar app stands its character at the origin).
 """
 import json
@@ -24,8 +24,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "levels" / "sea.json"
 HALF = 256  # the world's default bounds: -256..255 across
-SEA_TOP = -1  # the top layer of water
-BED = -16  # nothing below this
+SEA_TOP = -3  # the top layer of water: two metres below the Landing, for the swell to roll in
+BED = -18  # nothing below this
 
 DROP = 2  # how far everything is lowered when written
 
@@ -101,7 +101,7 @@ def main():
         for z in range(-HALF, HALF, step):
             n = noise(x, z, 64, 1) * 0.7 + noise(x, z, 19, 2) * 0.3
             near = max(0.0, 1.0 - math.hypot(x, z) / 90.0)
-            top = round(-13 + n * 6 + near * 4)
+            top = round(-15 + n * 6 + near * 4)
             block = "gravel" if noise(x, z, 23, 3) > 0.62 else "ash"
             box(block, (x, BED, z), (x + step - 1, top, z + step - 1))
 
@@ -211,19 +211,19 @@ def main():
 
     level = {
         "name": "The Dark Sea",
-        "about": "Black water under a storm, rolling in long swells to the edge of the fog. The Landing "
+        "about": "Black water under a gale, rolling in big swells to the edge of the fog. The Landing "
                  "(where you arrive) with the Tide Door back to the void; a lantern-lit pier north to the "
                  "Lighthouse; stacks of basalt standing out of the sea, an arch, and a wreck in the shallows "
                  "to the east. Made by tools/assets/build_sea.py.",
         "world": {
             "sky": "sea",
             "time": 0.0,
-            "weather": {"humidity": 1.04, "temperature": 7.0, "wind_speed": 10.0, "wind_from": 250.0,
-                        "gusts": 0.7, "heating": 0.0, "wetness": 1.0, "ground": -1.5},
+            "weather": {"humidity": 1.04, "temperature": 6.0, "wind_speed": 17.0, "wind_from": 250.0,
+                        "gusts": 0.9, "heating": 0.0, "wetness": 1.0, "ground": -2.5},
             # how the sea looks: its colour (multiplied with the water tile), how high the
             # swell rolls (metres from the calm surface to a crest), and how much it hides the
-            # seabed (deep and dark: almost all of it)
-            "water": {"colour": [0.07, 0.11, 0.13], "swell": 0.75, "opacity": 0.94},
+            # seabed (deep and dark: all of it)
+            "water": {"colour": [0.07, 0.11, 0.13], "swell": 1.5, "opacity": 1.0},
             "portals": [
                 {"name": "void", "at": [-7.5, 2 - DROP, 0], "axis": "x", "size": [8, 14], "level": "void",
                  "url": ":7780", "arrive": [38.5, 0, 0], "yaw": 90},
