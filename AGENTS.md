@@ -134,9 +134,10 @@ From the code review; none are regressions, but know they exist before relying o
   duplicate `openid.*` keys.
 - Argon2 hashing has no concurrency cap; the relay's session creation and private codes have
   no per-IP limit.
-- `crates/vox-world/src/client.rs` (about 2100 lines) mixes transport, messages, meshing, controls,
-  camera, HUD and the command parser; `bins/block-avatar/src/main.rs` has a 690-line `main()`. Splits are
-  proposed in the review notes but not done.
+- `bins/block-avatar/src/main.rs`'s `main()` (about 690 lines) registers every system itself;
+  one Bevy plugin per folder (`app`, `sound`, `scene`, ...) is the next step. The big files are
+  split into folders (`client/`, `questions/`, `ask/`, `chat/`, `guest/`, `bevel/`), each with
+  its types in `mod.rs` and its functions by concern in the children.
 - Remeshing reads every voxel through a slow lookup, rebuilds a whole chunk for a one-block
   edit, and meshes all dirty chunks in the frame a world becomes ready; weather and fog baking
   run on the main thread.

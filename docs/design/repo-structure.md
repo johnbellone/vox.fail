@@ -1,6 +1,6 @@
 # Design: repository structure
 
-Status: **steps 1 to 5 done** · 2026-11-26 · steps 6 to 9 (splitting code inside crates) are not
+Status: **steps 1 to 9 done** · 2026-11-26 · except plugins: main() still registers every system itself
 
 ## Problem
 
