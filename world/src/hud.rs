@@ -85,7 +85,7 @@ fn spawn(mut commands: Commands, style: Res<HintStyle>) {
         ))
         .with_children(|col| {
             col.spawn((hint_node_row(), BackgroundColor(FRAME), HintRow, Visibility::Hidden)).with_children(|row| {
-                for a in [Action::Break, Action::Place, Action::Pick, Action::Inventory, Action::Menu] {
+                for a in [Action::Break, Action::Place, Action::QuickWheel, Action::Inventory, Action::Menu] {
                     row.spawn((hint_node(), Hint::new(a)));
                 }
             });
@@ -221,6 +221,202 @@ fn update(
     }
 }
 
+// ---- the quick wheel
+
+/// The quick wheel: the hotbar's nine blocks round a circle, open while its button is held
+/// (d-pad left, or Tab). Point with the right stick or the mouse; let go to take the block.
+/// It picks hotbar slots, so the keyboard's number keys and the wheel stay in step.
+#[derive(Resource, Default, Debug)]
+pub struct QuickWheel {
+    pub open: bool,
+    /// held open without its button (scripts, screenshots), pointing this way
+    pub scripted: Option<Vec2>,
+    pointer: Vec2,
+    choice: Option<usize>,
+}
+
+#[derive(Component)]
+struct WheelRoot;
+#[derive(Component)]
+struct WheelSlot(usize);
+#[derive(Component)]
+struct WheelIcon(usize);
+#[derive(Component)]
+struct WheelName;
+
+const WHEEL_RADIUS: f32 = 118.0;
+
+/// Which of `n` slots a pointer (x right, y up) points at: slot 0 at the top, then clockwise.
+/// Nothing until it's pushed a little way out.
+pub fn wheel_choice(pointer: Vec2, n: usize) -> Option<usize> {
+    if n == 0 || pointer.length() < 28.0 {
+        return None;
+    }
+    let tau = std::f32::consts::TAU;
+    let a = pointer.x.atan2(pointer.y).rem_euclid(tau);
+    Some(((a / (tau / n as f32)).round() as usize) % n)
+}
+
+/// Where slot `i` of `n` sits round the wheel, from its centre (x right, y down, pixels).
+fn wheel_spot(i: usize, n: usize) -> Vec2 {
+    let a = std::f32::consts::TAU * i as f32 / n as f32;
+    Vec2::new(a.sin(), -a.cos()) * WHEEL_RADIUS
+}
+
+fn quick_wheel(actions: Res<crate::input::Actions>, mode: Res<UiMode>, mut wheel: ResMut<QuickWheel>, mut w: ResMut<WorldClient>) {
+    let playing = w.active() && w.ready && !w.watch && *mode == UiMode::Game;
+    if !playing {
+        wheel.open = false;
+        return;
+    }
+    let n = w.hotbar().len().min(9);
+    if actions.pressed(Action::QuickWheel) || wheel.scripted.is_some() {
+        if !wheel.open {
+            let scripted = wheel.scripted;
+            *wheel = QuickWheel { open: true, scripted, ..default() };
+        }
+        if let Some(p) = wheel.scripted {
+            wheel.pointer = p;
+        }
+        // the mouse moves a pointer from the middle (screen y is down); the stick points
+        let d = actions.mouse_delta;
+        wheel.pointer = (wheel.pointer + Vec2::new(d.x, -d.y)).clamp_length_max(100.0);
+        if actions.look_stick != Vec2::ZERO {
+            wheel.pointer = actions.look_stick.normalize_or_zero() * 100.0;
+        }
+        if let Some(c) = wheel_choice(wheel.pointer, n) {
+            wheel.choice = Some(c);
+        }
+    } else if wheel.open {
+        wheel.open = false;
+        if let Some(c) = wheel.choice.filter(|c| *c < n) {
+            w.slot = c;
+        }
+    }
+}
+
+fn spawn_wheel(mut commands: Commands, style: Res<HintStyle>) {
+    let size = WHEEL_RADIUS * 2.0 + SLOT + 16.0;
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            GlobalZIndex(400),
+            Visibility::Hidden,
+            WheelRoot,
+        ))
+        .with_children(|r| {
+            r.spawn((
+                Node {
+                    width: Val::Px(size),
+                    height: Val::Px(size),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(Val::Px(size / 2.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.05, 0.06, 0.09, 0.55)),
+            ))
+            .with_children(|ring| {
+                ring.spawn((
+                    Text::new(""),
+                    TextFont { font: style.font.clone().into(), font_size: bevy::text::FontSize::Px(11.0), ..default() },
+                    TextColor(Color::srgb(0.98, 0.98, 1.0)),
+                    crate::input::hints::pixel_shadow(),
+                    TextLayout::justify(Justify::Center),
+                    Node { max_width: Val::Px(150.0), ..default() },
+                    WheelName,
+                ));
+                for i in 0..9 {
+                    let at = wheel_spot(i, 9) + Vec2::splat(size / 2.0) - Vec2::splat(SLOT / 2.0);
+                    ring.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(at.x),
+                            top: Val::Px(at.y),
+                            width: Val::Px(SLOT),
+                            height: Val::Px(SLOT),
+                            padding: UiRect::all(Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(SLOT / 2.0)),
+                            ..default()
+                        },
+                        BorderColor::all(EDGE),
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
+                        WheelSlot(i),
+                    ))
+                    .with_children(|slot| {
+                        slot.spawn((
+                            ImageNode::default(),
+                            Node { width: Val::Percent(100.0), height: Val::Percent(100.0), border_radius: BorderRadius::all(Val::Px(SLOT / 2.0)), ..default() },
+                            Visibility::Hidden,
+                            WheelIcon(i),
+                        ));
+                    });
+                }
+            });
+        });
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn draw_wheel(
+    wheel: Res<QuickWheel>,
+    w: Res<WorldClient>,
+    blocks: Res<Blocks>,
+    assets: Res<AssetServer>,
+    mut icons: ResMut<BlockIcons>,
+    mut root: Query<&mut Visibility, (With<WheelRoot>, Without<WheelIcon>)>,
+    mut slots: Query<(&WheelSlot, &mut BorderColor, &mut BackgroundColor, &mut Node)>,
+    mut pics: Query<(&WheelIcon, &mut ImageNode, &mut Visibility), Without<WheelRoot>>,
+    mut names: Query<&mut Text, With<WheelName>>,
+    mut was_open: Local<bool>,
+) {
+    let show = if wheel.open { Visibility::Inherited } else { Visibility::Hidden };
+    for mut v in &mut root {
+        if *v != show {
+            *v = show;
+        }
+    }
+    if !wheel.open {
+        *was_open = false;
+        return;
+    }
+    let bar = w.hotbar();
+    let picked = wheel.choice.unwrap_or(w.slot);
+    if !*was_open || wheel.is_changed() {
+        for (s, mut b, mut bg, mut node) in &mut slots {
+            let on = s.0 == picked;
+            *b = BorderColor::all(if on { PICKED } else { EDGE });
+            bg.0 = if on { Color::srgba(1.0, 1.0, 1.0, 0.28) } else { Color::srgba(1.0, 1.0, 1.0, 0.08) };
+            let grow = if on { 6.0 } else { 0.0 };
+            node.padding = UiRect::all(Val::Px(6.0 - grow / 2.0));
+        }
+        for (i, mut img, mut v) in &mut pics {
+            match bar.get(i.0).and_then(|id| icons.get(*id, &w, &blocks, &assets)) {
+                Some(h) => {
+                    img.image = h;
+                    *v = Visibility::Inherited;
+                }
+                None => *v = Visibility::Hidden,
+            }
+        }
+        let name = bar.get(picked).map(|b| pretty(w.block_name(*b))).unwrap_or_default();
+        for mut t in &mut names {
+            if t.0 != name {
+                t.0 = name.clone();
+            }
+        }
+    }
+    *was_open = true;
+}
+
 /// "oak_planks" as "Oak planks".
 pub fn pretty(name: &str) -> String {
     let s = name.replace('_', " ");
@@ -239,13 +435,32 @@ impl Plugin for HudPlugin {
         app.init_resource::<PixelHud>()
             .init_resource::<BlockIcons>()
             .init_resource::<HintStyle>()
-            .add_systems(Startup, spawn)
-            .add_systems(Update, update);
+            .init_resource::<QuickWheel>()
+            .add_systems(Startup, (spawn, spawn_wheel))
+            .add_systems(Update, (quick_wheel.before(crate::client::controls), update, draw_wheel));
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wheel_points_at_slots_clockwise_from_the_top() {
+        assert_eq!(wheel_choice(Vec2::new(0.0, 100.0), 9), Some(0));
+        assert_eq!(wheel_choice(Vec2::new(100.0, 0.0), 9), Some(2), "a quarter turn of nine is about two slots");
+        assert_eq!(wheel_choice(Vec2::new(-100.0, 10.0), 9), Some(7));
+        assert_eq!(wheel_choice(Vec2::new(5.0, 5.0), 9), None, "too near the middle");
+        assert_eq!(wheel_choice(Vec2::new(0.0, 100.0), 0), None);
+    }
+
+    #[test]
+    fn slots_sit_round_the_circle() {
+        let top = wheel_spot(0, 9);
+        assert!(top.x.abs() < 1e-3 && top.y < 0.0, "slot 0 at the top: {top}");
+        assert!((wheel_spot(3, 9).length() - WHEEL_RADIUS).abs() < 1e-3);
+    }
+
     #[test]
     fn block_names_read_as_words() {
         assert_eq!(super::pretty("oak_planks"), "Oak planks");

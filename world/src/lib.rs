@@ -20,6 +20,7 @@ pub mod client;
 pub mod files;
 pub mod hud;
 pub mod input;
+pub mod menu;
 pub mod outdoors;
 pub mod portals;
 pub mod pose;

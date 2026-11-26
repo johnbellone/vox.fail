@@ -101,7 +101,7 @@ export function PlayPage() {
             bg="rgba(251,252,254,0.85)"
             style={{ ...style, transform: "translateX(-50%)", borderRadius: 999, whiteSpace: "nowrap" }}
           >
-            Click to walk · wheel to zoom · Q and E to turn · right click to build · V for the shoulder view
+            Click to look · WASD to walk · left click breaks, right click places · E for blocks · hold Tab to quick-select · Esc for the menu · a controller works too
           </Text>
         )}
       </Transition>

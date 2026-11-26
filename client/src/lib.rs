@@ -107,7 +107,7 @@ pub fn app(start: Start, assets: String) -> App {
         MaterialPlugin::<outdoors::RainMaterial>::default(),
         MaterialPlugin::<portals::PortalMaterial>::default(),
     ))
-    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::hud::HudPlugin))
+    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::hud::HudPlugin, vox_world::menu::MenuPlugin))
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
     .insert_resource(
         world::WorldClient::new(Some(start.url.clone()), start.name.clone())
@@ -156,13 +156,38 @@ struct ShotAt {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn screenshot(mut commands: Commands, w: Res<world::WorldClient>, mut shot: ResMut<ShotAt>, mut ready_at: Local<Option<f64>>, mut exit: MessageWriter<AppExit>) {
+fn screenshot(
+    mut commands: Commands,
+    w: Res<world::WorldClient>,
+    mut shot: ResMut<ShotAt>,
+    mut ready_at: Local<Option<f64>>,
+    mut exit: MessageWriter<AppExit>,
+    mut menus: ResMut<vox_world::menu::Menus>,
+    mut wheel: ResMut<vox_world::hud::QuickWheel>,
+) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    use vox_world::menu::Screen;
     let now = w.now();
     if !w.ready {
         return;
     }
-    let ready = *ready_at.get_or_insert(now);
+    let ready = *ready_at.get_or_insert_with(|| {
+        // VOX_SCREENSHOT_MENU=pause|blocks|controls|settings|wheel: with that menu open
+        if std::env::var("VOX_SCREENSHOT_MENU").as_deref() == Ok("wheel") {
+            wheel.scripted = Some(Vec2::new(70.0, 70.0));
+        }
+        let screen = match std::env::var("VOX_SCREENSHOT_MENU").as_deref() {
+            Ok("pause") => Some(Screen::Pause),
+            Ok("blocks") => Some(Screen::Inventory),
+            Ok("controls") => Some(Screen::Controls),
+            Ok("settings") => Some(Screen::Settings),
+            _ => None,
+        };
+        if let Some(s) = screen {
+            menus.open(s);
+        }
+        now
+    });
     match shot.taken {
         None if now - ready >= shot.after => {
             commands.spawn(Screenshot::primary_window()).observe(save_to_disk(shot.path.clone()));

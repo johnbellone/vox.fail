@@ -637,6 +637,11 @@ impl WorldClient {
         }
     }
 
+    /// Water, lava and the like: not for holding.
+    pub fn is_liquid(&self, block: u16) -> bool {
+        self.liquid.get(block as usize).copied().unwrap_or(false)
+    }
+
     /// The blocks in the hotbar, by slot.
     pub fn hotbar(&self) -> &[u16] {
         &self.hotbar
@@ -1340,6 +1345,7 @@ pub fn controls(
     mut walkers: Query<&mut Transform, With<Walker>>,
     mut shown: Query<&mut Visibility>,
     mut repeat: Local<BuildRepeat>,
+    wheel: Option<Res<crate::hud::QuickWheel>>,
 ) {
     if !w.active() {
         return;
@@ -1411,12 +1417,13 @@ pub fn controls(
             w.pick = Some((ray.origin / size, Vec3::from(ray.direction)));
         }
     }
-    // ---- look and zoom
-    if w.captured && !diablo {
+    // ---- look and zoom (not while the quick wheel has the mouse and stick)
+    let wheel_open = wheel.is_some_and(|q| q.open);
+    if w.captured && !diablo && !wheel_open {
         w.cam_yaw -= actions.mouse_delta.x * settings.mouse_look;
         w.cam_pitch -= actions.mouse_delta.y * settings.mouse_look;
     }
-    let look = actions.look_stick;
+    let look = if wheel_open { Vec2::ZERO } else { actions.look_stick };
     if look != Vec2::ZERO {
         w.cam_yaw -= look.x * settings.stick_look * dt;
         if diablo {

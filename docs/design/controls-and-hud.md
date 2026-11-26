@@ -1,6 +1,6 @@
 # Design: block-game controls, HUD and menus
 
-Status: **proposed** · 2026-11-25 · nothing here is built yet
+Status: **phases 1 to 4 built** (creative) · 2026-11-26 · health and survival inventories are not
 
 Related: [world-scaling.md](world-scaling.md) (server authority, browser and desktop
 budgets), [world-graph-and-art.md](world-graph-and-art.md) (art in the project's style).
@@ -58,7 +58,8 @@ module, later its own folder per [repo-structure.md](repo-structure.md)). Game c
 | Place / use | Right click | Left trigger |
 | Pick the block you aim at | Middle click | West |
 | Hotbar next / previous | Wheel | Right / left bumper |
-| Hotbar 1 to 9 | 1 to 9 | (bumpers only) |
+| Hotbar 1 to 9 | 1 to 9 | (bumpers, or the quick wheel) |
+| Quick wheel (hold, point, let go) | Tab + mouse | D-pad left + right stick |
 | Inventory | E | North |
 | Menu (pause) | Esc | Start |
 | Chat | T | Select (back) |
@@ -110,6 +111,10 @@ Drawn in `bevy_ui` in the pixel style (the Press Start 2P font, the game's palet
 - **Hotbar** at the bottom centre: nine slots with block icons rendered from the block tiles,
   the selected slot framed, the item's name shown for two seconds after a change, counts in
   survival worlds.
+- **Quick wheel**: while its button is held, the hotbar's nine blocks sit round a circle in
+  the middle of the screen; the right stick (or the mouse) points, letting go takes that
+  block. It selects hotbar slots, so it and the keyboard's number keys and wheel stay in
+  step: the wheel is how a controller reaches any of the nine at once.
 - **Health** above the hotbar on the left: ten hearts, half-heart steps. Flashes and shakes a
   little on damage; regenerates slowly when not hurt recently.
 - **Breath** above it on the right when under water.

@@ -65,10 +65,12 @@ pub enum Action {
     TabPrev,
     /// menus: a second action on what has focus (split a stack, reset a binding)
     Alternate,
+    /// hold for the quick wheel: point at a hotbar block (right stick or mouse), let go to take it
+    QuickWheel,
 }
 
 impl Action {
-    pub const ALL: [Action; 22] = [
+    pub const ALL: [Action; 23] = [
         Action::Forward,
         Action::Backward,
         Action::Left,
@@ -91,6 +93,7 @@ impl Action {
         Action::TabNext,
         Action::TabPrev,
         Action::Alternate,
+        Action::QuickWheel,
     ];
 
     /// What it's called on the controls screen and in hints.
@@ -118,6 +121,7 @@ impl Action {
             Action::TabNext => "Next tab",
             Action::TabPrev => "Previous tab",
             Action::Alternate => "More",
+            Action::QuickWheel => "Quick select",
         }
     }
 

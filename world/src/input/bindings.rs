@@ -52,6 +52,7 @@ impl Default for Bindings {
             (TabNext, &[K(KeyCode::Tab), K(KeyCode::PageDown)]),
             (TabPrev, &[K(KeyCode::KeyQ), K(KeyCode::PageUp)]),
             (Alternate, &[K(KeyCode::KeyX)]),
+            (QuickWheel, &[K(KeyCode::Tab)]),
         ];
         let pad: &[(Action, &[GamepadButton])] = &[
             (Jump, &[G::South]),
@@ -72,6 +73,7 @@ impl Default for Bindings {
             (TabNext, &[G::RightTrigger]),
             (TabPrev, &[G::LeftTrigger]),
             (Alternate, &[G::West]),
+            (QuickWheel, &[G::DPadLeft]),
         ];
         Bindings {
             kbm: kbm.iter().map(|(a, i)| (*a, i.to_vec())).collect(),
@@ -314,6 +316,7 @@ pub fn from_json(text: &str) -> (Bindings, InputSettings) {
     (b, saved.settings)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const FILE: &str = "controls.json";
 
 /// The player's saved controls, or the defaults.
