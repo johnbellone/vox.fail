@@ -6,6 +6,63 @@
 use super::*;
 use vox_format::{Region, RegionKey, region_of};
 
+/// Where snapshots are kept: plain files, or an Oxen repository (a commit per snapshot, and
+/// history older than a week squashed away).
+pub enum SnapStore {
+    Dir(vox_format::DirStore),
+    Oxen(vox_format::OxenStore),
+}
+
+impl SnapStore {
+    /// The store in `dir`; with an `oxen` binary, an Oxen repository there (a folder of plain
+    /// snapshots from before is taken in as its first commit).
+    pub fn open(dir: &std::path::Path, oxen: Option<&std::path::Path>) -> Result<SnapStore, String> {
+        match oxen {
+            Some(bin) => vox_format::OxenStore::open(dir, bin).map(SnapStore::Oxen).map_err(|e| format!("snapshots: {e}")),
+            None => Ok(SnapStore::Dir(vox_format::DirStore::new(dir))),
+        }
+    }
+}
+
+impl vox_format::BlobStore for SnapStore {
+    fn put(&self, key: &str, bytes: &[u8]) -> Result<(), vox_format::Error> {
+        match self {
+            SnapStore::Dir(s) => s.put(key, bytes),
+            SnapStore::Oxen(s) => s.put(key, bytes),
+        }
+    }
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, vox_format::Error> {
+        match self {
+            SnapStore::Dir(s) => s.get(key),
+            SnapStore::Oxen(s) => s.get(key),
+        }
+    }
+    fn delete(&self, key: &str) -> Result<(), vox_format::Error> {
+        match self {
+            SnapStore::Dir(s) => s.delete(key),
+            SnapStore::Oxen(s) => s.delete(key),
+        }
+    }
+    fn list(&self, prefix: &str) -> Result<Vec<String>, vox_format::Error> {
+        match self {
+            SnapStore::Dir(s) => s.list(prefix),
+            SnapStore::Oxen(s) => s.list(prefix),
+        }
+    }
+    fn commit(&self, at: u64, note: &str) -> Result<(), vox_format::Error> {
+        match self {
+            SnapStore::Dir(s) => s.commit(at, note),
+            SnapStore::Oxen(s) => s.commit(at, note),
+        }
+    }
+    fn squash(&self, cutoff: u64) -> Result<usize, vox_format::Error> {
+        match self {
+            SnapStore::Dir(s) => s.squash(cutoff),
+            SnapStore::Oxen(s) => s.squash(cutoff),
+        }
+    }
+}
+
 /// Which state to go back to.
 #[derive(Clone, Debug)]
 pub enum Restore {
@@ -51,6 +108,10 @@ impl WorldState {
         let (gone, blobs) = snaps.prune(now, self.cfg.keep_snapshots).map_err(|e| e.to_string())?;
         if gone > 0 {
             eprintln!("dropped {gone} snapshots older than a week ({blobs} blobs)");
+        }
+        if let SnapStore::Oxen(o) = &snaps.store {
+            let commits = o.log().map(|l| l.len()).unwrap_or(0);
+            eprintln!("oxen history: {commits} commits");
         }
         // the edit log only needs to reach back to the oldest snapshot kept
         if let Some(oldest) = snaps.list().map_err(|e| e.to_string())?.first() {
@@ -125,7 +186,7 @@ pub fn restore(cfg: Config, which: Restore) -> Result<String, String> {
 }
 
 /// A world's snapshots, newest last: (id, taken at, regions).
-pub fn list_snapshots(dir: &std::path::Path) -> Result<Vec<(String, u64, usize)>, String> {
-    let snaps = vox_format::Snapshots::new(vox_format::DirStore::new(dir));
+pub fn list_snapshots(dir: &std::path::Path, oxen: Option<&std::path::Path>) -> Result<Vec<(String, u64, usize)>, String> {
+    let snaps = vox_format::Snapshots::new(SnapStore::open(dir, oxen)?);
     Ok(snaps.list().map_err(|e| e.to_string())?.into_iter().map(|m| (m.id, m.taken_at, m.regions.len())).collect())
 }

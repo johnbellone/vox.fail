@@ -54,6 +54,17 @@ impl Directory {
                  id INTEGER PRIMARY KEY, world TEXT NOT NULL, owner INTEGER NOT NULL, plot INTEGER NOT NULL,
                  x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, axis TEXT NOT NULL, dest TEXT NOT NULL,
                  created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS structures (
+                 id INTEGER PRIMARY KEY, name TEXT NOT NULL, owner INTEGER NOT NULL, public TEXT,
+                 version TEXT NOT NULL, derived_from INTEGER, created INTEGER NOT NULL, updated INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS structures_owner ON structures (owner);
+             CREATE TABLE IF NOT EXISTS structure_versions (
+                 structure INTEGER NOT NULL, version TEXT NOT NULL, author INTEGER NOT NULL, at INTEGER NOT NULL,
+                 PRIMARY KEY (structure, version));
+             CREATE TABLE IF NOT EXISTS structure_grants (
+                 structure INTEGER NOT NULL, account INTEGER NOT NULL, right TEXT NOT NULL,
+                 PRIMARY KEY (structure, account));
+             CREATE INDEX IF NOT EXISTS structure_grants_account ON structure_grants (account);
              CREATE TABLE IF NOT EXISTS friends (
                  a INTEGER NOT NULL, b INTEGER NOT NULL, since INTEGER NOT NULL, PRIMARY KEY (a, b));
              CREATE TABLE IF NOT EXISTS friend_requests (
@@ -152,6 +163,14 @@ impl Directory {
             .route("/api/feats/raid", post(game::start_raid))
             .route("/api/plots/share", post(game::share_plot))
             .route("/api/plots/release", post(game::release_plot))
+            .route("/api/structures", post(structures::make).get(structures::mine))
+            .route("/api/structures/{id}", get(structures::show))
+            .route("/api/structures/version", post(structures::version))
+            .route("/api/structures/grant", post(structures::grant))
+            .route("/api/structures/public", post(structures::public))
+            .route("/api/structures/copy", post(structures::copy))
+            .route("/api/structures/delete", post(structures::delete))
+            .route("/api/world/structures/{id}", get(structures::check))
             .route("/api/people", get(people::people))
             .route("/api/friends", post(people::befriend))
             .route("/api/friends/answer", post(people::answer_friend))

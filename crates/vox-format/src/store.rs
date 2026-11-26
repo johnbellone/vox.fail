@@ -75,6 +75,16 @@ pub trait BlobStore {
     fn delete(&self, key: &str) -> Result<(), Error>;
     /// Every key starting with `prefix`.
     fn list(&self, prefix: &str) -> Result<Vec<String>, Error>;
+    /// A snapshot (or a pruning) has been written: stores with a history (Oxen) commit it,
+    /// at `at` (unix seconds) with a note. The others have nothing to do.
+    fn commit(&self, _at: u64, _note: &str) -> Result<(), Error> {
+        Ok(())
+    }
+    /// Drop history before `cutoff` (unix seconds), keeping what came after; returns how many
+    /// commits went. Stores without a history have none to drop.
+    fn squash(&self, _cutoff: u64) -> Result<usize, Error> {
+        Ok(0)
+    }
 }
 
 fn check_key(key: &str) -> Result<(), Error> {
@@ -230,6 +240,7 @@ impl<S: BlobStore> Snapshots<S> {
         };
         let json = serde_json::to_vec_pretty(&m).map_err(|e| Error(e.to_string()))?;
         self.store.put(&format!("snapshots/{}.json", m.id), &json)?;
+        self.store.commit(taken_at, &format!("snapshot {}", m.id))?;
         Ok(m)
     }
 
@@ -294,6 +305,12 @@ impl<S: BlobStore> Snapshots<S> {
                 blobs += 1;
             }
         }
+        // a store with a history records the pruning, then lets go of history older than what
+        // we keep (what it holds of those weeks is only what's gone from the snapshots)
+        if !gone.is_empty() || blobs > 0 {
+            self.store.commit(now, &format!("pruned {} snapshots, {blobs} blobs", gone.len()))?;
+        }
+        self.store.squash(now.saturating_sub(keep))?;
         Ok((gone.len(), blobs))
     }
 }

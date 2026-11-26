@@ -2,9 +2,11 @@
 
 Status: **phase 1 built** · 2026-11-26 · decisions recorded (see *Decisions*). `crates/vox-format`
 has region blobs (blocks), the blob store and snapshots with a week's retention; the world server
-snapshots every five minutes and on closing, and restores (`--restore`, `--restore-at`). The Oxen
-prototype is measured (see *Oxen*): the plain store stays. Not yet: object storage beyond a local
-folder (`DirStore`).
+snapshots every five minutes and on closing, and restores (`--restore`, `--restore-at`). Oxen
+is the snapshot store when asked for (`--oxen`; see *Oxen*), a commit per snapshot with history
+older than the week squashed daily. Structure entitlements (who may place, copy and edit) are
+built in the directory (see *Entitlements*); structures themselves (placing them in worlds) are
+phase 6. Not yet: object storage beyond a local folder.
 
 Related: [world-scaling.md](world-scaling.md) (regions, streaming, region hashes, simulation
 owners), [world-graph-and-art.md](world-graph-and-art.md) (world graphs and recipes, which
@@ -142,6 +144,36 @@ and entities but in the structure's own coordinates. A world holds **instances**
 - Open: when two instances of one version are edited differently, they become two versions
   (copy on write); a "propagate this edit to every instance" action is a later feature.
 
+### Entitlements
+
+A structure has an **owner** and, for everyone else, **rights**: *use* (place instances of it),
+*copy* (make a structure of their own from it) and *edit* (save new versions of it); each
+includes the ones before it. The rules are `vox_core::entitle` (no database in them, so the
+directory that keeps the records and the world server that enforces them agree), the records
+and API are the directory's (`bins/vox-directory/src/structures.rs`).
+
+- **The owner** has all three, and alone grants and revokes, opens the structure to everyone, and
+  deletes it. An editor can't pass it on. A structure is shared with at most 256 accounts.
+- **Open to everyone** (`public`): every signed-in account has use, or use and copy, as a floor
+  (a named grant above it still counts). Never edit. Guests have no rights at all: a world with
+  guests can't place anyone's structures.
+- **Versions** are immutable and a structure's *head* is its newest. Edit saves a new version and
+  moves the head; an instance placed from a version keeps it. Only editors may place or see an
+  older version; everyone else places the head.
+- **Copying** makes a new structure owned by the copier at the same head, with `derived_from`
+  recording the source, so a copy's lineage survives (until the source is deleted, which
+  frees it). The copy is theirs to change; the original is untouched.
+- **No right, no existence**: someone with no right to a structure is told it doesn't exist
+  (404), not that it's forbidden.
+- **A world server asks before placing** (`GET /api/world/structures/{id}?account=&version=`,
+  with the world secret): the answer is the version to place and the account's right, or 404.
+  The world checks again on every placement, so revoking takes effect at once; instances already
+  placed stay, as blocks are the world's.
+- **Plots**: a plot's contents become a structure owned by the plot's owner. Its builders (the
+  owner's group) get *edit* while they are builders: a plot's entitlements follow the plot's
+  (to build, when plots become structures).
+- Limits: 200 structures an account, 500 versions each.
+
 ## Store and snapshots
 
 ```
@@ -236,10 +268,28 @@ What it showed:
 - **It is one more server.** The CLI or `oxen-server` runs beside each world (no wasm, and
   `liboxen` brings RocksDB and DuckDB into the world server's build).
 
-**Decision: the plain store is the snapshot store**: `DirStore` now, an object-storage
-`BlobStore` (R2) next. Oxen stays an option for **long-term history** (pushing a world's weekly
-state to an `oxen-server` for diffs, branches to copy a world, and an off-site record), behind the
-same blobs, if that turns out to be wanted. It does not change the format.
+**Decision (first, 2026-11-26): the plain store.** The numbers above favoured it.
+
+**Decision (revised, 2026-11-26): Oxen is the snapshot store, squashed.** The owner's call: a
+server's cost doesn't matter, and an Oxen history (diffs, branches to copy a world) is worth
+having. What changed from the measurements:
+
+- **Squashing** isn't an Oxen command, so `OxenStore::squash` rebuilds the repository: the
+  newest commit before the cutoff (a week ago) becomes the base, the commits after it are
+  replayed on top in a fresh repository, swapped in for the old one. It runs when there is a day
+  of older history to drop, so about once a day, not every five minutes. What is lost is only
+  history older than the week, which the snapshots no longer list anyway.
+- **It sits behind the same `BlobStore`** as the plain folder: `OxenStore` keeps blobs and
+  manifests as files (the same keys) in an Oxen working tree, and `commit` is called after a
+  snapshot is written and after a pruning. So `Snapshots`, restore and `--list-snapshots` are
+  unchanged; Oxen adds history. A folder of plain snapshots is taken in as the first commit,
+  so switching is `--oxen` and nothing else.
+- **The CLI, not the library** (the owner's choice): `vox-server` runs the `oxen` binary
+  (`--oxen [path]` or `VOX_OXEN`), so RocksDB and DuckDB stay out of the build. The container
+  image has it (version and checksum pinned in the Dockerfile; the release publishes none).
+- The cost: the store holds each blob twice (working tree and Oxen's versions), about 14% more
+  with Oxen's own data, as measured. Accepted.
+- Without `--oxen` the plain folder is used as before: the default for local play.
 
 ## Compression in the browser
 
@@ -283,7 +333,7 @@ Depends on `vox-core`, `bevy_ecs`, `bevy_reflect`, `bevy_world_serialization`, `
 
 ## Phases
 
-1. (built; Oxen measured, not adopted) `vox-format` with region blobs for blocks only, the `Snapshots` trait with the plain
+1. (built; Oxen the snapshot store when asked for) `vox-format` with region blobs for blocks only, the `Snapshots` trait with the plain
    object-storage implementation (manifests), a week's retention; the world server writes
    snapshots alongside SQLite; restore from a snapshot plus the log. Round-trip and
    crafted-input tests. In parallel: an Oxen prototype behind the same trait (commit, checkout,

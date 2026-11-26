@@ -100,6 +100,9 @@ worldDefaults:
   snapshots:
     enabled: true
     every: 300      # seconds
+    # keep them as commits in an Oxen repository (the image has the oxen command line): a
+    # history of the worlds, with what's older than a week squashed away once a day
+    oxen: true
   extraArgs: []
   persistence:
     size: 2Gi

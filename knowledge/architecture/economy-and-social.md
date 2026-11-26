@@ -3,7 +3,7 @@ type: Architecture
 title: "Authority, World Currencies, Feats, Plots, Portals and Raids"
 description: "The player economy and social graph in the directory: the shared Authority currency, what it buys, world coins, the ledger, friends, groups and raid parties."
 tags: [architecture, economy, game-design, directory]
-generated: { by: agent/mcp, at: "2026-11-26T15:57:58Z" }
+generated: { by: agent/mcp, at: "2026-11-26T22:12:53Z" }
 status: stable
 code_refs: [bins/vox-directory/src/game.rs, bins/vox-directory/src/people.rs, apps/site/src/features/inventory/, apps/site/src/features/friends/]
 ---
@@ -39,3 +39,4 @@ World servers are trusted to report honestly (shared secret). Plots stop *edits*
 
 # Related Concepts
 - [Decision: Authority Cannot Be Sent](../decisions/authority-not-transferable.md): rationale for non-transferable authority
+- [Decision: Structures Have an Owner and Use, Copy and Edit Rights](../decisions/structure-entitlements.md): Who may use, copy and edit a structure; plots' builders are meant to edit their plot's structure.

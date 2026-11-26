@@ -23,7 +23,9 @@ Cloudflare Tunnel is in [../README.md](../README.md); this does the same in a cl
 - **worlds**: one StatefulSet per entry in `worlds:`, one replica each (a world is one process
   that owns its blocks). Each waits for the directory, fetches its public key from `/api/key`
   (an init container), and keeps SQLite and its snapshots (a week of them) on its own volume.
-  Its `port` is the number in its public path, `/w/<port>/ws`, which the levels' portals name
+  With `worldDefaults.snapshots.oxen` (on by default; the image has the `oxen` command line) the
+  snapshots are commits in an Oxen repository, and history older than a week is squashed away
+  once a day. Its `port` is the number in its public path, `/w/<port>/ws`, which the levels' portals name
   (`":7781"`), so keep the numbers the levels use.
 - **edge**: nginx. It caches the game's files per pod (the directory marks them cacheable for
   five minutes; the browser client is about 11 MB compressed), carries `/w/<port>/` to the

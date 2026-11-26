@@ -102,6 +102,10 @@ spec:
             {{- if $w.snapshots.enabled }}
             - --snapshot-every
             - {{ $w.snapshots.every | quote }}
+            {{- if $w.snapshots.oxen }}
+            - --oxen
+            - /opt/vox/bin/oxen
+            {{- end }}
             {{- else }}
             - --no-snapshots
             {{- end }}

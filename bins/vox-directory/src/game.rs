@@ -143,7 +143,7 @@ impl Directory {
     }
 
     /// The world secret checks out.
-    fn from_world(&self, h: &HeaderMap) -> Res<()> {
+    pub(crate) fn from_world(&self, h: &HeaderMap) -> Res<()> {
         let Some(secret) = &self.0.world_secret else { return Err(no(StatusCode::NOT_FOUND, "not here")) };
         let given = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
         // compared as hashes, so the time taken says nothing about the secret

@@ -107,7 +107,7 @@ impl WorldState {
             s.flush()?;
         }
         if let Some(dir) = s.cfg.snapshots.clone() {
-            let snaps = vox_format::Snapshots::new(vox_format::DirStore::new(dir));
+            let snaps = vox_format::Snapshots::new(SnapStore::open(&dir, s.cfg.snapshot_oxen.as_deref())?);
             let latest = snaps.latest().map_err(|e| format!("snapshots: {e}"))?;
             // the last snapshot is a base only if nothing happened after it
             s.snap_full = latest.as_ref().is_none_or(|m| m.seq != s.seq) || fresh;

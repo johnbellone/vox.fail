@@ -24,7 +24,7 @@ mod world;
 pub use connection::*;
 #[allow(unused_imports)]
 pub use world::*;
-pub use snapshot::{Restore, list_snapshots, restore};
+pub use snapshot::{Restore, SnapStore, list_snapshots, restore};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -89,6 +89,9 @@ pub struct Config {
     /// where snapshots go (a folder; see vox-format): every `snapshot_every` and on shutdown,
     /// kept `keep_snapshots` seconds. None: no snapshots.
     pub snapshots: Option<PathBuf>,
+    /// the `oxen` binary: snapshots are then commits in an Oxen repository (history older than
+    /// `keep_snapshots` squashed away) instead of plain files. None: plain files.
+    pub snapshot_oxen: Option<PathBuf>,
     pub snapshot_every: Duration,
     pub keep_snapshots: u64,
     /// how many may watch at once without playing (the front page's live view)
@@ -123,6 +126,7 @@ impl Config {
             max_players: 100,
             trust_moves: false,
             snapshots: None,
+            snapshot_oxen: None,
             snapshot_every: Duration::from_secs(300),
             keep_snapshots: vox_format::store::KEEP_SECS,
             max_watchers: 200,
@@ -304,7 +308,7 @@ struct WorldState {
     portals: Vec<serde_json::Value>,
     /// snapshots: the store, the last one taken, regions changed since, and whether the next
     /// one must hold every region (no usable last one)
-    snaps: Option<vox_format::Snapshots<vox_format::DirStore>>,
+    snaps: Option<vox_format::Snapshots<SnapStore>>,
     snap_prev: Option<vox_format::Manifest>,
     snap_changed: HashSet<vox_format::RegionKey>,
     snap_full: bool,

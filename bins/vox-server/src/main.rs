@@ -1,10 +1,13 @@
 //! Run a world: `vox-server [--listen 127.0.0.1:7780] [--db world.db] [--name void]
 //! [--seed data/levels/void.json] [--blocks data/blocks.json] [--max-players 100] [--max-watchers 200] [--trust-moves]
 //! [--directory-key <hex or file> [--guests]] [--directory-url http://127.0.0.1:7700]
-//! [--snapshots <dir> | --no-snapshots] [--snapshot-every <seconds>]`.
+//! [--snapshots <dir> | --no-snapshots] [--snapshot-every <seconds>] [--oxen [<binary>]]`.
 //!
 //! Snapshots (vox-format) go to `<db>.snapshots/` by default: the regions that changed, every
-//! five minutes and on closing, kept a week. With the world closed:
+//! five minutes and on closing, kept a week. With `--oxen` (or `VOX_OXEN=<binary>`; the
+//! `oxen` command line must be installed) that folder is an Oxen repository with a commit per
+//! snapshot, and history older than the week is squashed away daily; a folder of plain
+//! snapshots from before is taken in as the first commit. With the world closed:
 //! `vox-server --db world.db --list-snapshots`, `--restore <id|latest>`, or `--restore-at <unix
 //! time>` (the snapshot before it plus the edits up to it). A restore first snapshots the world
 //! as it is, so it can be undone.
@@ -65,13 +68,21 @@ async fn main() {
         d.push(".snapshots");
         cfg.snapshots = Some(arg("--snapshots").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(d)));
     }
+    // Oxen: `--oxen` alone finds `oxen` on the PATH; `--oxen /path/to/oxen` names it
+    let oxen_flag = args.iter().position(|a| a == "--oxen").map(|i| args.get(i + 1).filter(|v| !v.starts_with("--")).cloned());
+    cfg.snapshot_oxen = match (oxen_flag, std::env::var("VOX_OXEN").ok().filter(|v| !v.trim().is_empty())) {
+        (Some(Some(path)), _) => Some(PathBuf::from(path)),
+        (Some(None), env) => Some(PathBuf::from(env.unwrap_or_else(|| "oxen".into()))),
+        (None, Some(path)) => Some(PathBuf::from(path)),
+        (None, None) => None,
+    };
     if let Some(n) = arg("--snapshot-every").and_then(|v| v.parse().ok()) {
         cfg.snapshot_every = std::time::Duration::from_secs(n);
     }
     // the world closed: list or restore snapshots, then stop
     if args.iter().any(|a| a == "--list-snapshots") {
         let dir = cfg.snapshots.clone().unwrap_or_else(|| panic!("no snapshots for an in-memory world"));
-        for (id, at, regions) in vox_server::list_snapshots(&dir).unwrap_or_else(|e| panic!("{e}")) {
+        for (id, at, regions) in vox_server::list_snapshots(&dir, cfg.snapshot_oxen.as_deref()).unwrap_or_else(|e| panic!("{e}")) {
             println!("{id}  taken {at}  {regions} regions");
         }
         return;

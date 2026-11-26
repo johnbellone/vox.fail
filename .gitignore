@@ -1,6 +1,9 @@
 target/
 *.db
 *.db-*
+*.db.snapshots/
+*.snapshots/
+*.oxen-config/
 *.log
 directory.key
 directory.key.pub

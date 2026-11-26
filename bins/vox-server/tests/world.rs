@@ -569,13 +569,35 @@ async fn a_trusting_world_takes_positions_as_they_come() {
 
 #[tokio::test]
 async fn snapshots_restore_to_a_moment_and_the_restore_can_be_undone() {
-    let dir = std::env::temp_dir().join(format!("vox-server-snap-{}", std::process::id()));
+    snapshot_cycle("plain", None).await;
+}
+
+/// The `oxen` to test with (`OXEN`, or one on the PATH); None, and the test skips, without.
+fn oxen() -> Option<std::path::PathBuf> {
+    let from_env = std::env::var_os("OXEN").map(std::path::PathBuf::from);
+    let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).map(|d| d.join("oxen")).collect::<Vec<_>>());
+    let found = from_env.into_iter().chain(on_path).find(|p| p.is_file());
+    if found.is_none() {
+        eprintln!("skipped: no oxen on the PATH (set OXEN)");
+    }
+    found
+}
+
+#[tokio::test]
+async fn the_same_with_oxen_keeping_the_snapshots_as_commits() {
+    let Some(oxen) = oxen() else { return };
+    snapshot_cycle("oxen", Some(oxen)).await;
+}
+
+async fn snapshot_cycle(name: &str, oxen: Option<std::path::PathBuf>) {
+    let dir = std::env::temp_dir().join(format!("vox-server-snap-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("world.db");
     let cfg = || {
         let mut c = config(db.to_str().unwrap());
         c.snapshots = Some(dir.join("snaps"));
+        c.snapshot_oxen = oxen.clone();
         c.snapshot_every = Duration::ZERO;
         c
     };
@@ -604,7 +626,7 @@ async fn snapshots_restore_to_a_moment_and_the_restore_can_be_undone() {
     }
     server.shutdown().await;
     drop(a);
-    let before = vox_server::list_snapshots(&dir.join("snaps")).unwrap();
+    let before = vox_server::list_snapshots(&dir.join("snaps"), oxen.as_deref()).unwrap();
     assert!(before.len() >= 2, "{before:?}");
     // back to the moment between the two edits
     let what = vox_server::restore(cfg(), vox_server::Restore::At(between)).unwrap();
@@ -616,12 +638,18 @@ async fn snapshots_restore_to_a_moment_and_the_restore_can_be_undone() {
     server.shutdown().await;
     drop(j);
     // the restore took a snapshot of what it replaced: going back to it undoes the restore
-    let after = vox_server::list_snapshots(&dir.join("snaps")).unwrap();
+    let after = vox_server::list_snapshots(&dir.join("snaps"), oxen.as_deref()).unwrap();
     let undo = after.iter().rev().nth(1).unwrap().0.clone();
     vox_server::restore(cfg(), vox_server::Restore::Snapshot(undo)).unwrap();
     let (server, url) = serve(cfg()).await;
     let j = join(&url, "Ann").await;
     assert_eq!(j.world.get([1, 0, 0]), 2, "undone: the second block is back");
     server.shutdown().await;
+    // with Oxen every snapshot is a commit in the repository beside the plain files
+    if let Some(bin) = &oxen {
+        let store = vox_format::OxenStore::open(dir.join("snaps"), bin).unwrap();
+        let commits = store.log().unwrap();
+        assert!(commits.len() >= after.len(), "a commit per snapshot: {} commits, {} snapshots", commits.len(), after.len());
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

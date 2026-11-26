@@ -15,6 +15,7 @@
 
 pub mod auth;
 pub mod body;
+pub mod entitle;
 pub mod level;
 pub mod moves;
 pub mod predict;

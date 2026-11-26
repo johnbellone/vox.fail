@@ -1,4 +1,10 @@
 ## 2026-11-26
+* **Relate** [2026-11-26T22:12:53Z]: Linked `architecture/economy-and-social.md` to `decisions/structure-entitlements.md` (Who may use, copy and edit a structure; plots' builders are meant to edit their plot's structure.).
+* **Relate** [2026-11-26T22:12:53Z]: Linked `architecture/world-format-design.md` to `decisions/structure-entitlements.md` (Structures have an owner and use, copy and edit rights.).
+* **Relate** [2026-11-26T22:12:53Z]: Linked `architecture/world-format-design.md` to `decisions/oxen-snapshot-store.md` (Oxen is the snapshot store when asked for, with history squashed daily.).
+* **Update** [2026-11-26T22:11:57Z]: Updated concept `architecture/world-format-design.md`. — Oxen store built and squashing decided; structure entitlements built in the directory
+* **Creation** [2026-11-26T22:11:34Z]: Documented concept `decisions/structure-entitlements.md` (Decision: Structures Have an Owner and Use, Copy and Edit Rights).
+* **Creation** [2026-11-26T22:11:34Z]: Documented concept `decisions/oxen-snapshot-store.md` (Decision: Oxen Is the Snapshot Store, Squashed Daily).
 * **Creation** [2026-11-26T21:54:59Z]: Documented concept `decisions/player-help-single-source.md` (Decision: Player Help Is Markdown in docs/help, Rendered by the Site). — Record help-docs single-source design
 * **Creation** [2026-11-26T21:54:59Z]: Documented concept `decisions/haiku-writes-sonnet-reviews.md` (Decision: Haiku Writes, Sonnet Reviews, Beads Plan the Work). — Record model-role policy adopted with the AGENTS.md restructure
 * **Update** [2026-11-26T21:54:51Z]: Updated concept `convention/work-tracking.md`.

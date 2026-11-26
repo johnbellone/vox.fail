@@ -21,6 +21,6 @@
 * [Deployment: vox.fail on Cloudflare Tunnel, and Windows Packaging](deployment.md) - How vox.fail is hosted (one Linux box, systemd, Cloudflare Tunnel with no open ports) and how Block Avatar is packaged for Windows.
 * [Testing and Continuous Integration](testing-and-ci.md) - What the tests cover, how to run them (unit, integration, visual, browser end-to-end) and what CI does.
 * [Design (proposed): Worlds at 60 km x 60 km](world-scaling-design.md) - The unbuilt plan to scale worlds to about 55,000 times today's size with regions, generated terrain, streaming, simulation owners and caches.
-* [Design (phase 1 built): The World Format](world-format-design.md) - Regions stored as content-addressed zstd blobs with entities and snapshots; phase 1 (blocks, snapshots, restore) is built in the vox-format crate.
+* [Design (phase 1 built): The World Format](world-format-design.md) - Regions stored as content-addressed zstd blobs with snapshots in a folder or an Oxen repository (squashed daily) and structure entitlements; phase 1 and the Oxen store are built.
 * [Design (proposed): World Graph and Generated Art](world-graph-and-art-design.md) - A plan where a language model edits a graph of nodes and typed recipes that a Rust interpreter turns into voxels in the project's style.
 * [Design (phases 1-4 built): Block-Game Controls, HUD and Menus](controls-and-hud-design.md) - Action-based input with gamepad hints per brand, first-person view, pixel HUD and controller-navigable menus for Vox worlds.
