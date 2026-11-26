@@ -47,6 +47,8 @@ COPY package.json bun.lock ./
 COPY apps/site/package.json apps/site/
 RUN bun install --frozen-lockfile
 COPY apps/site apps/site
+# the pages use the app's icon
+COPY assets/icon.png assets/icon.png
 COPY --from=client /out/pkg apps/site/public/pkg
 RUN cd apps/site && bun run build
 
