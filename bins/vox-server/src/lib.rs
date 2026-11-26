@@ -81,6 +81,9 @@ pub struct Config {
     pub seed: Option<String>,
     pub bounds: Bounds,
     pub max_players: usize,
+    /// take players' positions as they say (test and automation worlds); otherwise moves
+    /// faster than a player can go are sent back
+    pub trust_moves: bool,
     /// how many may watch at once without playing (the front page's live view)
     pub max_watchers: usize,
     /// edits per second per player (and the burst allowed)
@@ -111,6 +114,7 @@ impl Config {
             seed: None,
             bounds: Bounds::default(),
             max_players: 100,
+            trust_moves: false,
             max_watchers: 200,
             edit_rate: 20.0,
             flush_every: Duration::from_secs(3),
@@ -252,7 +256,11 @@ struct Player {
     name: String,
     avatar: Vec<u8>,
     tx: mpsc::Sender<Message>,
+    /// where they stand, as checked (only positions they could have reached count)
     at: Option<[f32; 3]>,
+    moves: vox_core::moves::Moves,
+    /// when they were last told to go back (at most twice a second)
+    corrected_at: f64,
     bucket: Bucket,
     /// their directory account, when signed in
     account: Option<u64>,

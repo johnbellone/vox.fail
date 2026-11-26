@@ -491,3 +491,57 @@ async fn watchers_are_capped() {
     send(&mut w2, &ToServer::Watch { protocol: PROTOCOL }).await;
     assert!(matches!(recv(&mut w2).await, ToClient::Bye { ref why } if why.contains("too many")));
 }
+
+#[tokio::test]
+async fn teleports_are_sent_back_and_not_shown() {
+    let (_server, url) = serve(config(":memory:")).await;
+    let mut a = join(&url, "Ann").await;
+    let mut b = join(&url, "Bob").await;
+    assert!(matches!(recv_event(&mut a.ws).await, ToClient::Joined { ref name, .. } if name == "Bob"));
+    stand(&mut a).await;
+    stand(&mut b).await;
+    // Bob says he's suddenly far away: he's told to go back to the spawn
+    send(&mut b.ws, &ToServer::Pose { at: [400.0, 0.0, 400.0], blob: vec![7] }).await;
+    let back = loop {
+        if let ToClient::Correct { at } = recv(&mut b.ws).await {
+            break at;
+        }
+    };
+    assert_eq!(back, b.spawn);
+    // and an edit there is out of his reach: the server still has him at the spawn
+    send(&mut b.ws, &ToServer::Edit { id: 9, cell: [40, 2, 0], block: 0 }).await;
+    loop {
+        match recv_event(&mut b.ws).await {
+            ToClient::Refused { id: 9, why } => {
+                assert_eq!(why, Why::TooFar);
+                break;
+            }
+            ToClient::Edits(e) => assert!(e.iter().all(|e| e.id != 9), "the far edit went through"),
+            _ => {}
+        }
+    }
+    // Ann never saw the teleported pose
+    while let Ok(Some(Ok(Message::Binary(m)))) = tokio::time::timeout(Duration::from_millis(200), a.ws.next()).await {
+        if let Ok(ToClient::Pose { blob, .. }) = wire::decode::<ToClient>(&m) {
+            assert_ne!(blob, vec![7], "the teleport was shown");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_trusting_world_takes_positions_as_they_come() {
+    let mut cfg = config(":memory:");
+    cfg.trust_moves = true;
+    let (_server, url) = serve(cfg).await;
+    let mut a = join(&url, "Ann").await;
+    stand(&mut a).await;
+    send(&mut a.ws, &ToServer::Pose { at: [38.0, 0.0, 0.0], blob: vec![] }).await;
+    send(&mut a.ws, &ToServer::Edit { id: 1, cell: [40, 2, 0], block: 0 }).await;
+    loop {
+        match recv_event(&mut a.ws).await {
+            ToClient::Edits(e) if e.iter().any(|e| e.id == 1) => break,
+            ToClient::Refused { id: 1, why } => panic!("refused: {why:?}"),
+            _ => {}
+        }
+    }
+}

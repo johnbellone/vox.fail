@@ -220,6 +220,14 @@ pub fn receive(
                         w.status = if w.travel.is_some() { format!("Can't reach the world: {why}") } else { why };
                         w.ready = false;
                     }
+                    ToClient::Correct { at } => {
+                        // the server says we can't have got here: back to where it last saw us
+                        if at.iter().all(|v| v.is_finite()) {
+                            w.body.pos = at;
+                            w.vy = 0.0;
+                            w.goal = None;
+                        }
+                    }
                 }
             }
         }

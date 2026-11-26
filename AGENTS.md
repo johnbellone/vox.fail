@@ -128,8 +128,11 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 
 From the code review; none are regressions, but know they exist before relying on them:
 
-- The world server trusts the position a client reports for reach checks and plot claims; there is
-  no speed or bounds validation.
+- The world server checks moves (`vox-core::moves`: a distance budget at flying speed with room
+  for lag, fast falls allowed, the spawn always reachable) and sends `Correct` back when a move
+  is impossible; `--trust-moves` turns this off for test and automation worlds (the control
+  page's `world:goto` teleports). Still taken on trust: the first position after joining,
+  because a portal's arrival point is set by the world you came from.
 - Steam OpenID return validation does not check which fields were signed or reject
   duplicate `openid.*` keys.
 - Argon2 hashing has no concurrency cap; the relay's session creation and private codes have

@@ -80,6 +80,9 @@ pub enum ToClient {
     Weather(Box<crate::weather::Keyframe>),
     /// The server is closing this connection.
     Bye { why: String },
+    /// You can't have got there: go back to `at` (blocks, feet). Added last, so older messages
+    /// keep their numbers.
+    Correct { at: [f32; 3] },
 }
 
 impl ToClient {

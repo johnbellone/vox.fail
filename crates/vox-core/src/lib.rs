@@ -6,6 +6,7 @@
 //! - [`level`]: reading a level file (boxes of blocks) into a world.
 //! - [`wire`]: the messages between a world server and its players.
 //! - [`auth`]: sign-in tokens from the directory, checked by world servers.
+//! - [`moves`]: how far a player can really move (the server's check on reported positions).
 //! - [`predict`]: a player's view of the world: confirmed blocks plus their own edits that
 //!   the server hasn't answered yet.
 //!
@@ -15,6 +16,7 @@
 pub mod auth;
 pub mod body;
 pub mod level;
+pub mod moves;
 pub mod predict;
 pub mod ray;
 pub mod weather;

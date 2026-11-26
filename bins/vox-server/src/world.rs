@@ -305,7 +305,7 @@ impl WorldState {
         self.broadcast(&ToClient::Joined { player: id, name: name.clone(), avatar: avatar.clone() }, None);
         eprintln!("{name} joined ({} here)", self.players.len() + 1);
         let bucket = Bucket::new(self.cfg.edit_rate, self.cfg.edit_rate);
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: None, bucket, account, placed: 0 });
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: None, moves: Default::default(), corrected_at: -1.0, bucket, account, placed: 0 });
     }
 
     /// The settings a new arrival gets: the world's own, with the portals players opened.
@@ -354,11 +354,37 @@ impl WorldState {
                 self.send_weather();
             }
             ToServer::Pose { at, blob } => {
-                if at.iter().all(|v| v.is_finite()) {
-                    p.at = Some(at);
+                // where they say they are must be somewhere they could have got to
+                let b = self.cfg.bounds;
+                let inside = at.iter().all(|v| v.is_finite())
+                    && (at[0] as i32) > b.lo[0] - 64
+                    && (at[0] as i32) < b.hi[0] + 64
+                    && (at[2] as i32) > b.lo[2] - 64
+                    && (at[2] as i32) < b.hi[2] + 64
+                    && (at[1] as i32) > b.lo[1] - 64
+                    && (at[1] as i32) < b.hi[1] + 128;
+                let checked = if !inside {
+                    Err(p.moves.last().unwrap_or(self.spawn))
+                } else if self.cfg.trust_moves {
+                    Ok(())
+                } else {
+                    p.moves.check(at, now, self.cfg.block_size, self.spawn)
+                };
+                match checked {
+                    Ok(()) => {
+                        p.at = Some(at);
+                        let m = ToClient::Pose { player: p.id, blob };
+                        self.broadcast(&m, Some(conn));
+                    }
+                    Err(back) => {
+                        // not shown to anyone; they're told to go back
+                        if now - p.corrected_at >= 0.5 {
+                            p.corrected_at = now;
+                            let tx = p.tx.clone();
+                            let _ = Self::send_to(&tx, &ToClient::Correct { at: back });
+                        }
+                    }
                 }
-                let m = ToClient::Pose { player: p.id, blob };
-                self.broadcast(&m, Some(conn));
             }
             ToServer::Edit { id, cell, block } => {
                 let checked = if !p.bucket.take(now) {
