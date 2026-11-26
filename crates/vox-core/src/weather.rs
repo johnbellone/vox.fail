@@ -98,8 +98,6 @@ impl Climate {
             "storm" => Climate { humidity: 1.25, wind_speed: 13.0, gusts: 0.9, heating: 4.0, wetness: 1.0, temperature: 17.0, ..base },
             "windy" => Climate { humidity: 0.55, wind_speed: 11.0, gusts: 0.8, heating: 2.0, wetness: 0.3, ..base },
             "snow" => Climate { humidity: 1.06, wind_speed: 3.0, gusts: 0.4, heating: 0.0, wetness: 0.6, temperature: -3.0, ..base },
-            // in orbit: no air to speak of (the simulation still runs, on next to nothing)
-            "vacuum" => Climate { humidity: 0.02, wind_speed: 0.0, gusts: 0.0, heating: 0.0, wetness: 0.0, temperature: -40.0, ..base },
             _ => return None,
         })
     }
@@ -873,7 +871,7 @@ mod tests {
 
     #[test]
     fn presets() {
-        for n in ["clear", "haze", "mist", "fog", "luminous", "rain", "storm", "windy", "snow", "vacuum"] {
+        for n in ["clear", "haze", "mist", "fog", "luminous", "rain", "storm", "windy", "snow"] {
             assert!(Climate::preset(n, 0.0).is_some(), "{n}");
         }
         assert!(Climate::preset("hail", 0.0).is_none());

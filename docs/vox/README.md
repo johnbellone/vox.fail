@@ -110,7 +110,8 @@ If nobody answers on the other side, you're put back where you were. `world:port
 goes through by command.
 
 **Weather:** each world runs a small simulation of its air (wind, temperature, humidity,
-clouds, rain), shared by everyone in it. It sets how far you can see, the fog round you, the
+clouds, rain), shared by everyone in it. A world without air (orbit, `"weather": "none"`) runs none
+and sends none: no readout, no wind, rain or fog. It sets how far you can see, the fog round you, the
 clouds, rain or snow, and which way flames and water move. The bar at the bottom shows the air
 where you stand. Change it: `world:weather:storm` (clear, haze, mist, fog, luminous, rain,
 storm, windy, snow), `world:wind:8:270` (m/s, from the west), `world:humidity:0.9`,

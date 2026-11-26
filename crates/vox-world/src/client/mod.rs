@@ -734,6 +734,9 @@ impl WorldClient {
     ) {
         self.you = Some(you);
         self.world = world;
+        // the last world's air stays behind: this one sends its own, or has none (orbit)
+        self.weather = None;
+        self.weather_acc = 0.0;
         self.view = View::new(vox_core::World::new(bounds, palette.len() as u16));
         let fallback = local.id("stone").unwrap_or(1);
         self.remap = std::iter::once(0).chain(palette.iter().map(|n| local.id(n).unwrap_or(fallback))).collect();

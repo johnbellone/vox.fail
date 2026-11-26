@@ -67,13 +67,18 @@ impl WorldState {
             _ => Climate::from_settings(set.get("weather"), ground),
         };
         let seed = cfg.name.bytes().fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
-        let mut weather = Weather::new(climate, seed);
-        weather.sun = match set.get("sky").and_then(|v| v.as_str()) {
-            Some("earth") | None => sun_at(set.get("time").and_then(|v| v.as_f64()).unwrap_or(15.0) as f32),
-            _ => 0.5,
-        };
-        // let the air settle before anyone arrives
-        weather.step(120.0);
+        // no air, no weather: nothing to simulate or send
+        let airless = set.get("weather").and_then(|v| v.as_str()) == Some("none");
+        let weather = (!airless).then(|| {
+            let mut weather = Weather::new(climate, seed);
+            weather.sun = match set.get("sky").and_then(|v| v.as_str()) {
+                Some("earth") | None => sun_at(set.get("time").and_then(|v| v.as_f64()).unwrap_or(15.0) as f32),
+                _ => 0.5,
+            };
+            // let the air settle before anyone arrives
+            weather.step(120.0);
+            weather
+        });
         let mut s = WorldState {
             cfg,
             db,
@@ -122,10 +127,12 @@ impl WorldState {
                 Event::Tick => {
                     let behind = self.weather_at.elapsed().as_secs_f32();
                     if behind >= WEATHER_STEP {
-                        self.weather.step(behind.min(5.0));
+                        if let Some(w) = &mut self.weather {
+                            w.step(behind.min(5.0));
+                        }
                         self.weather_at = Instant::now();
                     }
-                    if self.keyframe_at.elapsed().as_secs_f32() >= KEYFRAME_EVERY {
+                    if self.weather.is_some() && self.keyframe_at.elapsed().as_secs_f32() >= KEYFRAME_EVERY {
                         self.send_weather();
                     }
                     if self.last_flush.elapsed() >= self.cfg.flush_every {
@@ -283,7 +290,9 @@ impl WorldState {
             ok &= Self::send_to(tx, &ToClient::Chunk { key: k, version: c.version, data: c.encode() });
         }
         ok &= Self::send_to(tx, &ToClient::Ready);
-        ok &= Self::send_to(tx, &ToClient::Weather(Box::new(self.weather.keyframe())));
+        if let Some(w) = &self.weather {
+            ok &= Self::send_to(tx, &ToClient::Weather(Box::new(w.keyframe())));
+        }
         for p in self.players.values() {
             let name = if names { p.name.clone() } else { String::new() };
             ok &= Self::send_to(tx, &ToClient::Joined { player: p.id, name, avatar: p.avatar.clone() });
@@ -354,7 +363,8 @@ impl WorldState {
 
     pub(super) fn send_weather(&mut self) {
         self.keyframe_at = Instant::now();
-        let m = ToClient::Weather(Box::new(self.weather.keyframe()));
+        let Some(w) = &self.weather else { return };
+        let m = ToClient::Weather(Box::new(w.keyframe()));
         self.broadcast(&m, None);
     }
 
@@ -364,12 +374,14 @@ impl WorldState {
         match msg {
             ToServer::Hello { .. } | ToServer::Watch { .. } => {}
             ToServer::Climate(c) => {
+                // no air here to change
+                let Some(w) = &mut self.weather else { return };
                 if !p.bucket.take(now) {
                     return;
                 }
-                let c = Climate { ground: self.weather.climate.ground, ..c.sane() };
+                let c = Climate { ground: w.climate.ground, ..c.sane() };
                 eprintln!("{} changed the weather", p.name);
-                self.weather.climate = c;
+                w.climate = c;
                 if let Ok(j) = serde_json::to_string(&c) {
                     let _ = self.db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('climate', ?1)", [j]);
                 }

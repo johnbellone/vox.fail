@@ -229,7 +229,8 @@ def main():
         "world": {
             "sky": "orbit",
             "time": 10.0,
-            "weather": "vacuum",
+            # no air, so no weather: the world server runs no simulation and sends none
+            "weather": "none",
             "portals": [
                 {"name": "sea", "at": [gx + 0.5, 0, 0], "axis": "x", "size": [8, 14], "level": "sea",
                  "url": ":7783", "arrive": [8.5, 0, 0], "yaw": 270},

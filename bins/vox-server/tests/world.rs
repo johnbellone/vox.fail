@@ -137,6 +137,27 @@ async fn the_weather_comes_with_the_world_and_anyone_can_change_it() {
 }
 
 #[tokio::test]
+async fn a_world_without_air_has_no_weather() {
+    let mut cfg = config(":memory:");
+    cfg.seed = Some(r#"{ "world": { "sky": "orbit", "weather": "none" }, "boxes": [ { "block": "stone", "from": [-4, -1, -4], "to": [4, -1, 4] } ] }"#.into());
+    let (_server, url) = serve(cfg).await;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+    send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: "Ann".into(), avatar: vec![], token: None }).await;
+    // asking for wind changes nothing, and nothing about the weather ever comes (on joining,
+    // where a world with air sends it straight after the blocks, or later)
+    send(&mut ws, &ToServer::Climate(Climate::preset("windy", 0.0).unwrap())).await;
+    let quiet = tokio::time::timeout(Duration::from_millis(1500), async {
+        loop {
+            if let ToClient::Weather(_) = recv(&mut ws).await {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(quiet.is_err(), "a weather keyframe in a world without air");
+}
+
+#[tokio::test]
 async fn joining_sends_the_world() {
     let (_server, url) = serve(config(":memory:")).await;
     let j = join(&url, "Ann").await;

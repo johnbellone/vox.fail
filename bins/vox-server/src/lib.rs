@@ -294,8 +294,9 @@ struct WorldState {
     settings: String,
     started: Instant,
     last_flush: Instant,
-    /// the air over the world, stepped twice a second and sent every 15
-    weather: Weather,
+    /// the air over the world, stepped twice a second and sent every 15; none where there's
+    /// no air (`"weather": "none"`: orbit)
+    weather: Option<Weather>,
     weather_at: Instant,
     keyframe_at: Instant,
     /// claimed plots and player-opened portals, from the directory
