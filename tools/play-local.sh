@@ -25,4 +25,7 @@ start islands 7782 islands
 trap 'kill -INT "${pids[@]}" 2>/dev/null; wait 2>/dev/null || true' EXIT
 sleep 1
 
-./target/release/vox-client --world ws://127.0.0.1:7780/ws --name "${USER:-Guest}" "$@"
+# your --name wins: the client takes the first one it sees
+name=()
+[[ " $* " == *" --name "* ]] || name=(--name "${USER:-Guest}")
+./target/release/vox-client --world ws://127.0.0.1:7780/ws "$@" "${name[@]}"
