@@ -1,7 +1,7 @@
 //! The microphone: a dedicated thread owns the cpal stream and publishes the latest analysis
 //! frame (also: a WAV file standing in for the mic, and --list-mics).
 
-use super::*;
+use crate::*;
 
 // ------------------------------------------------------------------------------------------
 // Microphone: a dedicated thread owns the cpal stream and publishes the latest analysis frame

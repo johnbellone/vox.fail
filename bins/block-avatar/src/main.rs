@@ -20,50 +20,27 @@
 //!
 //! Written against Bevy 0.19.1 and cpal 0.17.
 
-mod applog;
+// The app's modules, grouped by what they do; each is also reachable as crate::<module>.
+mod app;
+use app::{applog, sim, startup};
+mod sound;
+use sound::{audio, detect, lipsync, netvoice, voice, voicefx};
+mod character;
+use character::{face, facecap, wardrobe, jiggle, puppet, bevel};
+mod scene;
+use scene::{camera, lighting, stage, sets, show, particles, fx, bubbles, crowd};
+mod audience;
+use audience::{chat, streamchat, events, poll, ask, questions, guest, cohost};
+mod controls;
+use controls::{commands, control, hotkeys};
+mod output;
+use output::{webcam, clips, cards, snapshot};
+mod network;
+use network::net;
 pub use vox_world::{blocks, outdoors, portals, proto};
 pub use vox_world::client as world;
-mod sets;
-mod audio;
-mod ask;
-mod bevel;
-mod bubbles;
-mod camera;
-mod cards;
-mod chat;
-mod clips;
-mod cohost;
-mod commands;
-mod control;
-mod crowd;
-mod detect;
-mod events;
-mod face;
-mod facecap;
-mod fx;
-mod guest;
-mod hotkeys;
-mod jiggle;
-mod lighting;
-mod lipsync;
-mod particles;
-mod poll;
-mod puppet;
-mod questions;
-mod show;
-mod net;
-mod netvoice;
-mod sim;
-mod snapshot;
-mod stage;
-mod startup;
-mod streamchat;
 #[cfg(test)]
 mod tests_real;
-mod voice;
-mod voicefx;
-mod wardrobe;
-mod webcam;
 
 use std::{
     collections::HashMap,

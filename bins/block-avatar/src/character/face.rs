@@ -1,7 +1,7 @@
 //! The face and body on top of the animation clips: expressions, emotes and their poses, idle
 //! life, and `drive_face`, which sets the face parts and layers the poses every frame.
 
-use super::*;
+use crate::*;
 
 pub(crate) use vox_world::pose::FACE_PARTS;
 /// Gestures on F1-F8, looked up by clip name; missing ones are skipped. F9-F12 play the

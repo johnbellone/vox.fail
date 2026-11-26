@@ -1,6 +1,6 @@
 //! The stage camera: framing, the wide shot for big moments, and shake.
 
-use super::*;
+use crate::*;
 
 pub(crate) fn update_camera(
     mut av: ResMut<Avatar>,

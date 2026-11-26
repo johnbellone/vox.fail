@@ -1,7 +1,7 @@
 //! One command set for the keyboard, the control page, hotkeys and scene presets: `parse_cmd`
 //! turns text into a `Cmd`, `apply_cmd` runs it, `apply_extra` handles everything else.
 
-use super::*;
+use crate::*;
 
 // ------------------------------------------------------------------------------------------
 // Input: keyboard and the control page share one command set
