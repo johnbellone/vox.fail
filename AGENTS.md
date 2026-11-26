@@ -120,6 +120,9 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
   refined in passes by a language model; recipes (typed building operations) interpreted by
   Rust into voxels in the project's style, native and wasm; the `vox-art`, `vox-graph`,
   `vox-library` crates and the `vox-forge` tool.
+- [world-format.md](docs/design/world-format.md): regions as compressed blobs (blocks in
+  run-length encoding + zstd, entities as Bevy `DynamicWorld` in RON or postcard),
+  content-addressed snapshots, levels as files, the `vox-format` crate.
 - [controls-and-hud.md](docs/design/controls-and-hud.md): block-game controls on an action
   layer, gamepad out of the box with brand-matched button hints, HUD (hotbar, health), menus
   with controller navigation, server-side inventory and health.
