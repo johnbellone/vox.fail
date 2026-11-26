@@ -708,59 +708,8 @@ impl Queue {
 // Audio
 // ------------------------------------------------------------------------------------------
 
-/// Reads an uploaded WAV: 16-bit PCM, mono, 8-48 kHz, nothing else. Never panics on bad input.
-pub fn parse_wav_mono16(b: &[u8]) -> Result<(u32, Vec<f32>), String> {
-    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
-        return Err("not a WAV file".into());
-    }
-    let u16_at =
-        |i: usize| -> Option<u16> { Some(u16::from_le_bytes([*b.get(i)?, *b.get(i + 1)?])) };
-    let u32_at = |i: usize| -> Option<u32> {
-        Some(u32::from_le_bytes([
-            *b.get(i)?,
-            *b.get(i + 1)?,
-            *b.get(i + 2)?,
-            *b.get(i + 3)?,
-        ]))
-    };
-    let mut fmt: Option<(u16, u16, u32, u16)> = None;
-    let mut i = 12usize;
-    while i + 8 <= b.len() {
-        let id = &b[i..i + 4];
-        let len = u32_at(i + 4).ok_or("truncated chunk")? as usize;
-        let start = i + 8;
-        let end = start.checked_add(len).ok_or("bad chunk size")?.min(b.len());
-        if id == b"fmt " {
-            if end - start < 16 {
-                return Err("short format chunk".into());
-            }
-            fmt = Some((
-                u16_at(start).unwrap_or(0),
-                u16_at(start + 2).unwrap_or(0),
-                u32_at(start + 4).unwrap_or(0),
-                u16_at(start + 14).unwrap_or(0),
-            ));
-        } else if id == b"data" {
-            let (tag, ch, rate, bits) = fmt.ok_or("data before format")?;
-            if tag != 1 || bits != 16 {
-                return Err("expected 16-bit PCM".into());
-            }
-            if ch != 1 {
-                return Err("expected mono".into());
-            }
-            if !(8000..=48000).contains(&rate) {
-                return Err(format!("unsupported sample rate {rate}"));
-            }
-            let s: Vec<f32> = b[start..end]
-                .chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
-                .collect();
-            return Ok((rate, s));
-        }
-        i = start.checked_add(len + (len & 1)).ok_or("bad chunk size")?;
-    }
-    Err("no audio data".into())
-}
+// the WAV reader and writer are avatar-voice's (one, hardened, for everything)
+pub use avatar_voice::wav::{parse_wav_mono16, wav16_bytes, write_wav16};
 
 /// Levels a recording so every viewer comes out about as loud as the others: one gain for the
 /// whole clip (no compression, no effects), set from the speech parts, capped so peaks stay
@@ -789,31 +738,6 @@ pub fn level_voice(s: &[f32]) -> Option<Vec<f32>> {
     let gain_db = (target_db - speech_db).min(24.0);
     let gain = 10f32.powf(gain_db / 20.0).min(0.89 / peak);
     Some(s.iter().map(|x| x * gain).collect())
-}
-
-pub fn write_wav16(path: &Path, rate: u32, s: &[f32]) -> std::io::Result<()> {
-    std::fs::write(path, wav16_bytes(rate, s))
-}
-
-pub fn wav16_bytes(rate: u32, s: &[f32]) -> Vec<u8> {
-    let data_len = (s.len() * 2) as u32;
-    let mut b = Vec::with_capacity(44 + s.len() * 2);
-    b.extend_from_slice(b"RIFF");
-    b.extend_from_slice(&(36 + data_len).to_le_bytes());
-    b.extend_from_slice(b"WAVEfmt ");
-    b.extend_from_slice(&16u32.to_le_bytes());
-    b.extend_from_slice(&1u16.to_le_bytes());
-    b.extend_from_slice(&1u16.to_le_bytes());
-    b.extend_from_slice(&rate.to_le_bytes());
-    b.extend_from_slice(&(rate * 2).to_le_bytes());
-    b.extend_from_slice(&2u16.to_le_bytes());
-    b.extend_from_slice(&16u16.to_le_bytes());
-    b.extend_from_slice(b"data");
-    b.extend_from_slice(&data_len.to_le_bytes());
-    for x in s {
-        b.extend_from_slice(&((x.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes());
-    }
-    b
 }
 
 /// Built-in transcription of questions (Whisper builds): fills in each question's bubble text.

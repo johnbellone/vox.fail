@@ -24,7 +24,9 @@
 mod app;
 use app::{applog, sim, startup};
 mod sound;
-use sound::{audio, detect, lipsync, netvoice, voice, voicefx};
+use sound::{audio, netvoice, voicefx};
+// the voice analysis is its own crate (pure Rust, quick to test)
+use avatar_voice::{detect, lipsync, voice};
 mod character;
 use character::{face, facecap, wardrobe, jiggle, puppet, bevel};
 mod scene;
@@ -39,8 +41,6 @@ mod network;
 use network::net;
 pub use vox_world::{blocks, outdoors, portals, proto};
 pub use vox_world::client as world;
-#[cfg(test)]
-mod tests_real;
 
 use std::{
     collections::HashMap,

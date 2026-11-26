@@ -1,0 +1,7 @@
+[package]
+name = "avatar-voice"
+version.workspace = true
+edition.workspace = true
+description = "Block Avatar's voice analysis: lip sync, pitch and formants, laugh and sing detection, WAV files. Pure Rust, no Bevy, so its tests build in seconds."
+
+[dependencies]

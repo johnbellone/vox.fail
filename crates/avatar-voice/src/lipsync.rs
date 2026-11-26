@@ -540,60 +540,7 @@ impl NoiseFloor {
     }
 }
 
-/// Minimal 16-bit / float PCM WAV reader for the offline `--analyze` and `--wav` modes.
-pub fn read_wav(path: &str) -> Result<(u32, usize, Vec<f32>), String> {
-    let b = std::fs::read(path).map_err(|e| e.to_string())?;
-    parse_wav(&b)
-}
-
-/// Any 16-bit or float WAV, mixed down to mono.
-pub fn decode_wav_mono(b: &[u8]) -> Result<(u32, Vec<f32>), String> {
-    let (rate, ch, s) = parse_wav(b)?;
-    let ch = ch.max(1);
-    Ok((
-        rate,
-        s.chunks(ch)
-            .map(|c| c.iter().sum::<f32>() / c.len() as f32)
-            .collect(),
-    ))
-}
-
-pub fn parse_wav(b: &[u8]) -> Result<(u32, usize, Vec<f32>), String> {
-    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
-        return Err("not a WAV file".into());
-    }
-    let (mut rate, mut ch, mut bits, mut fmt) = (0u32, 0usize, 0u16, 0u16);
-    let mut i = 12;
-    while i + 8 <= b.len() {
-        let id = &b[i..i + 4];
-        let len = u32::from_le_bytes([b[i + 4], b[i + 5], b[i + 6], b[i + 7]]) as usize;
-        let body = &b[i + 8..(i + 8 + len).min(b.len())];
-        if id == b"fmt " {
-            if body.len() < 16 {
-                return Err("short format chunk".into());
-            }
-            fmt = u16::from_le_bytes([body[0], body[1]]);
-            ch = u16::from_le_bytes([body[2], body[3]]) as usize;
-            rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
-            bits = u16::from_le_bytes([body[14], body[15]]);
-        } else if id == b"data" {
-            let samples: Vec<f32> = match (fmt, bits) {
-                (1, 16) => body
-                    .chunks_exact(2)
-                    .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
-                    .collect(),
-                (3, 32) => body
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect(),
-                _ => return Err(format!("unsupported WAV format {fmt}/{bits}-bit")),
-            };
-            return Ok((rate, ch, samples));
-        }
-        i += 8 + len + (len & 1);
-    }
-    Err("no data chunk".into())
-}
+pub use crate::wav::{decode_wav_mono, parse_wav, read_wav};
 
 #[cfg(test)]
 mod tests {
