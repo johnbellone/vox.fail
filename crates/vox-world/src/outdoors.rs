@@ -9,6 +9,10 @@
 //!   a red one, a small cold one) veiled behind it; lit by the pale moon and by fire.
 //! - **sea:** a storm at night over open water: a sky black overhead and slate at the horizon,
 //!   one low moon breaking through and laying a cold path across the waves.
+//! - **orbit:** 250 km up: black space full of stars and a hard white sun; the planet below,
+//!   its edge 15.8° under eye level (where the horizon really is from that height), turning
+//!   slowly beneath with clouds, oceans that catch the sun, and cities on the night side; a
+//!   thin blue line of atmosphere along its rim. As the clock runs you pass into its shadow.
 //!
 //! A world can also set how its water looks (`"water": {"colour": [r, g, b], "swell": metres,
 //! "opacity": 0-1}`): the colour it's tinted, how high its swell rolls, and how much it hides
@@ -188,6 +192,8 @@ pub enum Style {
     Islands,
     /// a storm at night over the open sea
     Sea,
+    /// in orbit, 250 km above the planet
+    Orbit,
 }
 
 impl Style {
@@ -196,6 +202,7 @@ impl Style {
             "void" => Style::Void,
             "islands" => Style::Islands,
             "sea" => Style::Sea,
+            "orbit" => Style::Orbit,
             _ => Style::Earth,
         }
     }
@@ -325,6 +332,7 @@ pub fn sky_at(style: Style, hours: f32) -> SkyLook {
         Style::Void => void_at(hours),
         Style::Islands => islands_at(hours),
         Style::Sea => sea_at(hours),
+        Style::Orbit => orbit_at(hours),
     }
 }
 
@@ -400,6 +408,61 @@ fn void_at(hours: f32) -> SkyLook {
         ambient: 1400.0,
         visibility: 130.0,
         moons: [Some(pale), Some(rose), Some(blue)],
+    }
+}
+
+/// How high orbit is: 250 km above a planet the Earth's size.
+pub const ORBIT_KM: f32 = 250.0;
+const PLANET_KM: f32 = 6371.0;
+
+/// The height of the planet's rim below eye level, as `dir.y` (sine of the dip): -0.272, the
+/// planet's edge 15.8° down. Everything below it is the planet.
+pub fn orbit_limb() -> f32 {
+    let h = 1.0 + ORBIT_KM / PLANET_KM;
+    -(1.0 - 1.0 / (h * h)).sqrt()
+}
+
+/// Where a look in direction `dir` meets the planet, as the surface's up there (a unit
+/// vector from the planet's centre), or None if it goes past into space.
+pub fn orbit_ground(dir: Vec3) -> Option<Vec3> {
+    let h = 1.0 + ORBIT_KM / PLANET_KM;
+    let b = h * dir.y;
+    let disc = b * b - (h * h - 1.0);
+    if disc < 0.0 || b >= 0.0 {
+        return None;
+    }
+    let t = -b - disc.sqrt();
+    Some((Vec3::new(0.0, h, 0.0) + dir * t).normalize())
+}
+
+/// Orbit: no air, so the sky is black and the sun white and hard; the day goes round with the
+/// clock as on the ground, but it's night only while the planet is between you and the sun.
+fn orbit_at(hours: f32) -> SkyLook {
+    let phase = (hours - 6.0) / 24.0 * TAU;
+    let sun = Vec3::new(phase.cos(), phase.sin() * 0.88, 0.42).normalize();
+    // the planet covers everything below its rim: the sun sets behind it there
+    let limb = orbit_limb();
+    let night = 1.0 - smooth(limb - 0.03, limb + 0.01, sun.y);
+    // how much of the planet below is in daylight
+    let below = smooth(-0.6, 0.5, sun.y);
+    let moon_dir = Vec3::new(-0.62, 0.38, -0.69).normalize();
+    let moon = Moon { dir: moon_dir, radius: 0.016, colour: Vec3::new(0.95, 0.94, 0.9), glow: 0.2 };
+    SkyLook {
+        style: Style::Orbit,
+        sun,
+        zenith: Vec3::new(0.0004, 0.0005, 0.0009),
+        // the rim of the atmosphere, lit blue by day
+        horizon: Vec3::new(0.06, 0.14, 0.34) * (0.08 + 0.92 * (1.0 - night)),
+        // the planet, seen as a whole: blue, cloud-flecked, dark on its night side
+        ground: Vec3::new(0.09, 0.14, 0.24) * (0.03 + below),
+        light: Vec3::new(1.0, 0.98, 0.95),
+        lux: 14000.0 * (1.0 - night),
+        // on the night side the planet's glow lights from below, faintly
+        key: if night < 0.5 { sun } else { Vec3::new(0.2, -0.9, 0.3).normalize() },
+        night,
+        ambient: 260.0 + 340.0 * below,
+        visibility: 20000.0,
+        moons: [Some(moon), None, None],
     }
 }
 
@@ -604,6 +667,24 @@ pub fn sky_colour(look: &SkyLook, dir: Vec3) -> Vec3 {
     } else if look.style == Style::Earth {
         let towards = dir.dot(look.sun).max(0.0);
         c += look.light * (1.0 - look.night) * (towards.powf(10.0) * 0.35 + towards.powf(300.0) * 2.0);
+    } else if look.style == Style::Orbit {
+        let towards = dir.dot(look.sun).max(0.0);
+        match orbit_ground(dir) {
+            Some(n) => {
+                // the ground: lit where the sun is up over it, bluer and brighter as the
+                // look grazes the atmosphere towards the rim
+                let day = smooth(-0.1, 0.25, n.dot(look.sun));
+                let graze = (1.0 - (-dir.dot(n)).clamp(0.0, 1.0)).powi(3);
+                c = Vec3::new(0.09, 0.14, 0.24) * (0.02 + 1.3 * day);
+                c = c.lerp(Vec3::new(0.25, 0.45, 0.9) * (0.1 + 0.9 * day), graze * 0.7);
+            }
+            None => {
+                let above = e - orbit_limb();
+                c = look.zenith + look.horizon * (-above / 0.015).exp();
+                // the sun, unsoftened by any air
+                c += look.light * (1.0 - look.night) * (towards.powf(800.0) * 2.0 + towards.powf(60.0) * 0.04);
+            }
+        }
     } else {
         // the void's fog has no edge: darker overhead, a sea of fog below, brightest at eye level
         c = if e >= 0.0 {
@@ -617,9 +698,14 @@ pub fn sky_colour(look: &SkyLook, dir: Vec3) -> Vec3 {
         Style::Earth => 1.0,
         Style::Islands => 0.12,
         Style::Sea => 0.5,
+        Style::Orbit => 1.0,
         Style::Void => 0.18,
     };
     for m in look.moons.iter().flatten() {
+        // the planet hides what's behind it
+        if look.style == Style::Orbit && orbit_ground(dir).is_some() {
+            break;
+        }
         let a = angle(dir, m.dir);
         c += m.colour * m.glow * 0.08 * (-a / (m.radius * 2.5)).exp();
         if a < m.radius {
@@ -745,6 +831,7 @@ pub fn sky_uniform(look: &SkyLook, clouds: f32, wind: Vec4) -> SkyUniform {
         Style::Earth => 0.0,
         Style::Islands | Style::Sea => 1.0,
         Style::Void => 2.0,
+        Style::Orbit => 3.0,
     };
     SkyUniform {
         sun: look.sun.extend(0.0),
@@ -934,7 +1021,7 @@ pub fn update(
     let h = look.horizon;
     let sun_haze = match look.style {
         Style::Islands | Style::Sea => look.light * 0.06,
-        Style::Void => look.light * 0.0,
+        Style::Void | Style::Orbit => look.light * 0.0,
         Style::Earth => look.light * (1.0 - look.night) * 0.4,
     };
     let air_vis = w.air().map_or(f32::INFINITY, |a| a.visibility);
@@ -1129,7 +1216,7 @@ pub fn weather_look(
     }
     // ---- the fog volume, baked from the weather twice a second (High quality)
     let Some(wx) = w.weather.as_ref() else { return };
-    let foggy = out.style != Style::Earth || air.is_some_and(|a| a.visibility < 3000.0 || a.humidity > 0.9);
+    let foggy = !matches!(out.style, Style::Earth | Style::Orbit) || air.is_some_and(|a| a.visibility < 3000.0 || a.humidity > 0.9);
     let want = foggy && studio.level == crate::Level::High;
     let span = FOG_BOX;
     let floor_y = wx.climate.ground.max(cam_t.translation.y - 8.0);
@@ -1142,6 +1229,7 @@ pub fn weather_look(
         Style::Void => (Color::srgb(1.0, 0.985, 0.96), 18.0, 0.3),
         Style::Islands => (Color::srgb(0.66, 0.7, 0.82), 3.0, 0.55),
         Style::Sea => (Color::srgb(0.55, 0.62, 0.68), 2.4, 0.6),
+        Style::Orbit => (Color::srgb(0.0, 0.0, 0.0), 0.0, 0.5),
         Style::Earth => (Color::srgb(0.92, 0.93, 0.96), 2.6, 0.5),
     };
     let ambient_i = 0.0;
@@ -1270,6 +1358,7 @@ mod tests {
         assert_eq!(Style::parse("void"), Style::Void);
         assert_eq!(Style::parse("islands"), Style::Islands);
         assert_eq!(Style::parse("sea"), Style::Sea);
+        assert_eq!(Style::parse("orbit"), Style::Orbit);
         assert_eq!(Style::parse("anything"), Style::Earth);
     }
 
@@ -1299,6 +1388,27 @@ mod tests {
         assert!(m.dir.y > 0.05 && m.dir.y < 0.3, "{}", m.dir);
         assert_eq!(v.key, m.dir);
         assert!(sky_colour(&v, m.dir).length() > sky_colour(&v, Vec3::X).length() * 2.0);
+    }
+
+    #[test]
+    fn in_orbit() {
+        // the rim of the planet is 15.8 degrees below eye level, 250 km up
+        assert!((orbit_limb().asin().to_degrees() + 15.8).abs() < 0.1, "{}", orbit_limb().asin().to_degrees());
+        assert!(orbit_ground(Vec3::NEG_Y).is_some_and(|n| (n - Vec3::Y).length() < 1e-4));
+        assert!(orbit_ground(Vec3::X).is_none());
+        assert!(orbit_ground(Vec3::new(1.0, -0.25, 0.0).normalize()).is_none(), "just above the rim");
+        assert!(orbit_ground(Vec3::new(1.0, -0.3, 0.0).normalize()).is_some(), "just below it");
+        // by day: black overhead, the planet below lit, the sun far the brightest thing
+        let day = sky_at(Style::Orbit, 12.0);
+        assert!(day.night < 0.01 && day.lux > 10000.0);
+        let up = sky_colour(&day, Vec3::Y);
+        let down = sky_colour(&day, Vec3::NEG_Y);
+        assert!(up.length() < 0.01 && down.length() > 0.1, "{up} {down}");
+        assert!(sky_colour(&day, day.sun).length() > down.length() * 2.0);
+        // at midnight the sun is behind the planet: night, the key light gone
+        let night = sky_at(Style::Orbit, 0.0);
+        assert!(night.night > 0.99 && night.lux < 1.0);
+        assert!(sky_colour(&night, Vec3::NEG_Y).length() < down.length() * 0.2);
     }
 
     #[test]

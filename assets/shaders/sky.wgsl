@@ -1,10 +1,14 @@
-// The world's sky, drawn on a dome that follows the camera. Two styles (misc.w):
+// The world's sky, drawn on a dome that follows the camera. Its styles (misc.w):
 //
 // - earth: blue overhead fading to the horizon's colour (warm at dusk), the ground's colour
 //   below, the sun's disc and glow, clouds drifting high overhead (lit from the sun's side),
 //   stars and the moon at night.
 // - void: fog going on for ever in every direction, drifting in slow banks, with three
 //   moons (each a lit sphere with craters, a terminator and a halo) veiled behind it.
+// - orbit: 250 km up. Black space, stars and the Milky Way, a hard white sun; below, the
+//   planet itself (a sphere, so its rim is 15.8° under eye level and curved), turning slowly
+//   underneath: oceans with the sun's glint, land, clouds, city lights on the night side, the
+//   atmosphere a blue haze towards the rim and a thin bright line above it.
 //
 // Colours come from `outdoors.rs`, which draws the same sky (without the small detail) into
 // the environment map that lights the world.
@@ -20,7 +24,8 @@ struct Sky {
     horizon: vec4<f32>,
     ground: vec4<f32>,
     sun_colour: vec4<f32>,
-    // x: night, y: cloud cover, z: cloud brightness, w: style (0 earth, 1 void)
+    // x: night, y: cloud cover, z: cloud brightness, w: style (0 earth, 1 fog (islands, sea),
+    // 2 the luminous void, 3 orbit)
     misc: vec4<f32>,
     // direction + angular radius; colour + glow
     moon_a: vec4<f32>,
@@ -153,7 +158,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let sun = normalize(sky.sun.xyz);
     let night = sky.misc.x;
     let void_sky = sky.misc.w > 0.5 && sky.misc.w < 1.5;
-    let luminous = sky.misc.w > 1.5;
+    let luminous = sky.misc.w > 1.5 && sky.misc.w < 2.5;
+    let orbit = sky.misc.w > 2.5;
+    var planet = false;
     let e = dir.y;
 
     var c: vec3<f32>;
@@ -163,7 +170,62 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         c = mix(sky.horizon.rgb, sky.ground.rgb, clamp(-e * 5.0, 0.0, 1.0));
     }
 
-    if luminous {
+    if orbit {
+        // the planet (radius 1) seen from 250 km up (6371 km radius): where does the look hit it?
+        let h = 1.0 + 250.0 / 6371.0;
+        let b = h * e;
+        let disc = b * b - (h * h - 1.0);
+        let towards = max(dot(dir, sun), 0.0);
+        let day_here = 1.0 - night;
+        if disc >= 0.0 && b < 0.0 {
+            planet = true;
+            let t = -b - sqrt(disc);
+            let n = normalize(vec3(0.0, h, 0.0) + dir * t);
+            // the ground slides by beneath (once round in 90 minutes, sped up tenfold so it's
+            // seen to move); land and cloud are read from the turned position
+            let a = globals.time * 0.0116;
+            let q = vec3(n.x, n.y * cos(a) - n.z * sin(a), n.y * sin(a) + n.z * cos(a));
+            let land = smoothstep(0.53, 0.57, fbm3(q * 3.1 + vec3(2.0, 5.0, 1.0)));
+            let ocean = vec3(0.012, 0.04, 0.11);
+            let ground = mix(vec3(0.11, 0.095, 0.06), vec3(0.05, 0.085, 0.035), fbm3(q * 11.0));
+            let swirl = fbm3(q * 4.0 + 3.0);
+            let cloud = smoothstep(0.48, 0.72, fbm3(q * vec3(6.0, 10.0, 6.0) + swirl * 1.8));
+            let ndl = dot(n, sun);
+            let day = smoothstep(-0.12, 0.22, ndl);
+            var col = mix(mix(ocean, ground, land), vec3(0.92, 0.93, 0.95), cloud * 0.92) * (0.02 + 1.4 * day * max(ndl, 0.15));
+            // the sun's glint off open water
+            let glint = pow(max(dot(reflect(dir, n), sun), 0.0), 300.0) * (1.0 - land) * (1.0 - cloud) * day;
+            col += sky.sun_colour.rgb * glint * 4.0;
+            // cities on the night side, in clusters on land
+            let cell = floor(q * 260.0);
+            let city = land * (1.0 - cloud) * (1.0 - day) * step(0.975, hash3(cell)) * smoothstep(0.45, 0.7, fbm3(q * 20.0));
+            col += vec3(1.0, 0.62, 0.28) * city * 0.35;
+            // looking through more air towards the rim: blue haze, and the sunset's orange
+            // along the line between day and night
+            let graze = pow(1.0 - clamp(-dot(dir, n), 0.0, 1.0), 3.0);
+            let dusk = smoothstep(0.25, 0.0, abs(ndl)) * smoothstep(-0.2, 0.05, ndl);
+            col = mix(col, vec3(0.25, 0.45, 0.95) * (0.08 + 0.92 * day) + vec3(0.6, 0.25, 0.05) * dusk * 0.5, graze * 0.75);
+            c = col;
+        } else {
+            c = sky.zenith.rgb;
+            // stars, dense and steady (no air to make them twinkle), and the Milky Way's band
+            c += stars(dir, 0.025, 420.0) * 0.7 + stars(dir, 0.006, 140.0) * 1.2;
+            let galaxy = normalize(vec3(0.35, 0.62, -0.7));
+            let band = exp(-abs(dot(dir, galaxy)) * 7.0);
+            c += vec3(0.05, 0.045, 0.06) * band * (0.3 + fbm3(dir * 7.0)) * (0.4 + 0.6 * night);
+            // the rim of the atmosphere: a thin bright line just above the planet's edge,
+            // brightest on the sun's side
+            let above = e - (-sqrt(1.0 - 1.0 / (h * h)));
+            let flat_dir = normalize(vec3(dir.x, 0.0, dir.z) + vec3(1e-4, 0.0, 0.0));
+            let flat_sun = normalize(vec3(sun.x, 0.0, sun.z) + vec3(1e-4, 0.0, 0.0));
+            let sunside = 0.25 + 0.75 * smoothstep(-0.6, 0.8, dot(flat_dir, flat_sun));
+            c += sky.horizon.rgb * (exp(-above / 0.006) * 1.6 + exp(-above / 0.03) * 0.3) * sunside;
+            // the sun: a hard white disc and a little glare (no air to spread it)
+            c += sky.sun_colour.rgb * day_here * (pow(towards, 2000.0) * 3.0 + pow(towards, 80.0) * 0.05);
+            let sun_disc = smoothstep(0.99990, 0.99995, towards);
+            c += sky.sun_colour.rgb * sun_disc * 60.0 * day_here;
+        }
+    } else if luminous {
         // the luminous void: white light everywhere, warmest and brightest at eye level, a
         // little cooler overhead, pale below; soft slow veils of brighter and dimmer mist
         if e >= 0.0 {
@@ -227,6 +289,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         } else if i == 2 {
             m = sky.moon_c;
             col = sky.moon_c_colour;
+        }
+        // the planet hides what's behind it
+        if planet {
+            break;
         }
         let mo = moon(dir, m, col, f32(i) * 3.7 + 1.3);
         // in the void the fog veils them: faint discs in a glow

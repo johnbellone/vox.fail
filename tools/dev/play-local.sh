@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Run the Void, the yard, the islands and the dark sea locally (guests allowed, so portals work) and join the
+# Run the Void, the yard, the islands, the dark sea and orbit locally (guests allowed, so portals work) and join the
 # Void with the desktop client.
 # Usage: tools/dev/play-local.sh [client args...]   e.g. --name Sam --model models/dog.glb
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-for port in 7780 7781 7782 7783; do
+for port in 7780 7781 7782 7783 7784; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
     echo "port $port is already in use (a leftover server? try: pkill vox-server)" >&2
     exit 1
@@ -23,6 +23,7 @@ start void 7780 void
 start yard 7781 yard
 start islands 7782 islands
 start sea 7783 sea
+start orbit 7784 orbit
 trap 'kill -INT "${pids[@]}" 2>/dev/null; wait 2>/dev/null || true' EXIT
 sleep 1
 

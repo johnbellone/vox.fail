@@ -2,6 +2,7 @@
 """The Dark Sea: black water under a gale, rolling in big swells to the edge of the fog.
 
     the Landing      a basalt island where you arrive, with the Tide Door (back to the void)
+                     and the Sky Door (up to the station in orbit)
     the Pier         planks on log posts running north, lanterns burning along it
     the Lighthouse   a stone tower on a rock at the pier's end, its lamp lit
     the Stacks       jagged basalt pillars standing out of the sea, one pair joined in an arch
@@ -129,6 +130,11 @@ def main():
     for dz in (-7, 6):
         box("basalt", (-8, 2, dz), (-8, 3, dz))
         box("fire", (-8, 4, dz), (-8, 4, dz))
+    # the Sky Door, east, up to the station in orbit: pale metal, lights climbing its posts
+    doorway(8, 0, w=8, h=14, block="metal", y=2)
+    for y in (2, 6, 10, 14):
+        box("lumen", (8, y, -5), (8, y, -5))
+        box("lumen", (8, y, 4), (8, y, 4))
 
     # ---- the Pier: north from the Landing to the Lighthouse
     z0, z1 = -14, -100
@@ -212,7 +218,7 @@ def main():
     level = {
         "name": "The Dark Sea",
         "about": "Black water under a gale, rolling in big swells to the edge of the fog. The Landing "
-                 "(where you arrive) with the Tide Door back to the void; a lantern-lit pier north to the "
+                 "(where you arrive) with the Tide Door back to the void and the Sky Door up to orbit; a lantern-lit pier north to the "
                  "Lighthouse; stacks of basalt standing out of the sea, an arch, and a wreck in the shallows "
                  "to the east. Made by tools/assets/build_sea.py.",
         "world": {
@@ -227,6 +233,8 @@ def main():
             "portals": [
                 {"name": "void", "at": [-7.5, 2 - DROP, 0], "axis": "x", "size": [8, 14], "level": "void",
                  "url": ":7780", "arrive": [38.5, 0, 0], "yaw": 90},
+                {"name": "orbit", "at": [8.5, 2 - DROP, 0], "axis": "x", "size": [8, 14], "level": "orbit",
+                 "url": ":7784", "arrive": [-11.5, 0, 0], "yaw": 90},
             ],
             "hotbar": ["basalt", "obsidian", "planks", "log", "stone", "glass", "lamp", "fire", "water"],
         },
