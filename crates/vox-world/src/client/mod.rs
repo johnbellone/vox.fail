@@ -38,13 +38,13 @@ pub use hud::*;
 pub use link::*;
 pub use receive::*;
 
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+use std::collections::{HashMap, HashSet, VecDeque};
+// the browser's link keeps its own channels (the desktop's are vox-link's)
+#[cfg(target_arch = "wasm32")]
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
 };
 
 use bevy::platform::time::Instant;
@@ -91,15 +91,52 @@ enum Incoming {
     Data(Vec<u8>),
 }
 
+/// The link to the world server: vox-link's thread on the desktop, the page's WebSocket in
+/// the browser (`web_link`). Either way the app queues bytes out and drains [`Incoming`].
+#[cfg(not(target_arch = "wasm32"))]
+struct Link(vox_link::Link<()>);
+
+#[cfg(target_arch = "wasm32")]
 struct Link {
     out: mpsc::Sender<Vec<u8>>,
     inbox: Mutex<mpsc::Receiver<Incoming>>,
     stop: Arc<AtomicBool>,
 }
 
+#[cfg(target_arch = "wasm32")]
 impl Drop for Link {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Link {
+    fn send(&self, bytes: Vec<u8>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.0.send(bytes);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = self.out.send(bytes);
+        }
+    }
+
+    fn drain(&self) -> Vec<Incoming> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.0
+                .drain()
+                .into_iter()
+                .filter_map(|e| match e {
+                    vox_link::Event::Status(s) => Some(Incoming::Status(s)),
+                    vox_link::Event::Data(b, _) => Some(Incoming::Data(b)),
+                    vox_link::Event::Text(_) | vox_link::Event::App(()) => None,
+                })
+                .collect()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.inbox.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect()
+        }
     }
 }
 
@@ -446,7 +483,7 @@ impl WorldClient {
 
     fn send(&self, m: &ToServer) {
         if let Some(l) = &self.link {
-            let _ = l.out.send(wire::encode(m));
+            l.send(wire::encode(m));
         }
     }
 
@@ -669,17 +706,18 @@ impl WorldClient {
 
     fn connect(&mut self) {
         let Some(url) = self.url.clone() else { return };
-        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
-        let (in_tx, in_rx) = mpsc::channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop2 = stop.clone();
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = std::thread::Builder::new()
-            .name("world link".into())
-            .spawn(move || run_link(url, out_rx, in_tx, stop2));
+        {
+            self.link = Some(Link(vox_link::spawn("world link", link::WorldDial { url })));
+        }
         #[cfg(target_arch = "wasm32")]
-        web_link::open(url, out_rx, in_tx, stop2);
-        self.link = Some(Link { out: out_tx, inbox: Mutex::new(in_rx), stop });
+        {
+            let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
+            let (in_tx, in_rx) = mpsc::channel();
+            let stop = Arc::new(AtomicBool::new(false));
+            web_link::open(url, out_rx, in_tx, stop.clone());
+            self.link = Some(Link { out: out_tx, inbox: Mutex::new(in_rx), stop });
+        }
         self.status = "Connecting".into();
     }
 

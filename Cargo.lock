@@ -2038,6 +2038,7 @@ dependencies = [
  "tungstenite 0.27.0",
  "ureq",
  "vox-core",
+ "vox-link",
  "vox-world",
  "whisper-rs",
  "windows-sys 0.59.0",
@@ -6789,6 +6790,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vox-link"
+version = "0.1.0"
+dependencies = [
+ "tungstenite 0.27.0",
+]
+
+[[package]]
 name = "vox-relay"
 version = "0.1.0"
 dependencies = [
@@ -6825,8 +6833,8 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
- "tungstenite 0.27.0",
  "vox-core",
+ "vox-link",
  "wasm-bindgen",
  "web-sys",
 ]

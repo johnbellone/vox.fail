@@ -21,7 +21,7 @@ pub fn receive(
     #[cfg(target_arch = "wasm32")]
     web_link::pump();
     let msgs: Vec<Incoming> = match &w.link {
-        Some(l) => l.inbox.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect(),
+        Some(l) => l.drain(),
         None => return,
     };
     let now = w.now();

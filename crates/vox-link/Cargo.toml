@@ -1,0 +1,8 @@
+[package]
+name = "vox-link"
+version.workspace = true
+edition.workspace = true
+description = "A WebSocket kept open on its own thread, reconnecting with backoff: the world client's link to a world server and the avatar app's to the relay. Desktop only (the browser has its own WebSocket)."
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite.workspace = true

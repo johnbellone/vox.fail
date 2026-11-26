@@ -22,6 +22,7 @@ Two products share one Cargo workspace:
 | --- | --- | --- |
 | `crates/vox-core/` | `vox-core` | Engine-free rules shared by everyone: blocks and chunks (`world`), voxel raycast (`ray`), walking physics (`body`), level files (`level`), the wire protocol (`wire`), sign-in tokens (`auth`), client-side prediction (`predict`), weather simulation (`weather`). **No Bevy here.** |
 | `crates/vox-world/` | `vox-world` | A world on screen, shared by the app and the client: block meshing and materials (`blocks`), server link, chunks, controls, camera (`client`), input actions, bindings, controller brands and button hints (`input/`), the pixel HUD and quick wheel (`hud`), menus with controller navigation (`menu`), sky and fog (`outdoors`), portals (`portals`), avatar pose streaming (`pose`, `proto`), file access that also works in the browser (`files`). |
+| `crates/vox-link/` | `vox-link` | A WebSocket kept open on its own thread, reconnecting with backoff; a `Dial` says where and how (world servers, the relay). Desktop only. |
 | `crates/avatar-voice/` | `avatar-voice` | Block Avatar's voice analysis, pure Rust: lip sync (`lipsync`), pitch and formants (`voice`), laugh and sing detection (`detect`), WAV files (`wav`, one hardened reader). Its tests run on real recordings in `testdata/real`. |
 | `bins/vox-client/` | `vox-client` | The player client: a thin Bevy app (`lib.rs`) around `vox-world`. Builds natively and to wasm32. Also the FPS counter, the portal sweep and watch mode (the front page's live view). |
 | `bins/vox-server/` | `vox-server` | One world: a single thread owns the blocks, players and edit order; WebSocket on `/ws` for players and watchers; SQLite persistence. |
@@ -140,8 +141,8 @@ From the code review; none are regressions, but know they exist before relying o
   edit, and meshes all dirty chunks in the frame a world becomes ready; weather and fog baking
   run on the main thread.
 - Duplicated helpers: two WAV parsers, several xorshift generators, value noise in both
-  `vox-core::weather` and `vox-world::outdoors`, two native WebSocket loops (`vox-world::client` and
-  `block_avatar`'s `net.rs`), and the child-spawning for opaque, glass, water and flame meshes.
+  `vox-core::weather` and `vox-world::outdoors`, and the child-spawning for opaque, glass, water
+  and flame meshes.
 - The Linux webcam output does not exist: the `W` virtual camera is Windows-only (it writes
   OBS's DirectShow shared-memory queue). On Linux use OBS window capture and OBS's own
   virtual camera.

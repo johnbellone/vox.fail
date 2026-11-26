@@ -1,9 +1,7 @@
-//! The link to a world server: addresses (portals, proxies), and on the desktop a thread that
-//! keeps a WebSocket open, reconnecting with backoff (the browser's is in `web_link`).
+//! The link to a world server: addresses (portals, proxies), and how the desktop dials one
+//! (the connection itself is vox-link's; the browser's is in `web_link`).
 
 use super::*;
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
 
 /// `ws://host:port` as given, or with `/ws` added; `http(s)://` becomes `ws(s)://`.
 /// A portal's address: `:7781` is the world on port 7781 of the same host as `current`, or,
@@ -57,66 +55,26 @@ pub fn ws_url(url: &str) -> String {
     if u.ends_with("/ws") { u } else { format!("{u}/ws") }
 }
 
+/// How the desktop dials a world server (vox-link does the rest): the "Can't reach" status is
+/// what a portal trip watches for to turn back, a goodbye ends it, and anything queued while
+/// disconnected is stale because the hello must go first.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn run_link(url: String, out: mpsc::Receiver<Vec<u8>>, inbox: mpsc::Sender<Incoming>, stop: Arc<AtomicBool>) {
-    let mut wait = Duration::from_millis(500);
-    while !stop.load(Ordering::Relaxed) {
-        let mut sock = match tungstenite::connect(&url) {
-            Ok((s, _)) => s,
-            Err(e) => {
-                let _ = inbox.send(Incoming::Status(format!("Can't reach the world: {e}")));
-                std::thread::sleep(wait);
-                wait = (wait * 2).min(Duration::from_secs(10));
-                continue;
-            }
-        };
-        wait = Duration::from_millis(500);
-        let short = Some(Duration::from_millis(5));
-        match sock.get_mut() {
-            tungstenite::stream::MaybeTlsStream::Plain(s) => {
-                let _ = s.set_read_timeout(short);
-                let _ = s.set_nodelay(true);
-            }
-            tungstenite::stream::MaybeTlsStream::Rustls(s) => {
-                let _ = s.get_mut().set_read_timeout(short);
-                let _ = s.get_mut().set_nodelay(true);
-            }
-            _ => {}
-        }
-        // anything queued before connecting (old edits, poses) is stale: the hello goes first
-        while out.try_recv().is_ok() {}
-        let _ = inbox.send(Incoming::Status("Connected".into()));
-        let mut bye = false;
-        'live: while !stop.load(Ordering::Relaxed) {
-            while let Ok(bytes) = out.try_recv() {
-                if sock.send(tungstenite::Message::binary(bytes)).is_err() {
-                    break 'live;
-                }
-            }
-            loop {
-                match sock.read() {
-                    Ok(tungstenite::Message::Binary(b)) => {
-                        bye |= matches!(wire::decode::<ToClient>(&b), Ok(ToClient::Bye { .. }));
-                        let _ = inbox.send(Incoming::Data(b.to_vec()));
-                    }
-                    Ok(tungstenite::Message::Close(_)) => break 'live,
-                    Ok(_) => {}
-                    Err(tungstenite::Error::Io(e))
-                        if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
-                    {
-                        break;
-                    }
-                    Err(_) => break 'live,
-                }
-            }
-        }
-        let _ = sock.close(None);
-        if bye {
-            return; // the server said why; trying again won't help
-        }
-        if !stop.load(Ordering::Relaxed) {
-            let _ = inbox.send(Incoming::Status("Reconnecting".into()));
-            std::thread::sleep(wait);
-        }
+pub(super) struct WorldDial {
+    pub url: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl vox_link::Dial<()> for WorldDial {
+    fn address(&mut self, _: &dyn Fn(())) -> Result<String, String> {
+        Ok(self.url.clone())
+    }
+    fn refused(&mut self, _status: u16, error: &str) -> String {
+        format!("Can't reach the world: {error}")
+    }
+    fn goodbye(&self, message: &[u8]) -> bool {
+        matches!(wire::decode::<ToClient>(message), Ok(ToClient::Bye { .. }))
+    }
+    fn drop_stale(&self) -> bool {
+        true
     }
 }

@@ -21,11 +21,7 @@
 //! only swap messages with it through channels.
 
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -63,17 +59,14 @@ enum Incoming {
     Status(String),
 }
 
-struct Link {
-    out: mpsc::Sender<Vec<u8>>,
-    inbox: Mutex<mpsc::Receiver<Incoming>>,
-    stop: Arc<AtomicBool>,
+/// A show the relay registered for us (we're the host): its id and join code.
+struct Created {
+    id: String,
+    code: String,
 }
 
-impl Drop for Link {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-    }
-}
+/// The link to the relay: vox-link's thread, dialled by [`RelayDial`].
+type Link = vox_link::Link<Created>;
 
 #[derive(Resource)]
 pub struct Net {
@@ -229,7 +222,7 @@ impl Net {
 
     fn send(&self, msg: &Msg) {
         if let Some(l) = &self.link {
-            let _ = l.out.send(proto::encode(msg));
+            l.send(proto::encode(msg));
         }
     }
 
@@ -286,125 +279,46 @@ fn q(s: &str) -> String {
 }
 
 fn spawn_link(role: Role, relay: String, title: String, code: String, session: String, name: String) -> Link {
-    let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
-    let (in_tx, in_rx) = mpsc::channel::<Incoming>();
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop2 = stop.clone();
-    std::thread::Builder::new()
-        .name("net".into())
-        .spawn(move || run_link(role, relay, title, code, session, name, out_rx, in_tx, stop2))
-        .expect("net thread");
-    Link {
-        out: out_tx,
-        inbox: Mutex::new(in_rx),
-        stop,
-    }
+    vox_link::spawn("net", RelayDial { role, relay, title, code, session, name, token: String::new() })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_link(
+/// How a show connects to the relay: a host registers its show first (and again if the relay
+/// forgot it); viewers and the guest join with the code.
+struct RelayDial {
     role: Role,
     relay: String,
     title: String,
     code: String,
-    mut session: String,
+    session: String,
     name: String,
-    out: mpsc::Receiver<Vec<u8>>,
-    inbox: mpsc::Sender<Incoming>,
-    stop: Arc<AtomicBool>,
-) {
-    let mut token = String::new();
-    let mut wait = Duration::from_millis(500);
-    while !stop.load(Ordering::Relaxed) {
-        if role == Role::Host && token.is_empty() {
-            match create_session(&relay, &title) {
-                Ok((id, c, t)) => {
-                    session = id.clone();
-                    token = t;
-                    let _ = inbox.send(Incoming::Created { id, code: c });
-                }
-                Err(e) => {
-                    let _ = inbox.send(Incoming::Status(e));
-                    std::thread::sleep(wait);
-                    wait = (wait * 2).min(Duration::from_secs(10));
-                    continue;
-                }
-            }
+    token: String,
+}
+
+impl vox_link::Dial<Created> for RelayDial {
+    fn address(&mut self, tell: &dyn Fn(Created)) -> Result<String, String> {
+        if self.role == Role::Host && self.token.is_empty() {
+            let (id, code, token) = create_session(&self.relay, &self.title)?;
+            self.session = id.clone();
+            self.token = token;
+            tell(Created { id, code });
         }
-        let query = match role {
-            Role::Host => format!("role=host&token={token}"),
-            Role::Viewer => format!("role=viewer&code={}", q(&code)),
-            Role::Guest => format!("role=guest&code={}&name={}", q(&code), q(&name)),
+        let query = match self.role {
+            Role::Host => format!("role=host&token={}", self.token),
+            Role::Viewer => format!("role=viewer&code={}", q(&self.code)),
+            Role::Guest => format!("role=guest&code={}&name={}", q(&self.code), q(&self.name)),
         };
-        let url = ws_url(&relay, &format!("/sessions/{session}/ws?{query}"));
-        let mut sock = match tungstenite::connect(&url) {
-            Ok((s, _)) => s,
-            Err(e) => {
-                let status = match &e {
-                    tungstenite::Error::Http(r) => r.status().as_u16(),
-                    _ => 0,
-                };
-                if status == 404 && role == Role::Host {
-                    token.clear(); // the relay forgot the show: register again
-                }
-                let _ = inbox.send(Incoming::Status(match status {
-                    404 => "No such show".into(),
-                    403 => "Wrong join code".into(),
-                    409 => "Someone else is the guest".into(),
-                    _ => format!("Can't connect: {e}"),
-                }));
-                std::thread::sleep(wait);
-                wait = (wait * 2).min(Duration::from_secs(10));
-                continue;
-            }
-        };
-        wait = Duration::from_millis(500);
-        let short = Some(Duration::from_millis(5));
-        match sock.get_mut() {
-            tungstenite::stream::MaybeTlsStream::Plain(s) => {
-                let _ = s.set_read_timeout(short);
-                let _ = s.set_nodelay(true);
-            }
-            tungstenite::stream::MaybeTlsStream::Rustls(s) => {
-                let _ = s.get_mut().set_read_timeout(short);
-                let _ = s.get_mut().set_nodelay(true);
-            }
-            _ => {}
+        Ok(ws_url(&self.relay, &format!("/sessions/{}/ws?{query}", self.session)))
+    }
+
+    fn refused(&mut self, status: u16, error: &str) -> String {
+        if status == 404 && self.role == Role::Host {
+            self.token.clear(); // the relay forgot the show: register again
         }
-        let _ = inbox.send(Incoming::Status("Connected".into()));
-        'live: while !stop.load(Ordering::Relaxed) {
-            // send what's queued
-            while let Ok(bytes) = out.try_recv() {
-                if sock.send(tungstenite::Message::binary(bytes)).is_err() {
-                    break 'live;
-                }
-            }
-            // read what's arrived (the short timeout keeps sends flowing)
-            loop {
-                match sock.read() {
-                    Ok(tungstenite::Message::Binary(b)) => {
-                        let _ = inbox.send(Incoming::Data(b.to_vec(), Instant::now()));
-                    }
-                    Ok(tungstenite::Message::Text(t)) => {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(t.as_str()) {
-                            let _ = inbox.send(Incoming::Notice(v));
-                        }
-                    }
-                    Ok(tungstenite::Message::Close(_)) => break 'live,
-                    Ok(_) => {}
-                    Err(tungstenite::Error::Io(e))
-                        if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
-                    {
-                        break;
-                    }
-                    Err(_) => break 'live,
-                }
-            }
-        }
-        let _ = sock.close(None);
-        if !stop.load(Ordering::Relaxed) {
-            let _ = inbox.send(Incoming::Status("Reconnecting".into()));
-            std::thread::sleep(wait);
+        match status {
+            404 => "No such show".into(),
+            403 => "Wrong join code".into(),
+            409 => "Someone else is the guest".into(),
+            _ => format!("Can't connect: {error}"),
         }
     }
 }
@@ -575,7 +489,16 @@ pub fn receive(
     let Some(link) = &net.link else {
         return;
     };
-    let msgs: Vec<Incoming> = link.inbox.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect();
+    let msgs: Vec<Incoming> = link
+        .drain()
+        .into_iter()
+        .filter_map(|e| match e {
+            vox_link::Event::Status(s) => Some(Incoming::Status(s)),
+            vox_link::Event::Data(b, at) => Some(Incoming::Data(b, at)),
+            vox_link::Event::Text(t) => serde_json::from_str(&t).ok().map(Incoming::Notice),
+            vox_link::Event::App(Created { id, code }) => Some(Incoming::Created { id, code }),
+        })
+        .collect();
     let role = net.role;
     for m in msgs {
         match m {
@@ -789,7 +712,7 @@ pub fn voice(mut net: ResMut<Net>, mic: Option<Res<crate::Mic>>) {
         *mic.0.net_tap.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
         let who = if net.role == Some(Role::Host) { HOST } else { GUEST };
         if let Some(l) = &net.link {
-            net.voice_out = Some(crate::netvoice::Sender::start(who, rx, l.out.clone()));
+            net.voice_out = Some(crate::netvoice::Sender::start(who, rx, l.sender()));
         }
     }
 }
