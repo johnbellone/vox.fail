@@ -35,6 +35,44 @@ impl View {
         self.get(c) != 0
     }
 
+    /// Every block in the cube from `lo`, `size` blocks a side, as this player sees them, in
+    /// y, z, x order (the same as asking [`View::get`] for each, much faster: each chunk is
+    /// looked up once, and pending edits are laid on top at the end).
+    pub fn copy_region(&self, lo: Cell, size: i32, out: &mut Vec<u16>) {
+        let n = size.max(0) as usize;
+        out.clear();
+        out.resize(n * n * n, 0);
+        let hi = [lo[0] + size, lo[1] + size, lo[2] + size];
+        let k_lo = ChunkKey::of(lo);
+        let k_hi = ChunkKey::of([hi[0] - 1, hi[1] - 1, hi[2] - 1]);
+        for ky in k_lo.0[1]..=k_hi.0[1] {
+            for kz in k_lo.0[2]..=k_hi.0[2] {
+                for kx in k_lo.0[0]..=k_hi.0[0] {
+                    let k = ChunkKey([kx, ky, kz]);
+                    let Some(ch) = self.confirmed.chunk(k) else { continue };
+                    let o = k.origin();
+                    let a = [lo[0].max(o[0]), lo[1].max(o[1]), lo[2].max(o[2])];
+                    let b = [hi[0].min(o[0] + crate::world::CHUNK), hi[1].min(o[1] + crate::world::CHUNK), hi[2].min(o[2] + crate::world::CHUNK)];
+                    for y in a[1]..b[1] {
+                        for z in a[2]..b[2] {
+                            let row = ((y - lo[1]) as usize * n + (z - lo[2]) as usize) * n;
+                            for x in a[0]..b[0] {
+                                out[row + (x - lo[0]) as usize] = ch.get([x, y, z]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // your own edits, oldest first, so the newest wins as in `get`
+        for p in &self.pending {
+            let c = p.cell;
+            if (0..3).all(|i| c[i] >= lo[i] && c[i] < hi[i]) {
+                out[((c[1] - lo[1]) as usize * n + (c[2] - lo[2]) as usize) * n + (c[0] - lo[0]) as usize] = p.block;
+            }
+        }
+    }
+
     /// Make an edit locally: checked like the server would, shown at once. Returns the id
     /// to send it with.
     pub fn edit(&mut self, c: Cell, b: u16) -> Result<u32, Why> {
@@ -88,6 +126,38 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copying_a_region_matches_asking_block_by_block() {
+        use crate::world::Bounds;
+        let mut w = World::new(Bounds::default(), 9);
+        let mut s = 12345u32;
+        for _ in 0..4000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let c = [(s % 120) as i32 - 60, ((s >> 8) % 40) as i32 - 10, ((s >> 16) % 120) as i32 - 60];
+            w.set(c, (s % 9) as u16 + 1);
+        }
+        let mut v = View::new(w);
+        let _ = v.edit([1, 1, 1], 0);
+        let _ = v.edit([31, 0, 32], 3);
+        let _ = v.edit([31, 0, 32], 5);
+        let lo = [-1, -1, -1];
+        let mut out = Vec::new();
+        v.copy_region(lo, 34, &mut out);
+        let mut i = 0;
+        for y in 0..34 {
+            for z in 0..34 {
+                for x in 0..34 {
+                    let c = [lo[0] + x, lo[1] + y, lo[2] + z];
+                    assert_eq!(out[i], v.get(c), "{c:?}");
+                    i += 1;
+                }
+            }
+        }
+        assert_eq!(out[((1 + 0) * 34 + (32 + 1)) * 34 + (31 + 1)], 5, "the newest pending edit wins");
+    }
     use crate::world::Bounds;
 
     fn applied(seq: u64, player: u32, id: u32, cell: Cell, block: u16) -> Applied {

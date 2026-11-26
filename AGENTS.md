@@ -141,9 +141,9 @@ From the code review; none are regressions, but know they exist before relying o
   one Bevy plugin per folder (`app`, `sound`, `scene`, ...) is the next step. The big files are
   split into folders (`client/`, `questions/`, `ask/`, `chat/`, `guest/`, `bevel/`), each with
   its types in `mod.rs` and its functions by concern in the children.
-- Remeshing reads every voxel through a slow lookup, rebuilds a whole chunk for a one-block
-  edit, and meshes all dirty chunks in the frame a world becomes ready; weather and fog baking
-  run on the main thread.
+- Remeshing copies voxels chunk by chunk and runs within a per-frame budget (8 ms desktop,
+  5 ms browser), nearest first; still: a one-block edit rebuilds its whole chunk, vertices are
+  64 bytes, and weather and fog baking run on the main thread.
 - Duplicated helpers: several xorshift generators, value noise in both
   `vox-core::weather` and `vox-world::outdoors`, and the child-spawning for opaque, glass, water
   and flame meshes.
