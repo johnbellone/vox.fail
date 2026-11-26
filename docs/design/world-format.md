@@ -1,6 +1,6 @@
 # Design: the world format
 
-Status: **proposed** · 2026-11-26 · nothing here is built yet
+Status: **proposed** · 2026-11-26 · decisions recorded (see *Decisions*); nothing built yet
 
 Related: [world-scaling.md](world-scaling.md) (regions, streaming, region hashes, simulation
 owners), [world-graph-and-art.md](world-graph-and-art.md) (world graphs and recipes, which
@@ -24,6 +24,14 @@ only what changed; the existing edit log covers the time between snapshots.
 
 Everything that reads or writes the format lives in a new crate, `crates/vox-format`, with no
 rendering, so the server, the clients (native and wasm) and the authoring tool share it.
+
+## Decisions (2026-11-26)
+
+1. **Player-built structures are entities**, stored as a **reference to a specific version** of
+   a structure, not as loose blocks (see *Structures*).
+2. **Object storage** holds the blobs; **Oxen** is explored as the snapshot and history mechanism
+   (see *Oxen*). The live connection stays the world server's WebSocket.
+3. **World owners restore their worlds themselves**; snapshots are **kept for a week**.
 
 ## Where it is today
 
@@ -99,6 +107,37 @@ own tests round-trip a `DynamicWorld` through postcard, so the binary form needs
   holding only the world components (never the app's own), with a cap on entities per region and
   on string lengths, so a crafted blob can't create arbitrary components or exhaust memory.
 
+## Structures
+
+What a player builds is a **structure**: its blocks (and its own entities: lamps, signs, props
+inside it) stored as a content-addressed blob of its own, the same format as a region's blocks
+and entities but in the structure's own coordinates. A world holds **instances**:
+
+```ron
+(
+  structure: "a3f9c1...",        // the structure's version: the hash of its blob
+  at: (412, 64, -380),          // where its origin sits, in blocks
+  turn: 1,                      // quarter turns about y
+)
+```
+
+- **Versions are immutable.** Building on a placed structure edits a working copy; the next
+  snapshot (or an explicit "save") writes a new version and points that instance at it. Other
+  instances of the old version, in this world or another, don't change: copying a house to a
+  friend's world copies a pointer, not the blocks.
+- **Where structures come from**: a plot's contents become its structure automatically (the
+  plot is the natural boundary, and it already has an owner and builders); a player can also
+  save a selection as a structure, and place one from their inventory.
+- **The world graph's buildings** (world-graph-and-art.md) are structures too: a node's recipe
+  expands into a structure version, so generated and player-built buildings are one thing.
+- **Rendering and collision** expand an instance into blocks once, when its region loads; the
+  server keeps the expanded blocks in the region (so edits, reach and plots work as today) and
+  the instance as the record of where they came from.
+- **Limits**: a structure is at most 64 × 64 × 64 blocks to begin with; bigger builds are several
+  structures. Untrusted structure blobs get the same caps as regions.
+- Open: when two instances of one version are edited differently, they become two versions
+  (copy on write); a "propagate this edit to every instance" action is a later feature.
+
 ## Store and snapshots
 
 ```
@@ -116,11 +155,53 @@ store/
   changed since the last snapshot and a new manifest.
 - **Restoring** to any moment: the snapshot before it, then the edit log replayed up to it.
 - **Copying a world** (a preview, an event, a branch): copy a manifest; blobs are shared.
-- **Pruning**: keep, say, hourly snapshots for a day and daily for a month; a blob no kept
-  manifest names is deleted. The edit log before the oldest kept snapshot is dropped, which ends
-  today's unbounded `edits` table.
+- **Retention: a week.** Snapshots older than seven days are dropped (with Oxen, see below,
+  they leave the restorable list); a blob no kept snapshot names is deleted. The edit log before
+  the oldest kept snapshot is dropped, which ends today's unbounded `edits` table.
+- **Owners restore their own worlds**: the directory lists a world's snapshots of the last
+  seven days to its owner (and to people they allow), on the site and in the game's menu. A
+  restore is a new snapshot whose contents are the chosen one's, so it can itself be undone; the
+  world server reloads, players in it are moved to the spawn, and the restore is logged.
 - **Sync**: a client's region cache is the same blobs under the same hashes; the scaling design's
   `Have { region, hash }` compares them.
+
+## Oxen
+
+[Oxen](https://github.com/Oxen-AI/Oxen) is a version control system for large data, written in
+Rust: repositories, commits, branches and workspaces over a Merkle tree down to file chunks,
+with a self-hostable server (`oxen-server`, Linux and macOS) whose version store can be local or
+S3, an HTTP API, a CLI, and an embeddable library (`liboxen`). The repository is Apache-2.0
+(the crate listings say "non-standard": check the LICENSE of the version used).
+
+What fits:
+
+- **Snapshots as commits.** One Oxen repository per world; region blobs and structure blobs are
+  files (`regions/12_-3.voxr`, `structures/a3/f9c1...voxs`); a snapshot is a commit. Unchanged
+  files are deduplicated, as the manifests above would do by hand.
+- **Restore** is checking out a commit's tree into the next commit; **copying a world** is a
+  branch; **history and diffs** (which regions changed when) come for free.
+- **Object storage underneath**: the S3-compatible store (Cloudflare R2 for vox.fail) keeps the
+  bytes; Oxen keeps the history.
+
+What doesn't:
+
+- **Not the live wire.** Oxen moves whole commits (seconds); play moves single edits in tens of
+  milliseconds. Edits, poses and region streaming stay on the world server's WebSocket.
+- **Not in the browser.** `liboxen` builds in RocksDB and DuckDB (C and C++) and has no
+  WebAssembly target, so clients can't embed it; a browser could only use Oxen's HTTP API.
+  Clients instead fetch region and structure blobs **by hash** over plain HTTP (immutable, so a
+  CDN caches them for ever), from object storage or the world server.
+- **Retention**: Oxen keeps history; a week's retention means either squashing older commits into
+  a fresh base commit (if Oxen supports rewriting history; to verify) or keeping them and only
+  listing the last week as restorable (storage grows only with changed regions).
+
+So the proposal: **the world server writes snapshots as Oxen commits** (embedding `liboxen`, or
+talking to a self-hosted `oxen-server` over its HTTP API), Oxen's store sits on object storage,
+and **clients read blobs by hash from object storage through the CDN**. A prototype should
+measure a commit of a few hundred changed regions, a checkout, and the store's size after a week
+of edits, before the world server depends on it. The store layer in `vox-format` stays behind a
+trait (`Snapshots`: commit, list, restore, prune), with a plain object-storage implementation
+(the manifests above) as the fallback.
 
 ## Compression in the browser
 
@@ -164,17 +245,24 @@ Depends on `vox-core`, `bevy_ecs`, `bevy_reflect`, `bevy_world_serialization`, `
 
 ## Phases
 
-1. `vox-format` with region blobs for blocks only, the store and manifests; the world server
-   writes snapshots alongside SQLite; restore from a snapshot plus the log. Round-trip and
-   crafted-input tests.
+1. `vox-format` with region blobs for blocks only, the `Snapshots` trait with the plain
+   object-storage implementation (manifests), a week's retention; the world server writes
+   snapshots alongside SQLite; restore from a snapshot plus the log. Round-trip and
+   crafted-input tests. In parallel: an Oxen prototype behind the same trait (commit, checkout,
+   store size), to choose between them.
 2. Entities: the first components (portals, spawn, lights, plots) moved out of JSON settings and
    the `meta` table into region entities, with stable names and a migration test.
 3. Levels as files: the Void, the yard and the islands converted; the seeding path reads them.
 4. Region blobs on the wire, with the streaming messages from the scaling design.
 5. Client region cache (disk and browser storage) checked by hash.
+6. Structures: plots' contents as structure versions, instances by reference, saving and placing
+   from the inventory.
+7. Owners' restore: the snapshot list and restore on the site and in the game.
 
 ## Open questions
 
-- Do player-built structures become entities (movable, copyable as a unit) or stay blocks?
-- Where do snapshots live in production: next to the world's SQLite file, or in object storage?
-- How long are snapshots kept, and can world owners restore their world themselves?
+- Oxen: can older commits be squashed for the week's retention, or is history kept and only the
+  last week listed? What does a self-hosted `oxen-server` on R2 cost to run?
+- Structures: how big before a build must be split; who may copy someone else's structure
+  (ownership, credit, a marketplace later)?
+- Restore: may an owner let others (their group) restore, and does a restore need a cooldown?
