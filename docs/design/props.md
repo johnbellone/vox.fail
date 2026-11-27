@@ -306,6 +306,7 @@ Blocks stay the only thing in chunk data. A prop with `collide: footprint` adds 
 both server and client derive it from the same instances, so prediction agrees. A closed `door`
 blocks and an open one doesn't. If the blocks a prop stands on are broken, the prop is removed
 (and returned to its owner's inventory once there is one).
+A prop whose blob the client cannot fetch or build (past its mesh cap) blocks on the server only, so the player is corrected (pulled back) there.
 
 ### Using it
 

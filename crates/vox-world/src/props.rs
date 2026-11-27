@@ -1,7 +1,10 @@
 //! Props on the client: a prop entity's blob is fetched by its hash (`data/props/<hash>.voxp`),
 //! decoded and turned into one flat-shaded mesh per hash, and each prop entity is shown at its
 //! place and turn. A prop that collides also puts its cells into [`PropOccupancy`], which walking
-//! reads beside the blocks (`vox_core::body::with_props`).
+//! reads beside the blocks (`vox_core::body::with_props`). The world's catalogue
+//! (`data/props/catalogue.json`) says which props the world accepts; a prop it does not accept is
+//! an orphan: it is still drawn, but takes no cells, as the server counts it (`bins/vox-server`
+//! props.rs).
 //!
 //! Blobs that arrive wait in a queue and are decoded and meshed within a frame budget, so a room
 //! full of new props fills in over a few frames instead of stalling the game. Meshes use Bevy's
@@ -17,7 +20,7 @@
 //! clients may show different points of the same cycle. This is looks only: collision, the
 //! server and the choice of lamps all use the resting place, so nothing depends on it.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::f32::consts::TAU;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +40,7 @@ use vox_art::{
 use vox_core::body::Occupancy;
 use vox_core::entity::{Component, EntityId, PROP_YAWS, Prop};
 use vox_format::Hash;
-use vox_format::prop::PropBlob;
+use vox_format::prop::{Catalogue, PropBlob};
 
 use crate::client::WorldClient;
 use crate::entities::WorldEntities;
@@ -166,6 +169,8 @@ struct ShownProp {
     prop: Prop,
     entity: Entity,
     info: Arc<PropInfo>,
+    /// whether it takes cells: it blocks and the world accepts it (an orphan takes none)
+    blocks: bool,
 }
 
 /// What the prop systems know of the prop entities between frames, so a change costs only what
@@ -185,6 +190,10 @@ struct PropWatch {
     generation: u64,
     /// the world changed, so `show_props` must take down everything it shows
     reset: bool,
+    /// the hashes the world's catalogue accepts, once it is read; until then every prop is accepted
+    accepted: Option<HashSet<[u8; 16]>>,
+    /// the catalogue was asked for in this world
+    catalogue_asked: bool,
 }
 
 pub struct PropPlugin;
@@ -208,6 +217,62 @@ fn setup_material(mut commands: Commands, mut materials: ResMut<Assets<StandardM
 /// Where a prop's blob lives: `data/props/<hash>.voxp`, relative to the game's files.
 pub(crate) fn blob_path(hash: [u8; 16]) -> std::path::PathBuf {
     files::base().join(format!("data/props/{}.voxp", Hash(hash).hex()))
+}
+
+/// Where a world's catalogue of accepted props is (the props folder the server reads too).
+fn catalogue_path() -> std::path::PathBuf {
+    files::base().join("data/props/catalogue.json")
+}
+
+/// The hashes a catalogue accepts. A catalogue that does not decode (or is empty, as a failed
+/// browser fetch leaves it) accepts nothing, as the server's does.
+fn accepted_of(bytes: &[u8]) -> HashSet<[u8; 16]> {
+    match Catalogue::decode(bytes) {
+        Ok(cat) => cat.props.values().map(|e| e.hash.0).collect(),
+        Err(why) => {
+            crate::note!("[props] catalogue: {why}");
+            HashSet::new()
+        }
+    }
+}
+
+/// The catalogue's accepted hashes once it can be read. It is asked for once per world and read
+/// each frame until it is here; on the desktop a missing file stays missing, so it accepts nothing.
+/// `None` while it is still on its way (or already read).
+fn read_catalogue(watch: &mut PropWatch) -> Option<HashSet<[u8; 16]>> {
+    if watch.accepted.is_some() {
+        return None;
+    }
+    let path = catalogue_path();
+    match files::read(&path) {
+        Some(bytes) => Some(accepted_of(&bytes)),
+        None => {
+            if !watch.catalogue_asked {
+                files::want(&path);
+                watch.catalogue_asked = true;
+            }
+            (!cfg!(target_arch = "wasm32")).then(HashSet::new)
+        }
+    }
+}
+
+/// Records the catalogue's accepted hashes. Until now every prop was accepted and may have taken
+/// cells, so each prop the catalogue does not accept goes in `dirty`: it is taken down and shown
+/// again without its cells.
+fn accept(watch: &mut PropWatch, entities: &WorldEntities, accepted: HashSet<[u8; 16]>) {
+    for (id, (_, c)) in &entities.map {
+        if let Component::Prop(p) = c
+            && !accepted.contains(&p.prop)
+        {
+            watch.dirty.insert(*id);
+        }
+    }
+    watch.accepted = Some(accepted);
+}
+
+/// Whether the catalogue accepts a prop's hash. Before it is read, every prop is accepted.
+fn is_accepted(accepted: Option<&HashSet<[u8; 16]>>, hash: &[u8; 16]) -> bool {
+    accepted.is_none_or(|set| set.contains(hash))
 }
 
 /// Records a failed fetch or read: asked again after `RETRY_SECS`, or given up on after `MAX_TRIES`.
@@ -295,13 +360,13 @@ fn reconcile(
     let mut despawn = Vec::new();
     let mut rebuild = false;
     if std::mem::take(&mut watch.reset) {
-        rebuild = shown.values().any(|s| s.info.solid);
+        rebuild = shown.values().any(|s| s.blocks);
         despawn.extend(std::mem::take(shown).into_values().map(|s| s.entity));
     }
     for id in std::mem::take(&mut watch.dirty) {
         if let Some(old) = shown.remove(&id) {
             despawn.push(old.entity);
-            rebuild |= old.info.solid;
+            rebuild |= old.blocks;
         }
         if let Some((_, Component::Prop(p))) = entities.map.get(&id)
             && ready(&p.prop)
@@ -312,10 +377,21 @@ fn reconcile(
     (despawn, rebuild)
 }
 
-/// Records a prop as shown and adds its cells to the occupancy.
-fn show_one(shown: &mut BTreeMap<EntityId, ShownProp>, occupancy: &mut Occupancy, id: EntityId, prop: Prop, entity: Entity, info: Arc<PropInfo>) {
-    add_cells(occupancy, &prop, &info);
-    shown.insert(id, ShownProp { prop, entity, info });
+/// Records a prop as shown and, when it takes cells, adds them to the occupancy.
+fn show_one(
+    shown: &mut BTreeMap<EntityId, ShownProp>,
+    occupancy: &mut Occupancy,
+    id: EntityId,
+    prop: Prop,
+    entity: Entity,
+    info: Arc<PropInfo>,
+    accepted: Option<&HashSet<[u8; 16]>>,
+) {
+    let blocks = info.solid && is_accepted(accepted, &prop.prop);
+    if blocks {
+        add_cells(occupancy, &prop, &info);
+    }
+    shown.insert(id, ShownProp { prop, entity, info, blocks });
 }
 
 /// Asks for the blobs of the props that are on screen, and takes in the ones that arrived (they
@@ -326,6 +402,12 @@ fn fetch_props(entities: Res<WorldEntities>, time: Res<Time<Real>>, mut cache: R
     {
         let entries = &cache.entries;
         sync_watch(&mut watch, &entities, entities.is_changed(), |h| matches!(entries.get(h), Some(Entry::Ready { .. })));
+    }
+    // the catalogue, once it is here: the props it does not accept are classified again now
+    if let Some(accepted) = read_catalogue(&mut watch) {
+        accept(&mut watch, &entities, accepted);
+        let entries = &cache.entries;
+        sync_watch(&mut watch, &entities, false, |h| matches!(entries.get(h), Some(Entry::Ready { .. })));
     }
     let PropWatch { waiting, asked, .. } = &mut *watch;
 
@@ -413,18 +495,16 @@ fn load(bytes: &[u8], hash: [u8; 16]) -> Result<(Mesh, PropInfo), String> {
     Ok((parts.into_mesh(), info))
 }
 
-/// Whether a prop blocks walking, and so adds its cells to the occupancy.
+/// Adds a prop's footprint cells to the occupancy. The caller decides whether it takes cells.
 fn add_cells(occupancy: &mut Occupancy, prop: &Prop, info: &PropInfo) {
-    if info.solid {
-        occupancy.add_prop(prop.at, prop.yaw, &info.footprint, info.height);
-    }
+    occupancy.add_prop(prop.at, prop.yaw, &info.footprint, info.height);
 }
 
 /// The occupancy of the props shown, rebuilt from scratch. Used when a shown prop that blocks is
 /// removed or moved: `Occupancy` can add cells but not take them away, and two props may share one.
 fn occupancy_of(shown: &BTreeMap<EntityId, ShownProp>) -> Occupancy {
     let mut cells = Occupancy::default();
-    for s in shown.values() {
+    for s in shown.values().filter(|s| s.blocks) {
         add_cells(&mut cells, &s.prop, &s.info);
     }
     cells
@@ -469,7 +549,7 @@ fn show_props(
     if rebuild {
         occupancy.0 = occupancy_of(&shown);
     }
-    let PropWatch { waiting, spawn, .. } = &mut *watch;
+    let PropWatch { waiting, spawn, accepted, .. } = &mut *watch;
 
     // props still waiting whose blob has just been built are ready to show
     if blobs_arrived {
@@ -509,7 +589,7 @@ fn show_props(
             spawned.insert(PropMotion { base, kinds, phase: phase_of(id) });
         }
         let entity = spawned.id();
-        show_one(&mut shown, &mut occupancy.0, id, p.clone(), entity, info);
+        show_one(&mut shown, &mut occupancy.0, id, p.clone(), entity, info, accepted.as_ref());
     }
 
     // the cache keeps its meshes within the cap; the ones on screen are marked so they stay, and
@@ -1022,12 +1102,12 @@ mod tests {
     }
 
     fn put(shown: &mut BTreeMap<EntityId, ShownProp>, occ: &mut Occupancy, id: EntityId, prop: Prop, info: Arc<PropInfo>) {
-        show_one(shown, occ, id, prop, Entity::PLACEHOLDER, info);
+        show_one(shown, occ, id, prop, Entity::PLACEHOLDER, info, None);
     }
 
     fn lift(shown: &mut BTreeMap<EntityId, ShownProp>, occ: &mut Occupancy, id: EntityId) {
         if let Some(old) = shown.remove(&id)
-            && old.info.solid
+            && old.blocks
         {
             *occ = occupancy_of(shown);
         }
@@ -1047,7 +1127,7 @@ mod tests {
         }
         for id in take_spawns(&mut watch.spawn) {
             if let Some((_, Component::Prop(p))) = ents.map.get(&id) {
-                show_one(shown, occ, id, p.clone(), Entity::PLACEHOLDER, solid.clone());
+                show_one(shown, occ, id, p.clone(), Entity::PLACEHOLDER, solid.clone(), None);
             }
         }
         despawn
@@ -1141,6 +1221,56 @@ mod tests {
         // in flight or queued: nothing to do
         assert_eq!(wait_step(Some(&Entry::Asked { since: 0.0, tries: 0 }), 1.0), Wait::Keep);
         assert_eq!(wait_step(Some(&Entry::Queued), 1.0), Wait::Keep);
+    }
+
+    #[test]
+    fn an_orphan_is_shown_but_takes_no_cells() {
+        let (mut shown, mut occ) = (BTreeMap::new(), Occupancy::default());
+        let solid = info(true);
+        // the catalogue accepts another hash, so the prop at [7; 16] is an orphan
+        let other = HashSet::from([[1u8; 16]]);
+        show_one(&mut shown, &mut occ, EntityId(1), prop_at([0, 0, 0], 0), Entity::PLACEHOLDER, solid.clone(), Some(&other));
+        assert_eq!(shown.len(), 1, "an orphan is still drawn");
+        assert!(!shown[&EntityId(1)].blocks);
+        assert_eq!(occ, Occupancy::default());
+        assert_eq!(occ, occupancy_of(&shown));
+
+        // the same prop, once accepted, takes its cells
+        let accepted = HashSet::from([[7u8; 16]]);
+        show_one(&mut shown, &mut occ, EntityId(2), prop_at([40, 0, 0], 0), Entity::PLACEHOLDER, solid.clone(), Some(&accepted));
+        assert!(shown[&EntityId(2)].blocks);
+        assert_eq!(occ, occupancy_of(&shown));
+        assert!(!occ.contains(vox_core::body::prop_footprint_cells([0, 0, 0], 0, &solid.footprint, solid.height)[0]));
+    }
+
+    #[test]
+    fn a_catalogue_that_arrives_marks_the_props_it_does_not_accept() {
+        let (mut watch, mut ents) = (PropWatch::default(), WorldEntities::default());
+        let orphan = Prop { prop: [8; 16], ..prop_at([0, 0, 0], 0) };
+        ents.apply(&[change(1, 1, Some(prop_at([0, 0, 0], 0))), change(2, 2, Some(orphan))]);
+        sync_watch(&mut watch, &ents, true, |_| true);
+        watch.dirty.clear();
+
+        accept(&mut watch, &ents, HashSet::from([[7u8; 16]]));
+        assert_eq!(watch.dirty.iter().copied().collect::<Vec<_>>(), vec![EntityId(2)]);
+        assert_eq!(watch.accepted, Some(HashSet::from([[7u8; 16]])));
+        assert!(is_accepted(watch.accepted.as_ref(), &[7; 16]));
+        assert!(!is_accepted(watch.accepted.as_ref(), &[8; 16]));
+        // before the catalogue is read, every prop is accepted
+        assert!(is_accepted(None, &[8; 16]));
+    }
+
+    #[test]
+    fn a_new_world_forgets_its_catalogue_and_asks_again() {
+        let (mut watch, mut ents) = (PropWatch::default(), WorldEntities::default());
+        sync_watch(&mut watch, &ents, true, |_| true);
+        watch.accepted = Some(HashSet::new());
+        watch.catalogue_asked = true;
+
+        ents.clear();
+        sync_watch(&mut watch, &ents, true, |_| true);
+        assert!(watch.accepted.is_none());
+        assert!(!watch.catalogue_asked);
     }
 
     #[test]
