@@ -17,8 +17,9 @@
 //! clients may show different points of the same cycle. This is looks only: collision, the
 //! server and the choice of lamps all use the resting place, so nothing depends on it.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::f32::consts::TAU;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::{
@@ -62,6 +63,10 @@ const BUILD_BUDGET: Duration = Duration::from_millis(5);
 #[cfg(target_arch = "wasm32")]
 const BUILD_BUDGET: Duration = Duration::from_millis(3);
 
+/// Most props spawned in one frame. The rest wait in the spawn queue for later frames, so a room
+/// of new props does not cost one frame a long stall.
+const SPAWN_CAP: usize = 64;
+
 /// Colours for voxels, by palette index, until the project palette file exists (vox-tol.4.14
 /// will read the palette the blob's `palette_version` names). Index 0 is empty and never stored.
 const FALLBACK_RAMP: [[u8; 3]; 8] = [
@@ -93,7 +98,7 @@ enum Entry {
     /// arrived, waiting in the build queue
     Queued,
     /// `seen` is the last [`PropCache::tick`] it was shown at
-    Ready { mesh: Handle<Mesh>, info: PropInfo, seen: u64 },
+    Ready { mesh: Handle<Mesh>, info: Arc<PropInfo>, seen: u64 },
     /// a failed fetch or read; asked again after `retry_at`, until `MAX_TRIES`
     Failed { tries: u8, retry_at: f64 },
 }
@@ -155,9 +160,32 @@ pub struct PropOccupancy(pub Occupancy);
 #[derive(Resource)]
 struct PropMaterial(Handle<StandardMaterial>);
 
-/// The prop entities on screen, by the entity's id, with the prop they show.
-#[derive(Default)]
-struct Shown(BTreeMap<EntityId, (Prop, Entity)>);
+/// A prop entity on screen: the prop it shows, its spawned entity, and the definition's info
+/// (shared with the cache, so the occupancy can be rebuilt from here without looking anything up).
+struct ShownProp {
+    prop: Prop,
+    entity: Entity,
+    info: Arc<PropInfo>,
+}
+
+/// What the prop systems know of the prop entities between frames, so a change costs only what
+/// changed. `seen` is the seq each prop entity had when last diffed (`WorldEntities` keeps one per
+/// entity and has no change log). `dirty` are the entities that changed since `show_props` last
+/// ran. `waiting` are the prop entities whose blob is not ready yet (asked for, or not yet).
+/// `asked` are the blobs in flight. `spawn` are the entities ready to show, drained by
+/// [`SPAWN_CAP`] a frame.
+#[derive(Resource, Default)]
+struct PropWatch {
+    seen: BTreeMap<EntityId, u64>,
+    dirty: BTreeSet<EntityId>,
+    waiting: BTreeSet<EntityId>,
+    asked: Vec<[u8; 16]>,
+    spawn: VecDeque<EntityId>,
+    /// the [`WorldEntities::generation`] this was built for; another one is a new world
+    generation: u64,
+    /// the world changed, so `show_props` must take down everything it shows
+    reset: bool,
+}
 
 pub struct PropPlugin;
 
@@ -165,6 +193,7 @@ impl Plugin for PropPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldEntities>()
             .init_resource::<PropCache>()
+            .init_resource::<PropWatch>()
             .init_resource::<PropOccupancy>()
             .add_systems(Startup, setup_material)
             .add_systems(Update, (fetch_props, build_props, show_props).chain().after(crate::client::receive))
@@ -192,14 +221,116 @@ fn fail(entries: &mut HashMap<[u8; 16], Entry>, hash: [u8; 16], tries: u8, now: 
     entries.insert(hash, entry);
 }
 
+/// What a waiting prop entity's blob needs next.
+#[derive(Debug, PartialEq)]
+enum Wait {
+    /// ask for it now, after this many failures
+    Ask(u8),
+    /// nothing yet: in flight, queued, or a failure whose retry is not due
+    Keep,
+    /// stop waiting: it is here, or it was given up on
+    Drop,
+}
+
+/// What to do about a waiting entity, from its blob's entry. A failure not yet due stays
+/// waiting (it is retried when due); only a blob given up on (`MAX_TRIES`) leaves.
+fn wait_step(entry: Option<&Entry>, now: f64) -> Wait {
+    match entry {
+        None => Wait::Ask(0),
+        Some(Entry::Failed { tries, .. }) if *tries >= MAX_TRIES => Wait::Drop,
+        Some(Entry::Failed { tries, retry_at }) if now >= *retry_at => Wait::Ask(*tries),
+        // shown by `show_props` once built, which takes it out of the waiting set
+        _ => Wait::Keep,
+    }
+}
+
+/// Brings the watch up to date with the entities: a new world (another generation) forgets
+/// everything, then, when `scan` says the entities changed, the prop entities whose seq differs
+/// from the last look, and the ones that are gone, go in `dirty`. A dirty entity whose blob is
+/// not `ready` waits for it; the others do not.
+fn sync_watch(watch: &mut PropWatch, entities: &WorldEntities, scan: bool, ready: impl Fn(&[u8; 16]) -> bool) {
+    let new_world = watch.generation != entities.generation;
+    if new_world {
+        // an id and seq may come again in the new world with another prop, so nothing carries over
+        let generation = entities.generation;
+        *watch = PropWatch { generation, reset: true, asked: std::mem::take(&mut watch.asked), ..PropWatch::default() };
+    }
+    let PropWatch { seen, dirty, waiting, .. } = watch;
+    if scan || new_world {
+        for (id, (seq, c)) in &entities.map {
+            if matches!(c, Component::Prop(_)) && seen.get(id) != Some(seq) {
+                seen.insert(*id, *seq);
+                dirty.insert(*id);
+            }
+        }
+        seen.retain(|id, _| {
+            let here = matches!(entities.map.get(id), Some((_, Component::Prop(_))));
+            if !here {
+                dirty.insert(*id);
+            }
+            here
+        });
+    }
+    for id in dirty.iter() {
+        match entities.map.get(id) {
+            Some((_, Component::Prop(p))) if !ready(&p.prop) => {
+                waiting.insert(*id);
+            }
+            _ => {
+                waiting.remove(id);
+            }
+        }
+    }
+}
+
+/// Takes down what changed (or everything, after a world change) and queues the changed props
+/// that are still here and ready to go back up. Returns the entities to despawn, and whether
+/// the occupancy must be rebuilt (a solid prop went: its cells may be shared with another).
+fn reconcile(
+    shown: &mut BTreeMap<EntityId, ShownProp>,
+    watch: &mut PropWatch,
+    entities: &WorldEntities,
+    ready: impl Fn(&[u8; 16]) -> bool,
+) -> (Vec<Entity>, bool) {
+    let mut despawn = Vec::new();
+    let mut rebuild = false;
+    if std::mem::take(&mut watch.reset) {
+        rebuild = shown.values().any(|s| s.info.solid);
+        despawn.extend(std::mem::take(shown).into_values().map(|s| s.entity));
+    }
+    for id in std::mem::take(&mut watch.dirty) {
+        if let Some(old) = shown.remove(&id) {
+            despawn.push(old.entity);
+            rebuild |= old.info.solid;
+        }
+        if let Some((_, Component::Prop(p))) = entities.map.get(&id)
+            && ready(&p.prop)
+        {
+            watch.spawn.push_back(id);
+        }
+    }
+    (despawn, rebuild)
+}
+
+/// Records a prop as shown and adds its cells to the occupancy.
+fn show_one(shown: &mut BTreeMap<EntityId, ShownProp>, occupancy: &mut Occupancy, id: EntityId, prop: Prop, entity: Entity, info: Arc<PropInfo>) {
+    add_cells(occupancy, &prop, &info);
+    shown.insert(id, ShownProp { prop, entity, info });
+}
+
 /// Asks for the blobs of the props that are on screen, and takes in the ones that arrived (they
-/// wait in the build queue).
-fn fetch_props(entities: Res<WorldEntities>, time: Res<Time<Real>>, mut cache: ResMut<PropCache>) {
+/// wait in the build queue). Only the entities that changed (by their seq) and the ones still
+/// waiting for a blob are looked at, not every entity each frame.
+fn fetch_props(entities: Res<WorldEntities>, time: Res<Time<Real>>, mut cache: ResMut<PropCache>, mut watch: ResMut<PropWatch>) {
     let now = time.elapsed_secs_f64();
+    {
+        let entries = &cache.entries;
+        sync_watch(&mut watch, &entities, entities.is_changed(), |h| matches!(entries.get(h), Some(Entry::Ready { .. })));
+    }
+    let PropWatch { waiting, asked, .. } = &mut *watch;
 
     // arrivals and timeouts first, so the ones still waiting count against the limit
-    let asked: Vec<[u8; 16]> = cache.entries.iter().filter(|(_, e)| matches!(e, Entry::Asked { .. })).map(|(h, _)| *h).collect();
-    for hash in asked {
+    for hash in std::mem::take(asked) {
         let Some(Entry::Asked { since, tries }) = cache.entries.get(&hash) else { continue };
         let (since, tries) = (*since, *tries);
         // an empty file is a browser fetch that failed (`files::put` keeps the empty bytes), so
@@ -211,26 +342,35 @@ fn fetch_props(entities: Res<WorldEntities>, time: Res<Time<Real>>, mut cache: R
             }
             // in the browser it is still on its way, unless it has taken too long; on the
             // desktop a missing file stays missing, so it is failed for now at once
-            None if cfg!(target_arch = "wasm32") && now - since < RETRY_SECS => {}
+            None if cfg!(target_arch = "wasm32") && now - since < RETRY_SECS => asked.push(hash),
             None => fail(&mut cache.entries, hash, tries + 1, now),
         }
     }
 
-    // then ask for the ones on screen that are not here yet
-    let mut in_flight = cache.entries.values().filter(|e| matches!(e, Entry::Asked { .. })).count();
-    for (_, c) in entities.map.values() {
-        if in_flight >= IN_FLIGHT {
+    // then ask for the ones waiting that are not here yet (and their retry is due)
+    let mut gone = Vec::new();
+    for id in waiting.iter() {
+        if asked.len() >= IN_FLIGHT {
             break;
         }
-        let Component::Prop(p) = c else { continue };
-        let tries = match cache.entries.get(&p.prop) {
-            None => 0,
-            Some(Entry::Failed { tries, retry_at }) if *tries < MAX_TRIES && now >= *retry_at => *tries,
-            _ => continue,
+        let Some((_, Component::Prop(p))) = entities.map.get(id) else {
+            gone.push(*id);
+            continue;
+        };
+        let tries = match wait_step(cache.entries.get(&p.prop), now) {
+            Wait::Ask(tries) => tries,
+            Wait::Keep => continue,
+            Wait::Drop => {
+                gone.push(*id);
+                continue;
+            }
         };
         files::want(&blob_path(p.prop));
         cache.entries.insert(p.prop, Entry::Asked { since: now, tries });
-        in_flight += 1;
+        asked.push(p.prop);
+    }
+    for id in gone {
+        waiting.remove(&id);
     }
 }
 
@@ -243,7 +383,7 @@ fn build_props(mut cache: ResMut<PropCache>, mut meshes: ResMut<Assets<Mesh>>) {
     while let Some((hash, bytes)) = cache.queue.pop_front() {
         let tick = cache.tick;
         let entry = match load(&bytes, hash) {
-            Ok((mesh, info)) => Entry::Ready { mesh: meshes.add(mesh), info, seen: tick },
+            Ok((mesh, info)) => Entry::Ready { mesh: meshes.add(mesh), info: Arc::new(info), seen: tick },
             Err(why) => {
                 crate::note!("[props] {}: {why}", Hash(hash).hex());
                 Entry::Failed { tries: MAX_TRIES, retry_at: f64::INFINITY }
@@ -273,49 +413,88 @@ fn load(bytes: &[u8], hash: [u8; 16]) -> Result<(Mesh, PropInfo), String> {
     Ok((parts.into_mesh(), info))
 }
 
+/// Whether a prop blocks walking, and so adds its cells to the occupancy.
+fn add_cells(occupancy: &mut Occupancy, prop: &Prop, info: &PropInfo) {
+    if info.solid {
+        occupancy.add_prop(prop.at, prop.yaw, &info.footprint, info.height);
+    }
+}
+
+/// The occupancy of the props shown, rebuilt from scratch. Used when a shown prop that blocks is
+/// removed or moved: `Occupancy` can add cells but not take them away, and two props may share one.
+fn occupancy_of(shown: &BTreeMap<EntityId, ShownProp>) -> Occupancy {
+    let mut cells = Occupancy::default();
+    for s in shown.values() {
+        add_cells(&mut cells, &s.prop, &s.info);
+    }
+    cells
+}
+
+/// The first spawns for this frame: up to [`SPAWN_CAP`] off the queue, the rest stay for later.
+fn take_spawns(queue: &mut VecDeque<EntityId>) -> Vec<EntityId> {
+    let n = queue.len().min(SPAWN_CAP);
+    queue.drain(..n).collect()
+}
+
 /// Shows each prop on screen whose blob is loaded, at its place and turn, and removes the ones
-/// that went or changed. Runs when the entities or the blobs changed.
+/// that went or changed. Only the entities that changed since the last run are touched: a change
+/// is taken down and up again, a new blob's props are queued, and at most [`SPAWN_CAP`] new props
+/// are spawned a frame, the rest on later frames. Runs while anything is dirty, a blob was built,
+/// or spawns are still queued.
 fn show_props(
     mut commands: Commands,
     entities: Res<WorldEntities>,
     mut cache: ResMut<PropCache>,
-    mut shown: Local<Shown>,
+    mut watch: ResMut<PropWatch>,
+    mut shown: Local<BTreeMap<EntityId, ShownProp>>,
     material: Res<PropMaterial>,
     mut occupancy: ResMut<PropOccupancy>,
 ) {
-    if !entities.is_changed() && !cache.changed {
+    if watch.dirty.is_empty() && !watch.reset && !cache.changed && watch.spawn.is_empty() {
         return;
     }
-    cache.changed = false;
+    let blobs_arrived = std::mem::take(&mut cache.changed);
     cache.tick += 1;
     let tick = cache.tick;
 
-    let mut wanted: BTreeMap<EntityId, (Prop, Handle<Mesh>, Vec<MotionKind>)> = BTreeMap::new();
-    let mut cells = Occupancy::default();
-    for (id, (_, c)) in &entities.map {
-        let Component::Prop(p) = c else { continue };
-        let Some(Entry::Ready { mesh, info, seen }) = cache.entries.get_mut(&p.prop) else { continue };
-        *seen = tick;
-        if info.solid {
-            cells.add_prop(p.at, p.yaw, &info.footprint, info.height);
-        }
-        wanted.insert(*id, (p.clone(), mesh.clone(), moving(&info.motions)));
+    // what changed comes down; a changed prop that is still here goes back up (queued)
+    let (despawn, rebuild) = {
+        let entries = &cache.entries;
+        reconcile(&mut shown, &mut watch, &entities, |h| matches!(entries.get(h), Some(Entry::Ready { .. })))
+    };
+    for e in despawn {
+        commands.entity(e).try_despawn();
     }
-    evict(&mut cache.entries, tick);
-    occupancy.0 = cells;
+    // a removed cell may be shared with another prop, so the occupancy is rebuilt once here
+    if rebuild {
+        occupancy.0 = occupancy_of(&shown);
+    }
+    let PropWatch { waiting, spawn, .. } = &mut *watch;
 
-    // what went or changed comes down; what is new goes up
-    shown.0.retain(|id, (p, e)| {
-        let keep = wanted.get(id).is_some_and(|(w, _, _)| w == p);
-        if !keep {
-            commands.entity(*e).try_despawn();
-        }
-        keep
-    });
-    for (id, (p, mesh, kinds)) in wanted {
-        if shown.0.contains_key(&id) {
+    // props still waiting whose blob has just been built are ready to show
+    if blobs_arrived {
+        let entries = &cache.entries;
+        waiting.retain(|id| match entities.map.get(id) {
+            Some((_, Component::Prop(p))) if matches!(entries.get(&p.prop), Some(Entry::Ready { .. })) => {
+                spawn.push_back(*id);
+                false
+            }
+            _ => true,
+        });
+    }
+
+    for id in take_spawns(spawn) {
+        if shown.contains_key(&id) {
             continue;
         }
+        let Some((_, Component::Prop(p))) = entities.map.get(&id) else { continue };
+        let Some(Entry::Ready { mesh, info, seen }) = cache.entries.get_mut(&p.prop) else {
+            waiting.insert(id);
+            continue;
+        };
+        *seen = tick;
+        let (mesh, info) = (mesh.clone(), info.clone());
+
         let at = Vec3::new(p.at[0] as f32, p.at[1] as f32, p.at[2] as f32) * UNIT_M;
         let base = Transform::from_translation(at).with_rotation(turn_of(p.yaw));
         let mut spawned = commands.spawn((
@@ -325,11 +504,33 @@ fn show_props(
             Visibility::default(),
             Name::new(format!("prop {}", id.0)),
         ));
+        let kinds = moving(&info.motions);
         if !kinds.is_empty() {
             spawned.insert(PropMotion { base, kinds, phase: phase_of(id) });
         }
-        let e = spawned.id();
-        shown.0.insert(id, (p, e));
+        let entity = spawned.id();
+        show_one(&mut shown, &mut occupancy.0, id, p.clone(), entity, info);
+    }
+
+    // the cache keeps its meshes within the cap; the ones on screen are marked so they stay, and
+    // the entities whose mesh was dropped go back to waiting for it
+    if cache.entries.len() > MAX_MESHES {
+        for s in shown.values() {
+            if let Some(Entry::Ready { seen, .. }) = cache.entries.get_mut(&s.prop.prop) {
+                *seen = tick;
+            }
+        }
+        let dropped = evict(&mut cache.entries, tick);
+        if !dropped.is_empty() {
+            for (id, (_, c)) in &entities.map {
+                if let Component::Prop(p) = c
+                    && dropped.contains(&p.prop)
+                    && !shown.contains_key(id)
+                {
+                    waiting.insert(*id);
+                }
+            }
+        }
     }
 }
 
@@ -487,10 +688,11 @@ fn light_rgb(name: &str) -> [f32; 3] {
     }
 }
 
-/// Drops the least recently shown meshes beyond [`MAX_MESHES`]. Meshes shown this pass carry
-/// `tick` and are never dropped, so the cache may stay over the cap while more props than that
-/// are on screen; the dropped ones are asked for again when they come back into view.
-fn evict(entries: &mut HashMap<[u8; 16], Entry>, tick: u64) {
+/// Drops the least recently shown meshes beyond [`MAX_MESHES`], and returns their hashes. Meshes
+/// shown this pass carry `tick` and are never dropped, so the cache may stay over the cap while
+/// more props than that are on screen; the dropped ones are asked for again when they come back
+/// into view.
+fn evict(entries: &mut HashMap<[u8; 16], Entry>, tick: u64) -> Vec<[u8; 16]> {
     let mut ready: Vec<(u64, [u8; 16])> = entries
         .iter()
         .filter_map(|(hash, e)| match e {
@@ -498,8 +700,9 @@ fn evict(entries: &mut HashMap<[u8; 16], Entry>, tick: u64) {
             _ => None,
         })
         .collect();
+    let mut dropped = Vec::new();
     if ready.len() <= MAX_MESHES {
-        return;
+        return dropped;
     }
     ready.sort_unstable();
     let excess = ready.len() - MAX_MESHES;
@@ -508,7 +711,9 @@ fn evict(entries: &mut HashMap<[u8; 16], Entry>, tick: u64) {
             break;
         }
         entries.remove(&hash);
+        dropped.push(hash);
     }
+    dropped
 }
 
 /// Flat faces for a grid: one quad per face that touches no filled voxel, with coplanar faces of
@@ -806,5 +1011,148 @@ mod tests {
     #[test]
     fn a_socket_on_the_pivot_is_half_a_voxel_up() {
         assert!(close(socket_local([4, 2, 4], [4, 2, 4], 0.1).to_array(), [0.0, 0.05, 0.0]));
+    }
+
+    fn info(solid: bool) -> Arc<PropInfo> {
+        Arc::new(PropInfo { footprint: vec![[0, 0], [1, 0], [0, 1]], height: 2, solid, states: Vec::new(), lights: Vec::new(), motions: Vec::new() })
+    }
+
+    fn prop_at(at: [i32; 3], yaw: u8) -> Prop {
+        Prop { prop: [7; 16], at, yaw, variant: 0, state: 0, channel: None, text: None, owner: None }
+    }
+
+    fn put(shown: &mut BTreeMap<EntityId, ShownProp>, occ: &mut Occupancy, id: EntityId, prop: Prop, info: Arc<PropInfo>) {
+        show_one(shown, occ, id, prop, Entity::PLACEHOLDER, info);
+    }
+
+    fn lift(shown: &mut BTreeMap<EntityId, ShownProp>, occ: &mut Occupancy, id: EntityId) {
+        if let Some(old) = shown.remove(&id)
+            && old.info.solid
+        {
+            *occ = occupancy_of(shown);
+        }
+    }
+
+    fn change(id: u32, seq: u64, prop: Option<Prop>) -> vox_core::wire::EntityChange {
+        vox_core::wire::EntityChange { entity: EntityId(id), seq, component: prop.map(Component::Prop) }
+    }
+
+    /// One frame of the prop systems over plain data: the watch is synced, then reconciled, then
+    /// everything queued is shown (every blob is ready). Returns the entities despawned.
+    fn frame(watch: &mut PropWatch, shown: &mut BTreeMap<EntityId, ShownProp>, occ: &mut Occupancy, ents: &WorldEntities, solid: &Arc<PropInfo>) -> Vec<Entity> {
+        sync_watch(watch, ents, true, |_| true);
+        let (despawn, rebuild) = reconcile(shown, watch, ents, |_| true);
+        if rebuild {
+            *occ = occupancy_of(shown);
+        }
+        for id in take_spawns(&mut watch.spawn) {
+            if let Some((_, Component::Prop(p))) = ents.map.get(&id) {
+                show_one(shown, occ, id, p.clone(), Entity::PLACEHOLDER, solid.clone());
+            }
+        }
+        despawn
+    }
+
+    #[test]
+    fn occupancy_after_adds_moves_and_removes_equals_a_full_rebuild() {
+        let (mut shown, mut occ) = (BTreeMap::new(), Occupancy::default());
+        let solid = info(true);
+        put(&mut shown, &mut occ, EntityId(1), prop_at([0, 0, 0], 0), solid.clone());
+        // the same place as the first, so every one of its cells is shared
+        put(&mut shown, &mut occ, EntityId(2), prop_at([0, 0, 0], 0), solid.clone());
+        put(&mut shown, &mut occ, EntityId(3), prop_at([40, 0, 0], 0), info(false));
+        assert_eq!(occ, occupancy_of(&shown));
+
+        // move the first away: the cells it shared stay blocked by the second
+        lift(&mut shown, &mut occ, EntityId(1));
+        put(&mut shown, &mut occ, EntityId(1), prop_at([-5, 0, 4], 12), solid.clone());
+        assert_eq!(occ, occupancy_of(&shown));
+        for c in vox_core::body::prop_footprint_cells([0, 0, 0], 0, &solid.footprint, solid.height) {
+            assert!(occ.contains(c), "cell {c:?} of the second prop is still blocked");
+        }
+
+        // remove the second and the non-solid third
+        lift(&mut shown, &mut occ, EntityId(2));
+        lift(&mut shown, &mut occ, EntityId(3));
+        assert_eq!(occ, occupancy_of(&shown));
+        assert_eq!(shown.len(), 1);
+    }
+
+    #[test]
+    fn the_frame_logic_follows_add_move_and_remove() {
+        let (mut watch, mut shown, mut occ, mut ents) = (PropWatch::default(), BTreeMap::new(), Occupancy::default(), WorldEntities::default());
+        let solid = info(true);
+        ents.apply(&[change(1, 1, Some(prop_at([0, 0, 0], 0))), change(2, 2, Some(prop_at([0, 0, 0], 0)))]);
+        assert!(frame(&mut watch, &mut shown, &mut occ, &ents, &solid).is_empty());
+        assert_eq!(shown.len(), 2);
+        assert_eq!(occ, occupancy_of(&shown));
+
+        // a frame with nothing changed leaves everything as it is
+        assert!(frame(&mut watch, &mut shown, &mut occ, &ents, &solid).is_empty());
+        assert_eq!(shown.len(), 2);
+
+        // move entity 1 (a newer seq): it is taken down and shown at its new place
+        ents.apply(&[change(1, 3, Some(prop_at([-5, 0, 4], 12)))]);
+        assert_eq!(frame(&mut watch, &mut shown, &mut occ, &ents, &solid).len(), 1);
+        assert_eq!(shown[&EntityId(1)].prop.at, [-5, 0, 4]);
+        assert_eq!(occ, occupancy_of(&shown));
+
+        // remove entity 2
+        ents.apply(&[change(2, 4, None)]);
+        assert_eq!(frame(&mut watch, &mut shown, &mut occ, &ents, &solid).len(), 1);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(occ, occupancy_of(&shown));
+    }
+
+    #[test]
+    fn a_world_change_with_the_same_id_and_seq_shows_the_new_prop() {
+        let (mut watch, mut shown, mut occ, mut ents) = (PropWatch::default(), BTreeMap::new(), Occupancy::default(), WorldEntities::default());
+        let solid = info(true);
+        ents.apply(&[change(1, 5, Some(prop_at([0, 0, 0], 0)))]);
+        frame(&mut watch, &mut shown, &mut occ, &ents, &solid);
+        assert_eq!(shown[&EntityId(1)].prop.at, [0, 0, 0]);
+
+        // the new world's entities arrive in the same run as the clear: same id, same seq
+        ents.clear();
+        ents.apply(&[change(1, 5, Some(prop_at([100, 0, 100], 0)))]);
+        let despawn = frame(&mut watch, &mut shown, &mut occ, &ents, &solid);
+        assert_eq!(despawn.len(), 1);
+        assert_eq!(shown[&EntityId(1)].prop.at, [100, 0, 100]);
+        assert_eq!(occ, occupancy_of(&shown));
+        assert!(!occ.contains(vox_core::body::prop_footprint_cells([0, 0, 0], 0, &solid.footprint, solid.height)[0]));
+
+        // a new world with no props takes everything down
+        ents.clear();
+        frame(&mut watch, &mut shown, &mut occ, &ents, &solid);
+        assert!(shown.is_empty());
+        assert_eq!(occ, Occupancy::default());
+    }
+
+    #[test]
+    fn a_failed_fetch_keeps_waiting_until_due_and_is_given_up_at_the_cap() {
+        let failed = |tries, retry_at| Entry::Failed { tries, retry_at };
+        assert_eq!(wait_step(None, 0.0), Wait::Ask(0));
+        // a first failure that is not due yet stays waiting
+        assert_eq!(wait_step(Some(&failed(1, 10.0)), 5.0), Wait::Keep);
+        // due: asked again, with its failures counted
+        assert_eq!(wait_step(Some(&failed(1, 10.0)), 10.0), Wait::Ask(1));
+        // the cap: given up on, however late
+        assert_eq!(wait_step(Some(&failed(MAX_TRIES, f64::INFINITY)), 1e9), Wait::Drop);
+        // in flight or queued: nothing to do
+        assert_eq!(wait_step(Some(&Entry::Asked { since: 0.0, tries: 0 }), 1.0), Wait::Keep);
+        assert_eq!(wait_step(Some(&Entry::Queued), 1.0), Wait::Keep);
+    }
+
+    #[test]
+    fn a_spawn_cap_leaves_the_rest_for_later_frames_and_completes() {
+        let mut queue: VecDeque<EntityId> = (0..150).map(EntityId).collect();
+        let (mut frames, mut got) = (Vec::new(), Vec::new());
+        while !queue.is_empty() {
+            let batch = take_spawns(&mut queue);
+            frames.push(batch.len());
+            got.extend(batch);
+        }
+        assert_eq!(frames, vec![64, 64, 22]);
+        assert_eq!(got, (0..150).map(EntityId).collect::<Vec<_>>());
     }
 }

@@ -20,6 +20,10 @@ pub struct WorldEntities {
     /// a Settings entity was added, changed or removed since the receive step last looked; it
     /// clears this there and applies the new settings (`WorldClient::apply_live_settings`)
     pub settings_changed: bool,
+    /// counts the times the entities were forgotten ([`WorldEntities::clear`]), so a reader that
+    /// keeps its own state per entity can tell a new world from the same one changing (an id and
+    /// seq may repeat across worlds)
+    pub generation: u64,
 }
 
 /// Whether a component is a portal, and whether it is the settings (the two change flags).
@@ -68,6 +72,7 @@ impl WorldEntities {
     /// Forgets every entity: a new world (or the same one again after travel) sends its own.
     pub fn clear(&mut self) {
         self.map.clear();
+        self.generation += 1;
         self.portals_changed = true;
         self.settings_changed = true;
     }

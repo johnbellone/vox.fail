@@ -350,7 +350,12 @@ pub fn update(
 
     // ---- a new world, or its entities changed: its portals
     // only a portal entity rebuilds the doorways; a Spawn, Objective or Settings change does not
-    let entities_changed = std::mem::take(&mut ents.portals_changed);
+    // read first and write only when set: a write through the `ResMut` marks the entities
+    // changed, which every frame would make the prop systems rescan them
+    let entities_changed = ents.portals_changed;
+    if entities_changed {
+        ents.portals_changed = false;
+    }
     if p.built_for != w.portals_gen {
         p.from_entities = false;
     }
