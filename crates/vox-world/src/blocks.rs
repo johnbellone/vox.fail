@@ -304,13 +304,19 @@ pub fn load_level(text: &str, pal: &Palette) -> Result<HashMap<IVec3, u16>, Stri
 
 /// Where a level's file is: your own levels folder first, then the built-in ones.
 pub fn level_path(name: &str) -> Option<PathBuf> {
-    let safe: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
-    if safe.is_empty() || safe != name {
+    // a dungeon's level (what a portal into one shows) is in its own folder; nothing else may
+    // name a folder
+    let (folder, rest) = match name.strip_prefix("dungeons/") {
+        Some(rest) => ("dungeons/", rest),
+        None => ("", name),
+    };
+    let safe: String = rest.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
+    if safe.is_empty() || safe != rest {
         return None;
     }
     [crate::files::user_dir().join("levels"), crate::files::base().join("data/levels")]
         .into_iter()
-        .map(|d| d.join(format!("{safe}.json")))
+        .map(|d| d.join(format!("{folder}{safe}.json")))
         .find(|p| crate::files::exists(p))
 }
 
@@ -1012,7 +1018,10 @@ mod tests {
             }
         }
         assert!(level_path("yard").is_some());
-        assert!(level_path("../etc").is_none());
+        assert!(level_path("dungeons/crypt").is_some());
+        for bad in ["../etc", "dungeons/../yard", "dungeons/", "levels/yard", "dungeons/dungeons/crypt"] {
+            assert!(level_path(bad).is_none(), "{bad}");
+        }
     }
 }
 
