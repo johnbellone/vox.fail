@@ -3,7 +3,8 @@
 Status: **approved** (2026-11-27). **Phases 1 and 2 built**: Litestream, `start.sh`,
 `vox-supervise` and the args files are in the image. `tools/dev/litestream_probe.sh` and
 `tools/dev/container_probe.sh` pass against R2 with the real servers. The image itself hasn't
-been built yet: the first release build is its test. Phases 3 to 7 are not built.
+been built yet: the first release build is its test. **Phase 3 built**: the Worker serves the
+site, and `bun test` in `apps/edge` covers it. Phases 4 to 7 are not built.
 
 As built:
 - Litestream **0.5.18**, which replicates the whole data folder (`dir`, `watch`, `recursive`).
@@ -11,6 +12,12 @@ As built:
   top-level `<name>.db`.
 - History is `snapshot.retention: 168h` (0.5 has no day unit).
 - A wrong R2 secret stops `start.sh` before anything starts, rather than starting empty.
+- The browser client's `.wasm` is 51 MB, over the Worker's 25 MiB file limit. The Worker keeps
+  only its brotli (7.9 MB) and gzip (10.9 MB) copies and sends one with `Content-Encoding`.
+- "Offline" is now the API's offline 503, because pages always load from the Worker. The site's
+  API client then goes to the offline page, whose Try again returns to the page.
+- The Worker's files include the browser client, which only a release builds. So `edge.yml`
+  only checks, and releases deploy the Worker (phase 6).
 
 Related: [deploy/README.md](../../deploy/README.md) (today's hosting: one server behind a tunnel),
 [apps/edge/README.md](../../apps/edge/README.md) (the Worker in front of vox.fail),

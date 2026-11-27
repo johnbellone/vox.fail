@@ -1,29 +1,22 @@
 name: Edge worker
 
-# Deploys vox.fail's Cloudflare Worker (apps/edge) with the cf command line: it passes every
-# request on to the server and shows the offline page when the server can't be reached. Runs when
-# the Worker or the offline page changes on main, after the tests pass.
-#
-# The deploy job uses the "production" environment, which only main may deploy through and which
-# holds the secrets: CLOUDFLARE_API_TOKEN ("vox-edge CI": Workers Scripts Edit on the account;
-# Workers Routes Edit and Zone Read on vox.fail) and CLOUDFLARE_ACCOUNT_ID. (Required reviewers
-# would add an approval step, but GitHub's plan for this private repository doesn't offer them.)
+# Checks vox.fail's Cloudflare Worker (apps/edge): its tests, types and build. The Worker now
+# serves the whole site, browser client included, which only a release builds, so it is deployed
+# by the release workflow, not from here (docs/design/cloudflare-hosting.md).
 
 on:
   push:
     branches: [main]
     paths:
       - "apps/edge/**"
-      - "apps/site/src/features/home/Pitch.tsx"
-      - "apps/site/src/components/**"
-      - "apps/site/src/styles/**"
-      - "apps/site/src/theme.ts"
+      - "apps/site/**"
       - "docs/screenshots/**"
       - "bun.lock"
       - ".github/workflows/edge.yml"
   pull_request:
     paths:
       - "apps/edge/**"
+      - "apps/site/**"
       - ".github/workflows/edge.yml"
   workflow_dispatch:
 
@@ -46,33 +39,12 @@ jobs:
         with:
           bun-version: 1.4.5
       - run: bun install --frozen-lockfile
+      - name: Build the site (the Worker's files; no browser client here)
+        working-directory: apps/site
+        run: bun run build
       - name: Test, typecheck, build
         working-directory: apps/edge
         run: |
           bun test
           bun run typecheck
           bun run build
-
-  deploy:
-    needs: check
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.5
-      - run: bun install --frozen-lockfile
-      # cf loads cloudflare.config.ts on Node, not Bun
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Deploy
-        working-directory: apps/edge
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          bun run build
-          node node_modules/.bin/cf deploy --message "$GITHUB_SHA"

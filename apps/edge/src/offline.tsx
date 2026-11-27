@@ -5,6 +5,7 @@
 import { Button, Card, Container, Image, Paper, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { mount } from "../../site/src/components/Shell";
 import { Pitch } from "../../site/src/features/home/Pitch";
+import { backTo } from "./back";
 
 // build.ts copies docs/screenshots here; the captions are the README's, which the game drew
 const SHOTS: { file: string; caption: string }[] = [
@@ -29,7 +30,7 @@ function OfflinePage() {
               The worlds are closed for the moment, so signing in and playing will have to wait. Everything built so
               far is kept. Come back soon.
             </Text>
-            <Button variant="light" onClick={() => location.reload()}>
+            <Button variant="light" onClick={() => location.assign(backTo(location.search, location.origin))}>
               Try again
             </Button>
           </Stack>
