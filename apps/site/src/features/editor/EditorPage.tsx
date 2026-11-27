@@ -1,0 +1,199 @@
+// The world editor page (/edit?world=<id>). It signs in as /play does, asks the directory whether
+// this account may use Advanced controls, starts the WebAssembly client in edit mode on the
+// canvas, and lays out the tools, the inspector and the entity list around it. The client's
+// events are installed before the client starts, so none is missed.
+
+import { Alert, Box, Center, Flex, Stack, Text } from "@mantine/core";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError, messageOf, post, worldUrl } from "../../api/client";
+import type { Me, Token, WorldEntry } from "../../api/types";
+import { loadClient } from "../../game/wasm";
+import { type Command, type Tool, onEvent, sendCommand } from "../../game/editor";
+import { EditorHeader, type Mode } from "./EditorHeader";
+import { EntityList } from "./EntityList";
+import { Inspector } from "./Inspector";
+import { applyChanges, cleared, type Entities, sortedRows } from "./state";
+import { ToolRail } from "./ToolRail";
+
+const CANVAS = "editor-game";
+
+export function EditorPage() {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [world, setWorld] = useState<WorldEntry>();
+  const [status, setStatus] = useState("Opening the editor…");
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  // the latest refusal of an edit; cleared by the next `done`, when an edit goes through
+  const [refusal, setRefusal] = useState<string>();
+  const [canAdvanced, setCanAdvanced] = useState(false);
+  const [mode, setMode] = useState<Mode>("basic");
+  const [tool, setTool] = useState<Tool>("select");
+  const [entities, setEntities] = useState<Entities>(cleared);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [here, setHere] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // installed first, so the client's first events (sent as it starts) are not lost
+    const off = onEvent((e) => {
+      switch (e.type) {
+        case "ready":
+          // a new world: nothing from the last one (its entities, its tombstones) still holds
+          setEntities(cleared());
+          setSelected(null);
+          setRefusal(undefined);
+          break;
+        case "entities":
+          setEntities((prev) => applyChanges(prev, e.changes));
+          break;
+        case "selected":
+          setSelected(e.entity);
+          break;
+        case "refused":
+          setRefusal(e.text);
+          break;
+        case "done":
+          setRefusal(undefined);
+          break;
+        case "here":
+          setHere(e.players.length);
+          break;
+        default:
+          break;
+      }
+    });
+    window.vox_status = (text) => setStatus(text);
+    window.vox_ready = () => {
+      setReady(true);
+      canvas.current?.focus();
+    };
+    window.vox_error = (text) => setError(text);
+
+    const checkAdvanced = async (id: string) => {
+      try {
+        await api(`/api/worlds/editors?world=${encodeURIComponent(id)}`);
+        if (!cancelled) setCanAdvanced(true);
+      } catch (err) {
+        // 403 is the normal answer for someone who may only use the basic tools
+        if (err instanceof ApiError && err.status === 403) return;
+        console.error(err);
+        if (!cancelled) setNotice(`Could not check your editing rights: ${messageOf(err)}`);
+      }
+    };
+
+    (async () => {
+      const me = await api<Me>("/api/me");
+      if (!me.name) return void (location.href = "/");
+      if (!me.character) return void (location.href = "/create");
+      const want = new URLSearchParams(location.search).get("world") ?? "";
+      const t = await post<Token>("/api/token");
+      // the id ("yard") is what links carry; a name ("The Yard") is accepted for links made by other pages
+      const found = t.worlds.find((w) => w.id === want) ?? t.worlds.find((w) => w.name === want);
+      if (!found) throw new Error(want ? `there is no world called ${want}` : "name the world to edit, as /edit?world=yard");
+      if (cancelled) return;
+      setWorld(found);
+      document.title = `Edit ${found.name} · Vox`;
+      void checkAdvanced(found.id);
+      setStatus("Loading the client…");
+      const start = await loadClient();
+      if (cancelled) return;
+      setStatus(`Opening ${found.name}…`);
+      start({
+        canvas: `#${CANVAS}`,
+        url: worldUrl(found.url),
+        token: t.token,
+        name: t.name,
+        model: t.character.model,
+        wear: t.character.wear,
+        edit: true,
+      });
+    })().catch((err) => {
+      if (!cancelled) setError(messageOf(err));
+    });
+
+    return () => {
+      cancelled = true;
+      off();
+      delete window.vox_status;
+      delete window.vox_ready;
+      delete window.vox_error;
+    };
+  }, []);
+
+  // sends a command to the client; a failure (no editor running) is shown like a refusal
+  const send = (c: Command) => {
+    try {
+      sendCommand(c);
+    } catch (err) {
+      setNotice(messageOf(err));
+    }
+  };
+
+  const pickTool = (t: Tool) => {
+    setTool(t);
+    send({ type: "tool", tool: t });
+  };
+
+  // the Node tool is hidden in Basic, so leaving Advanced while it is active puts the Select tool back
+  const changeMode = (m: Mode) => {
+    setMode(m);
+    if (m === "basic" && tool === "node") pickTool("select");
+  };
+
+  const rows = sortedRows(entities);
+
+  return (
+    <Stack gap={0} mih="100dvh" style={{ maxWidth: "100%", overflowX: "hidden" }}>
+      <EditorHeader
+        world={world?.name ?? "…"}
+        mode={canAdvanced ? mode : "basic"}
+        onMode={changeMode}
+        canAdvanced={canAdvanced}
+        here={here}
+      />
+      {notice && (
+        <Alert color="ember" role="alert" mx="sm" withCloseButton onClose={() => setNotice(undefined)}>
+          {notice}
+        </Alert>
+      )}
+      {refusal && (
+        <Alert color="ember" role="alert" mx="sm" withCloseButton onClose={() => setRefusal(undefined)}>
+          {refusal}
+        </Alert>
+      )}
+      {error && ready && (
+        <Alert color="ember" role="alert" mx="sm">
+          The client reported an error: {error}
+        </Alert>
+      )}
+      <Flex direction={{ base: "column", md: "row" }} flex={1} style={{ minHeight: 0 }}>
+        <ToolRail active={tool} onTool={pickTool} advanced={canAdvanced && mode === "advanced"} />
+        <Box flex={1} mih={420} pos="relative" style={{ minWidth: 0 }}>
+          <canvas
+            id={CANVAS}
+            ref={canvas}
+            tabIndex={0}
+            aria-label="The world being edited"
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", outline: "none", background: "#f3f5f9" }}
+          />
+          {!ready && (
+            <Center pos="absolute" inset={0} bg="#f3f5f9" aria-live="polite">
+              <Stack align="center" gap="xs" w="min(360px, 80vw)">
+                <Text c="moon.5">{error ?? status}</Text>
+                {error && (
+                  <Text component="a" href="/" fz="sm">
+                    Back to the start
+                  </Text>
+                )}
+              </Stack>
+            </Center>
+          )}
+        </Box>
+        <Inspector row={selected === null ? undefined : entities.rows.get(selected)} />
+      </Flex>
+      <EntityList rows={rows} selected={selected} onError={setNotice} />
+    </Stack>
+  );
+}

@@ -234,6 +234,7 @@ impl Directory {
             .route_service("/", ServeFile::new(web.join("index.html")))
             .route_service("/create", ServeFile::new(web.join("create.html")))
             .route_service("/play", ServeFile::new(web.join("play.html")))
+            .route_service("/edit", ServeFile::new(web.join("edit.html")))
             .route_service("/inventory", ServeFile::new(web.join("inventory.html")))
             .route_service("/friends", ServeFile::new(web.join("friends.html")))
             .route_service("/help", ServeFile::new(web.join("help.html")))

@@ -42,6 +42,9 @@ export interface Download {
 }
 
 export interface WorldEntry {
+  /** what its server calls it ("yard"): the key for world-scoped API calls */
+  id: string;
+  /** the name people see ("The Yard") */
   name: string;
   url: string;
 }
