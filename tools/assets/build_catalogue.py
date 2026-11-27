@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 cast = {c["id"]: c for c in json.loads((ROOT / "data/cast_manifest.json").read_text())["characters"]}
-GROUPS = {"blue": "Main", "cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals", "capybara": "Animals", "brain": "Comics"}
+GROUPS = {"blue": "Main", "cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals", "capybara": "Cast", "brain": "Cast"}
 NAMES = {"blue": "Blue", "scene_all": "Lead", "peanut": "Peanut", "roasted_miami": "Miami Travis",
          "roasted_army": "Army peanut", "roasted_cook": "Fry cook peanut", "roasted_garbage": "Garbage collector peanut",
          "roasted_medic": "Medic peanut", "roasted_riot": "Riot peanut", "capybara": "Yuzu", "brain": "The Brain"}
@@ -54,7 +54,7 @@ for p in sorted((ROOT / "assets/portraits").glob("*.png")):
         "portrait": f"portraits/{cid}.png",
         "about": ABOUT.get(cid) or (c or {}).get("note", ""),
     })
-order = {"Main": -1, "Cast": 0, "Roast": 1, "Animals": 2, "Comics": 3}
+order = {"Main": -1, "Cast": 0, "Roast": 1, "Animals": 2}
 chars.sort(key=lambda c: (c["id"] != MAIN, order[c["group"]], c["name"]))
 
 src = (ROOT / "bins/block-avatar/src/character/wardrobe.rs").read_text()

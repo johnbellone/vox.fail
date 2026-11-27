@@ -15,7 +15,6 @@ const GROUPS: [string, string][] = [
   ["Cast", "The cast"],
   ["Roast", "The roast"],
   ["Animals", "Animals"],
-  ["Comics", "From the comics"],
 ];
 const SLOTS: [Slot, string][] = [
   ["hat", "On your head"],
