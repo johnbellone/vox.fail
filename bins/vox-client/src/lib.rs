@@ -46,6 +46,11 @@ pub struct Start {
     /// drifting camera (the front page's live view)
     #[serde(default)]
     pub watch: bool,
+    /// edit the world (the in-world editor, for those the world lets change it): the page
+    /// sends commands and hears events through `editor_command` and `window.vox_editor`.
+    /// Browser only: the desktop client ignores it, since there is no page to talk to
+    #[serde(default)]
+    pub edit: bool,
 }
 
 impl Start {
@@ -82,6 +87,8 @@ struct Me {
 
 /// The app, ready to run.
 pub fn app(start: Start, assets: String) -> App {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    let start_edit = start.edit;
     let level = if cfg!(target_arch = "wasm32") { Level::Medium } else { Level::High };
     // screenshots at a set size (`VOX_SCREENSHOT_SIZE=960x540`), so pictures stay comparable
     let mut window = bevy::window::WindowResolution::default();
@@ -148,6 +155,13 @@ pub fn app(start: Start, assets: String) -> App {
     );
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Update, web::fetch_wanted);
+    // the editor talks to a page, so it exists only in the browser: its commands come in before
+    // the editor acts, its events go out after it
+    #[cfg(target_arch = "wasm32")]
+    if start_edit {
+        app.add_plugins(vox_world::editor::EditorPlugin);
+        app.add_systems(Update, (web::take_commands.before(vox_world::editor::EditorSystems), web::send_events.after(vox_world::editor::EditorSystems)));
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if let Ok(path) = std::env::var("VOX_SCREENSHOT") {
         app.insert_resource(ShotAt { path, after: std::env::var("VOX_SCREENSHOT_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(6.0), taken: None })
@@ -537,6 +551,11 @@ fn report(w: Res<world::WorldClient>, mut said: Local<String>, mut done: Local<b
 mod web {
     //! The browser: fetch the game's files before starting, and others as they're wanted.
 
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
+
+    use bevy::prelude::ResMut;
+    use vox_world::editor::{EditorInbox, EditorOutbox, bridge::{self, Command, Event}};
     use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
 
@@ -573,6 +592,101 @@ mod web {
         }
     }
 
+    thread_local! {
+        /// commands from the page, parsed, waiting for the app's next frame
+        static COMMANDS: RefCell<Vec<Command>> = const { RefCell::new(Vec::new()) };
+        /// whether this page started the app in edit mode (its commands are refused otherwise)
+        static EDITING: Cell<bool> = const { Cell::new(false) };
+        /// events the page has not heard yet because `window.vox_editor` did not exist
+        static UNHEARD: RefCell<VecDeque<Event>> = const { RefCell::new(VecDeque::new()) };
+        /// events are being handed to the page now (a handler that calls back must not reorder)
+        static HANDING: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Most commands queued between two frames; more are refused, so a page can't pile up work.
+    const MAX_QUEUED: usize = 1024;
+
+    /// Most events kept for a page that has not installed `vox_editor` yet; the oldest go first.
+    const MAX_UNHEARD: usize = 1024;
+
+    /// The page's `vox_editor(json)`, if it has installed one.
+    fn editor_handler() -> Option<js_sys::Function> {
+        let win = web_sys::window()?;
+        js_sys::Reflect::get(&win, &JsValue::from_str("vox_editor")).ok()?.dyn_into::<js_sys::Function>().ok()
+    }
+
+    /// Hands the page the events it has not heard, in order, once it has `vox_editor`.
+    fn flush_editor() {
+        if HANDING.with(Cell::get) {
+            return;
+        }
+        let Some(func) = editor_handler() else { return };
+        HANDING.with(|h| h.set(true));
+        while let Some(e) = UNHEARD.with(|q| q.borrow_mut().pop_front()) {
+            let _ = func.call1(&JsValue::NULL, &JsValue::from_str(&bridge::event_json(&e)));
+        }
+        HANDING.with(|h| h.set(false));
+    }
+
+    /// Tell the page an editor event. Until the page has a `vox_editor` the events wait (the
+    /// newest 1024), so the first ones (Ready, the snapshot) are not lost to a page that loads
+    /// its editor a moment after the client starts.
+    fn tell_editor(e: Event) {
+        UNHEARD.with(|q| {
+            let mut q = q.borrow_mut();
+            if q.len() >= MAX_UNHEARD {
+                q.pop_front();
+            }
+            q.push_back(e);
+        });
+        flush_editor();
+    }
+
+    /// A command from the page, as JSON. Queued for the next frame when this app is editing;
+    /// refused to the page (as a `Refused` event, with its `ref` when that can be read)
+    /// otherwise, when it can't be read, or when too many are queued already.
+    #[wasm_bindgen]
+    pub fn editor_command(json: String) {
+        let refuse = |why: &str, text: String| {
+            tell_editor(Event::Refused { id: 0, r#ref: bridge::ref_of(&json), why: why.into(), text })
+        };
+        if !EDITING.with(Cell::get) {
+            return refuse("NotEditing", "this client didn't start in edit mode".into());
+        }
+        let command = match bridge::parse_command(&json) {
+            Ok(c) => c,
+            Err(text) => return refuse("Invalid", text),
+        };
+        let queued = COMMANDS.with(|q| {
+            let mut q = q.borrow_mut();
+            if q.len() >= MAX_QUEUED {
+                false
+            } else {
+                q.push(command);
+                true
+            }
+        });
+        if !queued {
+            refuse("TooFast", "too many editor commands at once".into());
+        }
+    }
+
+    /// Moves the page's queued commands into the editor's inbox.
+    pub fn take_commands(mut inbox: ResMut<EditorInbox>) {
+        COMMANDS.with(|q| inbox.0.append(&mut q.borrow_mut()));
+    }
+
+    /// Sends the editor's events to the page, in order. An event is held only while the page has
+    /// no `vox_editor` (it is handed over once one appears); a handler that throws drops that
+    /// one event and the rest still go. Past 1024 held events the oldest are dropped, which a
+    /// page avoids by installing `vox_editor` before it calls `start`.
+    pub fn send_events(mut outbox: ResMut<EditorOutbox>) {
+        for e in outbox.0.drain(..) {
+            tell_editor(e);
+        }
+        flush_editor();
+    }
+
     /// Tell the page: `vox_status(text)`, or `vox_ready()` once in.
     pub fn tell(s: &str) {
         let Some(win) = web_sys::window() else { return };
@@ -598,6 +712,7 @@ mod web {
             }
         };
         let start = start.from_token();
+        EDITING.with(|e| e.set(start.edit));
         spawn_local(async move {
             tell("Fetching the world's blocks…");
             let _ = get("data/blocks.json").await;

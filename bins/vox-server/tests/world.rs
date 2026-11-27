@@ -85,6 +85,8 @@ async fn join_with(url: &str, name: &str, token: Option<String>) -> Joined {
     loop {
         match recv(&mut ws).await {
             ToClient::Chunk { key, version, data } => world.put_chunk(key, Chunk::decode(&data, version).unwrap()),
+            // the entities come before Ready
+            ToClient::Entities(_) => {}
             ToClient::Ready => break,
             m => panic!("{m:?}"),
         }
@@ -523,13 +525,15 @@ async fn plots_portals_and_reports_with_a_directory() {
             let (mut ws, _) = connect_async(&url).await.unwrap();
             send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: vec![], token: Some(token) }).await;
             let ToClient::Welcome { settings, spawn, .. } = recv(&mut ws).await else { panic!("no welcome") };
+            // the world's entities come before Ready
+            let mut entities = Vec::new();
             loop {
-                if let ToClient::Ready = recv(&mut ws).await {
-                    break;
+                match recv(&mut ws).await {
+                    ToClient::Ready => break,
+                    ToClient::Entities(batch) => entities.extend(batch),
+                    _ => {}
                 }
             }
-            // the world's entities follow Ready: collected until they stop coming
-            let mut entities = Vec::new();
             while let Ok(Some(Ok(Message::Binary(b)))) = tokio::time::timeout(Duration::from_millis(150), ws.next()).await {
                 if let ToClient::Entities(batch) = wire::decode(&b).unwrap() {
                     entities.extend(batch);
@@ -595,6 +599,8 @@ async fn watchers_see_the_world_without_names_and_are_not_players() {
     loop {
         match recv(&mut w).await {
             ToClient::Chunk { .. } => chunks += 1,
+            // the entities come before Ready
+            ToClient::Entities(_) => {}
             ToClient::Ready => break,
             m => panic!("{m:?}"),
         }

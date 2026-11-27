@@ -61,6 +61,39 @@
           "yaw": 0.0
         }
       },
+      "ref": null,
+      "type": "create"
+    },
+    {
+      "component": {
+        "Portal": {
+          "at": [
+            0.0,
+            0.0,
+            11.5
+          ],
+          "axis": "Z",
+          "key": null,
+          "level": "void",
+          "name": "void",
+          "size": [
+            8.0,
+            16.0
+          ],
+          "to": {
+            "Url": {
+              "arrive": [
+                0.0,
+                0.0,
+                -39.5
+              ],
+              "url": ":7780"
+            }
+          },
+          "yaw": 0.0
+        }
+      },
+      "ref": 1,
       "type": "create"
     },
     {
@@ -94,6 +127,7 @@
       },
       "entity": 3,
       "expect": 12,
+      "ref": 2,
       "type": "set"
     },
     {
@@ -127,16 +161,19 @@
       },
       "entity": 3,
       "expect": null,
+      "ref": null,
       "type": "set"
     },
     {
       "entity": 3,
       "expect": 12,
+      "ref": 3,
       "type": "remove"
     },
     {
       "entity": 3,
       "expect": null,
+      "ref": null,
       "type": "remove"
     },
     {
@@ -215,9 +252,23 @@
     },
     {
       "id": 7,
+      "ref": 2,
       "text": "that's out of reach",
       "type": "refused",
       "why": "TooFar"
+    },
+    {
+      "id": 0,
+      "ref": null,
+      "text": "build is not in the editor yet",
+      "type": "refused",
+      "why": "NotYet"
+    },
+    {
+      "entity": 3,
+      "ref": 2,
+      "seq": 13,
+      "type": "done"
     },
     {
       "cell": [

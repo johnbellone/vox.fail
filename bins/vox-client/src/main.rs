@@ -25,6 +25,8 @@ fn main() {
         canvas: None,
         // --watch: look at the world without joining it
         watch: args.iter().any(|a| a == "--watch"),
+        // the in-world editor is a page feature: only the browser client starts it
+        edit: false,
     }
     .from_token();
     vox_client::app(start, root.join("assets").to_string_lossy().into_owned()).run();

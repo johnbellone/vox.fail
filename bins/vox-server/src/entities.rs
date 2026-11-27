@@ -284,6 +284,7 @@ pub(crate) fn position(c: &Component) -> Option<[f32; 3]> {
         Component::Portal(p) => Some(p.at),
         Component::Spawn(s) => Some(s.at),
         Component::Objective(o) => Some(o.at),
+        Component::Prop(p) => Some(p.at.map(|c| c as f32 / vox_core::entity::PROP_UNITS_PER_BLOCK as f32)),
         Component::Settings(_) => None,
     }
 }

@@ -7,6 +7,12 @@
 //! Anything arriving as a command is untrusted: [`parse_command`] refuses it over the size
 //! cap, before parsing, and rejects unknown fields, unknown types and components that fail
 //! [`Component::validate`].
+//!
+//! A command that changes an entity (`Create`, `Set`, `Remove`) may carry a `ref`: a number the
+//! page chooses. The editor echoes it on the [`Event::Done`] that says the server applied the
+//! edit and on the [`Event::Refused`] that says it did not, so the page can tell its edits
+//! apart. Sending the same `ref` again after an `Unavailable` refusal is a retry: the client
+//! resends the edit under the same number, so it is never charged twice.
 
 use serde::{Deserialize, Serialize};
 use vox_core::entity::Component;
@@ -36,15 +42,26 @@ pub enum Command {
     /// select an entity, or nothing
     Select { entity: Option<u32> },
     /// make a new entity from a form; it is placed where the component says
-    Create { component: Component },
+    Create {
+        component: Component,
+        #[serde(rename = "ref", default)]
+        r#ref: Option<u32>,
+    },
     /// replace an entity's component; `expect` is the seq the page last saw
     Set {
         entity: u32,
         component: Component,
         expect: Option<u64>,
+        #[serde(rename = "ref", default)]
+        r#ref: Option<u32>,
     },
     /// remove an entity; `expect` is the seq the page last saw
-    Remove { entity: u32, expect: Option<u64> },
+    Remove {
+        entity: u32,
+        expect: Option<u64>,
+        #[serde(rename = "ref", default)]
+        r#ref: Option<u32>,
+    },
     /// move the camera to an entity
     FlyTo { entity: u32 },
     /// undo the author's last change
@@ -73,8 +90,23 @@ pub enum Event {
     Entities { changes: Vec<Change> },
     /// the selection changed
     Selected { entity: Option<u32> },
-    /// a command was refused: its id, the reason's name and the sentence for it
-    Refused { id: u32, why: String, text: String },
+    /// a command was refused: the client's number for it (0 when it never got one), the
+    /// page's `ref` for it if it had one, the reason's name and the sentence for it
+    Refused {
+        id: u32,
+        #[serde(rename = "ref", default)]
+        r#ref: Option<u32>,
+        why: String,
+        text: String,
+    },
+    /// the server applied an edit the page sent with a `ref`: the entity it made, changed or
+    /// removed, and the seq that entity now has (the one it had, for a removal)
+    Done {
+        #[serde(rename = "ref")]
+        r#ref: u32,
+        entity: u32,
+        seq: u64,
+    },
     /// the block the pointer is on, for forms that need a position
     Picked { cell: [i32; 3] },
     /// who else is in the world
@@ -89,12 +121,33 @@ pub fn parse_command(text: &str) -> Result<Command, String> {
     }
     let command: Command = serde_json::from_str(text).map_err(|e| e.to_string())?;
     match &command {
-        Command::Create { component } | Command::Set { component, .. } => {
+        Command::Create { component, .. } | Command::Set { component, .. } => {
             component.validate().map_err(|why| why.to_string())?;
         }
         _ => {}
     }
     Ok(command)
+}
+
+impl Command {
+    /// The page's `ref` on this command, if it has one.
+    pub fn page_ref(&self) -> Option<u32> {
+        match self {
+            Command::Create { r#ref, .. } | Command::Set { r#ref, .. } | Command::Remove { r#ref, .. } => *r#ref,
+            _ => None,
+        }
+    }
+}
+
+/// The `ref` in command text that could not be used (over the cap or invalid), when it can
+/// still be read, so the page hears which of its commands was refused. Best effort: None when
+/// the text is not JSON, is over the cap, or has no number there.
+pub fn ref_of(text: &str) -> Option<u32> {
+    if text.len() > MAX_COMMAND_BYTES {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    u32::try_from(v.get("ref")?.as_u64()?).ok()
 }
 
 /// An event as the JSON text the page receives.
@@ -135,11 +188,12 @@ mod tests {
             Command::Block { name: "stone".into() },
             Command::Select { entity: Some(3) },
             Command::Select { entity: None },
-            Command::Create { component: yard_portal() },
-            Command::Set { entity: 3, component: yard_portal(), expect: Some(12) },
-            Command::Set { entity: 3, component: yard_portal(), expect: None },
-            Command::Remove { entity: 3, expect: Some(12) },
-            Command::Remove { entity: 3, expect: None },
+            Command::Create { component: yard_portal(), r#ref: None },
+            Command::Create { component: yard_portal(), r#ref: Some(1) },
+            Command::Set { entity: 3, component: yard_portal(), expect: Some(12), r#ref: Some(2) },
+            Command::Set { entity: 3, component: yard_portal(), expect: None, r#ref: None },
+            Command::Remove { entity: 3, expect: Some(12), r#ref: Some(3) },
+            Command::Remove { entity: 3, expect: None, r#ref: None },
             Command::FlyTo { entity: 3 },
             Command::Undo {},
             Command::Redo {},
@@ -158,7 +212,9 @@ mod tests {
             },
             Event::Selected { entity: Some(3) },
             Event::Selected { entity: None },
-            Event::Refused { id: 7, why: "TooFar".into(), text: "that's out of reach".into() },
+            Event::Refused { id: 7, r#ref: Some(2), why: "TooFar".into(), text: "that's out of reach".into() },
+            Event::Refused { id: 0, r#ref: None, why: "NotYet".into(), text: "build is not in the editor yet".into() },
+            Event::Done { r#ref: 2, entity: 3, seq: 13 },
             Event::Picked { cell: [1, -2, 30] },
             Event::Here { players: vec!["Sam".into()] },
         ]
@@ -200,6 +256,23 @@ mod tests {
             let back: Event = serde_json::from_str(&event_json(&e)).expect("parses");
             assert_eq!(back, e);
         }
+    }
+
+    #[test]
+    fn a_command_without_a_ref_parses_with_none() {
+        let c = parse_command(r#"{"type":"remove","entity":3,"expect":null}"#).expect("parses");
+        assert_eq!(c, Command::Remove { entity: 3, expect: None, r#ref: None });
+        assert_eq!(c.page_ref(), None);
+        let c = parse_command(r#"{"type":"remove","entity":3,"expect":null,"ref":9}"#).expect("parses");
+        assert_eq!(c.page_ref(), Some(9));
+    }
+
+    #[test]
+    fn ref_of_reads_a_refused_commands_ref() {
+        assert_eq!(ref_of(r#"{"type":"explode","ref":5}"#), Some(5));
+        assert_eq!(ref_of(r#"{"type":"explode"}"#), None);
+        assert_eq!(ref_of(r#"{"ref":-1}"#), None);
+        assert_eq!(ref_of("not json"), None);
     }
 
     #[test]

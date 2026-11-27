@@ -134,15 +134,18 @@ async fn join(url: &str, name: &str, account: u64) -> Who {
     send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: vec![], token: Some(token(account, name)) }).await;
     let mut welcomed = false;
     let mut ready = false;
+    let mut entities = Vec::new();
     while !welcomed || !ready {
         match until(&mut ws, Some).await {
             ToClient::Welcome { .. } => welcomed = true,
+            // every entity comes before Ready
+            ToClient::Entities(batch) => entities.extend(batch),
             ToClient::Ready => ready = true,
             ToClient::Bye { why } => panic!("refused: {why}"),
             _ => {}
         }
     }
-    let entities = quiet_for(&mut ws, Duration::from_millis(300)).await;
+    entities.extend(quiet_for(&mut ws, Duration::from_millis(300)).await);
     Who { ws, entities }
 }
 

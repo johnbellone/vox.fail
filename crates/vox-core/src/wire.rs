@@ -2,8 +2,8 @@
 //! postcard-encoded.
 //!
 //! Joining: the player sends [`ToServer::Hello`]; the server answers [`ToClient::Welcome`],
-//! every chunk with blocks in it, [`ToClient::Ready`], then a [`ToClient::Joined`] for each
-//! player already there. From then on edits go out in one order to everyone
+//! every chunk with blocks in it, every entity ([`ToClient::Entities`] batches), then
+//! [`ToClient::Ready`], then a [`ToClient::Joined`] for each player already there. From then on edits go out in one order to everyone
 //! ([`ToClient::Edits`], numbered by `seq`); a refused edit is answered only to its sender.
 //!
 //! Poses are opaque to the server (the app's own pose format), apart from where the player
@@ -14,11 +14,13 @@
 //! Its messages are the last variants of [`ToServer`] and [`ToClient`].
 //!
 //! Entities ([`crate::entity`]) are the things placed in a world beside its blocks. Right
-//! after [`ToClient::Ready`] the server sends every entity in [`ToClient::Entities`] batches
-//! of at most [`ENTITIES_PER_MESSAGE`]. A change to an entity (placed, changed or removed)
+//! after the chunks, before [`ToClient::Ready`], the server sends every entity in
+//! [`ToClient::Entities`] batches of at most [`ENTITIES_PER_MESSAGE`], so a player has them
+//! all when `Ready` arrives. A change to an entity (placed, changed or removed)
 //! takes the next edit number, so it shares `seq` with the edits and arrives in the same order
 //! for everyone. A refused [`ToServer::Put`], [`ToServer::Remove`] or [`ToServer::Build`] is
-//! answered with [`ToClient::EntityRefused`] to its sender only.
+//! answered with [`ToClient::EntityRefused`] to its sender only; an applied Put or Remove is
+//! answered with [`ToClient::EntityDone`] to its sender only.
 
 use crate::entity::{Component, EntityId, EntityWhy};
 use crate::world::{Bounds, Cell, ChunkKey, Why};
@@ -28,7 +30,7 @@ use serde::{Deserialize, Serialize};
 /// server (`Through`, `Travel`; `Notice` came after it); 7: voice (`ToServer::Voice`,
 /// `ToClient::Voice`); 8: the ground's water in weather keyframes (`Keyframe::ground`); 9:
 /// world entities (`ToServer::Put`, `Remove`, `Build`, `ToClient::Entities`,
-/// `ToClient::EntityRefused`).
+/// `ToClient::EntityRefused`, `ToClient::EntityDone`).
 pub const PROTOCOL: u32 = 9;
 
 /// Voice channel: heard by players near the speaker.
@@ -173,6 +175,11 @@ pub enum ToClient {
     /// A [`ToServer::Put`], [`ToServer::Remove`] or [`ToServer::Build`] that was refused; sent
     /// to its sender only. Added last, so older messages keep their numbers.
     EntityRefused { id: u32, why: EntityWhy },
+    /// A [`ToServer::Put`] or [`ToServer::Remove`] was applied (a portal a Builder is charged
+    /// for: when it was placed); sent to its sender only, after the [`ToClient::Entities`]
+    /// that carries the change. `entity` and `seq` are the change's own. Added last, so older
+    /// messages keep their numbers.
+    EntityDone { id: u32, entity: EntityId, seq: u64 },
 }
 
 /// A change to one entity: its new component, or `None` when it was removed.
@@ -238,6 +245,7 @@ mod tests {
                 EntityChange { seq: (1 << 40) | 1, entity: EntityId(4), component: None },
             ]),
             ToClient::EntityRefused { id: 5, why: EntityWhy::Changed },
+            ToClient::EntityDone { id: 6, entity: EntityId(3), seq: (1 << 40) | 2 },
         ];
         for m in msgs {
             let back: ToClient = decode(&encode(&m)).unwrap();
@@ -343,6 +351,7 @@ mod tests {
         assert_eq!(encode(&ToServer::Build { id: 0, node: EntityId(0) })[0], 9);
         assert_eq!(encode(&ToClient::Entities(vec![]))[0], 14);
         assert_eq!(encode(&ToClient::EntityRefused { id: 0, why: EntityWhy::Invalid })[0], 15);
+        assert_eq!(encode(&ToClient::EntityDone { id: 0, entity: EntityId(0), seq: 0 })[0], 16);
     }
 
     #[test]

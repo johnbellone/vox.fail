@@ -2,6 +2,18 @@
 
 use super::*;
 
+impl WorldClient {
+    /// Sends an editor's entity message (a Put, a Remove) through the same link as the rest.
+    pub(crate) fn send_entity(&self, m: &ToServer) {
+        self.send(m);
+    }
+
+    /// The link is up and the world has finished sending itself: an edit sent now can arrive.
+    pub(crate) fn linked(&self) -> bool {
+        self.ready && self.link.is_some()
+    }
+}
+
 /// Connect, and take in what the server sends.
 #[allow(clippy::too_many_arguments)]
 pub fn receive(
@@ -10,6 +22,8 @@ pub fn receive(
     blocks: Res<crate::blocks::Blocks>,
     assets: Res<AssetServer>,
     mut entities: ResMut<crate::entities::WorldEntities>,
+    mut editor: Option<ResMut<crate::editor::EditorOutbox>>,
+    mut editing: Option<ResMut<crate::editor::EditorState>>,
     mut commands: Commands,
 ) {
     if !w.active() {
@@ -60,6 +74,14 @@ pub fn receive(
                 match msg {
                     ToClient::Welcome { you, world, palette, block_size, bounds, spawn, settings, name } => {
                         w.name = name;
+                        // the editor (edit mode only) hears the world it is in, and its palette
+                        // and what it told the page of the last world no longer holds
+                        if let Some(st) = editing.as_mut() {
+                            st.reset();
+                        }
+                        if let Some(out) = editor.as_mut() {
+                            out.0.push(crate::editor::bridge::Event::Ready { world: world.clone(), palette: palette.clone() });
+                        }
                         for (_, e) in w.meshes.drain() {
                             commands.entity(e).try_despawn();
                         }
@@ -120,6 +142,11 @@ pub fn receive(
                         Err(e) => crate::note!("[world] bad chunk {key:?}: {e}"),
                     },
                     ToClient::Ready => {
+                        // every entity has arrived (they come before Ready): the editor's page gets them all as
+                        // its first Entities event, and hears of nothing before it
+                        if let Some(st) = editing.as_mut() {
+                            st.ready();
+                        }
                         w.ready = true;
                         w.status = format!("In {}", w.world);
                         crate::note!("[world] in {}: {} blocks", w.world, w.view.confirmed.count());
@@ -216,8 +243,20 @@ pub fn receive(
                             }
                         }
                     }
-                    // the editor work uses these; nothing draws them yet
-                    ToClient::EntityRefused { .. } => {}
+                    // a refused Put, Remove or Build: the editor (edit mode only) hears why
+                    ToClient::EntityRefused { id, why } => {
+                        if let (Some(out), Some(st)) = (editor.as_mut(), editing.as_mut()) {
+                            out.0.push(st.refused(id, why));
+                        }
+                    }
+                    // an applied Put or Remove: the editor (edit mode only) tells the page
+                    ToClient::EntityDone { id, entity, seq } => {
+                        if let (Some(out), Some(st)) = (editor.as_mut(), editing.as_mut())
+                            && let Some(ev) = st.done(id, entity, seq)
+                        {
+                            out.0.push(ev);
+                        }
+                    }
                     ToClient::Notice { text } => {
                         // from the server, so plain text only, and short
                         let text: String = text.chars().filter(|c| !c.is_control()).take(120).collect();

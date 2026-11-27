@@ -109,6 +109,14 @@ async fn next_refusal(ws: &mut Ws) -> (u32, EntityWhy) {
     .await
 }
 
+async fn next_done(ws: &mut Ws) -> (u32, EntityId, u64) {
+    until(ws, |m| match m {
+        ToClient::EntityDone { id, entity, seq } => Some((id, entity, seq)),
+        _ => None,
+    })
+    .await
+}
+
 struct Who {
     ws: Ws,
     spawn: [f32; 3],
@@ -124,17 +132,19 @@ async fn join(url: &str, name: &str, token: Option<String>) -> Who {
     send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: vec![], token }).await;
     let mut who = None;
     let mut ready = false;
+    let mut entities = Vec::new();
     while who.is_none() || !ready {
         let m = until(&mut ws, Some).await;
         match m {
             ToClient::Welcome { spawn, settings, .. } => who = Some((spawn, settings)),
+            // every entity comes before Ready
+            ToClient::Entities(batch) => entities.extend(batch),
             ToClient::Ready => ready = true,
             ToClient::Bye { why } => panic!("refused: {why}"),
             _ => {}
         }
     }
     let (spawn, settings) = who.unwrap();
-    let mut entities = Vec::new();
     while let Ok(Some(Ok(Message::Binary(b)))) = tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
         if let ToClient::Entities(batch) = wire::decode(&b).unwrap() {
             entities.extend(batch);
@@ -519,4 +529,39 @@ async fn editor_build_is_still_unavailable() {
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &ToServer::Build { id: 6, node: EntityId(1) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (6, EntityWhy::Unavailable));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_put_the_sender_alone_is_told_it_is_done() {
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
+    let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
+    let mut b = join(&url, "Bob", Some(token(8, "Bob"))).await;
+    send(&mut a.ws, &pose(a.spawn)).await;
+
+    send(&mut a.ws, &ToServer::Put { id: 11, entity: None, expect: None, component: portal("door", [2.5, 0.0, 2.5], url_to(":7781")) }).await;
+    let made = next_entities(&mut a.ws).await;
+    assert_eq!(next_done(&mut a.ws).await, (11, made[0].entity, made[0].seq), "the echo names the broadcast change");
+
+    send(&mut a.ws, &ToServer::Remove { id: 12, entity: made[0].entity, expect: Some(made[0].seq) }).await;
+    let gone = next_entities(&mut a.ws).await;
+    assert_eq!(next_done(&mut a.ws).await, (12, made[0].entity, gone[0].seq));
+
+    // a refused edit gets a refusal and no Done; the other player never gets one
+    send(&mut a.ws, &ToServer::Remove { id: 13, entity: EntityId(999_999), expect: Some(0) }).await;
+    let mut saw_done = false;
+    let refused = until(&mut a.ws, |m| match m {
+        ToClient::EntityDone { .. } => {
+            saw_done = true;
+            None
+        }
+        ToClient::EntityRefused { id, why } => Some((id, why)),
+        _ => None,
+    })
+    .await;
+    assert_eq!(refused, (13, EntityWhy::Changed));
+    assert!(!saw_done, "a refused edit is not done");
+    while let Ok(Some(Ok(Message::Binary(bytes)))) = tokio::time::timeout(Duration::from_millis(200), b.ws.next()).await {
+        assert!(!matches!(wire::decode::<ToClient>(&bytes).unwrap(), ToClient::EntityDone { .. }), "Done goes to the sender only");
+    }
 }

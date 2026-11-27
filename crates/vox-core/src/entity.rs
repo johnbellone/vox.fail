@@ -1,7 +1,7 @@
 //! Entities: the things placed in a world beside its blocks (doorways, spawn points, an
 //! objective, the world's settings). Each is a [`Component`]. They are written with postcard
 //! in zones and sent on the wire, so the variant order is part of the format: never reorder
-//! or remove a variant; add new ones at the end (Prop and Node come later).
+//! or remove a variant; add new ones at the end (Node comes later).
 //!
 //! This module checks the values themselves (finite numbers, ranges, caps on text and size,
 //! no control characters in text). Whether a destination may be used is a rule for the edit
@@ -122,13 +122,57 @@ impl Settings {
     pub const VERSION: u16 = 1;
 }
 
-/// One entity's data. Prop and Node are added later; never reorder or remove a variant.
+/// Most characters in a prop's readable text.
+pub const MAX_PROP_TEXT: usize = 140;
+/// Facings a prop has: yaw is in 15 degree steps, 0 to 23 (a full turn).
+pub const PROP_YAWS: u8 = 24;
+/// Largest variant or state number a prop may carry.
+pub const MAX_PROP_CODE: u8 = 7;
+/// Five-centimetre units in one 0.5 m block.
+pub const PROP_UNITS_PER_BLOCK: i32 = 10;
+
+/// A prop placed in a world: a catalogue prop (or a player's own) at a position. Its shape,
+/// footprint and behaviour come from its definition, which the server looks up by `prop`.
+/// vox-core cannot depend on vox-format, so the definition's name is carried as its 16 bytes.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Prop {
+    /// the prop's version hash (`vox_format::Hash`)
+    pub prop: [u8; 16],
+    /// the position, in 5 cm units (see [`prop_cell`])
+    pub at: [i32; 3],
+    /// facing, in 15 degree steps: 0 to 23
+    pub yaw: u8,
+    /// which look the prop has: 0 to 7
+    pub variant: u8,
+    /// which state it is in (open, lit, ...): 0 to 7
+    pub state: u8,
+    /// the channel a switch or a light listens to
+    pub channel: Option<u16>,
+    /// a readable's text: at most [`MAX_PROP_TEXT`] characters, no control characters
+    pub text: Option<String>,
+    /// the account that placed it; None for one that came from a level file
+    pub owner: Option<u64>,
+}
+
+impl Prop {
+    pub const VERSION: u16 = 1;
+}
+
+/// The block a prop's position falls in. It is floored, so a negative position lands in the
+/// block below it: -1 is block -1, -10 is block -1, -11 is block -2. Dividing by the constant
+/// ten cannot overflow.
+pub fn prop_cell(at: [i32; 3]) -> [i32; 3] {
+    at.map(|c| c.div_euclid(PROP_UNITS_PER_BLOCK))
+}
+
+/// One entity's data. Never reorder or remove a variant; new ones go at the end.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Component {
     Portal(Portal),
     Spawn(Spawn),
     Objective(Objective),
     Settings(Settings),
+    Prop(Prop),
 }
 
 impl Component {
@@ -139,6 +183,7 @@ impl Component {
             Component::Spawn(_) => "vox::Spawn",
             Component::Objective(_) => "vox::Objective",
             Component::Settings(_) => "vox::Settings",
+            Component::Prop(_) => "vox::Prop",
         }
     }
 
@@ -149,6 +194,7 @@ impl Component {
             Component::Spawn(_) => Spawn::VERSION,
             Component::Objective(_) => Objective::VERSION,
             Component::Settings(_) => Settings::VERSION,
+            Component::Prop(_) => Prop::VERSION,
         }
     }
 
@@ -170,6 +216,14 @@ impl Component {
                 p.size = [tidy_size(p.size[0], 4.0), tidy_size(p.size[1], 6.0)];
             }
             Component::Objective(o) => o.name = strip_control(&o.name),
+            Component::Prop(p) => {
+                p.yaw %= PROP_YAWS;
+                p.variant = p.variant.min(MAX_PROP_CODE);
+                p.state = p.state.min(MAX_PROP_CODE);
+                if let Some(t) = &mut p.text {
+                    *t = strip_control(t.as_str());
+                }
+            }
             Component::Spawn(_) | Component::Settings(_) => {}
         }
     }
@@ -224,6 +278,15 @@ impl Component {
                         }
                     }
                     _ => Err(EntityWhy::Invalid),
+                }
+            }
+            Component::Prop(p) => {
+                if p.yaw >= PROP_YAWS || p.variant > MAX_PROP_CODE || p.state > MAX_PROP_CODE {
+                    return Err(EntityWhy::Invalid);
+                }
+                match &p.text {
+                    Some(t) => text(t, MAX_PROP_TEXT),
+                    None => Ok(()),
                 }
             }
         }
@@ -325,6 +388,19 @@ mod tests {
         Component::Settings(Settings { json: json.into() })
     }
 
+    fn prop(at: [i32; 3]) -> Prop {
+        Prop {
+            prop: [3; 16],
+            at,
+            yaw: 0,
+            variant: 0,
+            state: 0,
+            channel: None,
+            text: None,
+            owner: None,
+        }
+    }
+
     #[test]
     fn postcard_round_trip_of_every_variant() {
         let all = vec![
@@ -336,6 +412,8 @@ mod tests {
             Component::Spawn(Spawn { at: [1.0, 2.0, 3.0], yaw: 90.0 }),
             Component::Objective(Objective { name: "the altar".into(), at: [0.0, 0.0, -9.0], radius: 3.0 }),
             settings(r#"{"sky":"earth","time":16.5}"#),
+            Component::Prop(prop([-11, 0, 25])),
+            Component::Prop(Prop { channel: Some(9), text: Some("ahoy".into()), owner: Some(7), ..prop([0, 0, 0]) }),
         ];
         for c in all {
             let back: Component = decode(&encode(&c)).expect("decodes");
@@ -349,6 +427,62 @@ mod tests {
         assert_eq!(p.name(), "vox::Portal");
         assert_eq!(p.version(), 1);
         assert_eq!(settings("{}").name(), "vox::Settings");
+        let pr = Component::Prop(prop([0; 3]));
+        assert_eq!(pr.name(), "vox::Prop");
+        assert_eq!(pr.version(), 1);
+    }
+
+    #[test]
+    fn prop_cell_floors_negative_positions() {
+        assert_eq!(prop_cell([0, 9, 10]), [0, 0, 1]);
+        assert_eq!(prop_cell([-1, -10, -11]), [-1, -1, -2]);
+        assert_eq!(prop_cell([19, 20, -20]), [1, 2, -2]);
+        assert_eq!(prop_cell([i32::MIN, i32::MAX, 0]), [i32::MIN / 10 - 1, i32::MAX / 10, 0]);
+    }
+
+    #[test]
+    fn prop_yaw_and_codes_out_of_range_are_refused() {
+        let mut p = prop([0; 3]);
+        p.yaw = 23;
+        assert_eq!(Component::Prop(p.clone()).validate(), Ok(()));
+        p.yaw = PROP_YAWS;
+        assert_eq!(Component::Prop(p.clone()).validate(), Err(EntityWhy::Invalid));
+        p.yaw = 0;
+        p.variant = 8;
+        assert_eq!(Component::Prop(p.clone()).validate(), Err(EntityWhy::Invalid));
+        p.variant = 0;
+        p.state = 8;
+        assert_eq!(Component::Prop(p.clone()).validate(), Err(EntityWhy::Invalid));
+        p.state = 7;
+        assert_eq!(Component::Prop(p).validate(), Ok(()));
+    }
+
+    #[test]
+    fn prop_text_is_capped_and_free_of_control_characters() {
+        let mut p = prop([0; 3]);
+        p.text = Some("a".repeat(MAX_PROP_TEXT));
+        assert_eq!(Component::Prop(p.clone()).validate(), Ok(()));
+        p.text = Some("a".repeat(MAX_PROP_TEXT + 1));
+        assert_eq!(Component::Prop(p.clone()).validate(), Err(EntityWhy::TooBig));
+        p.text = Some("sign\u{7}".into());
+        assert_eq!(Component::Prop(p.clone()).validate(), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn tidy_strips_prop_text_and_clamps_codes() {
+        let mut p = prop([0; 3]);
+        p.yaw = 25;
+        p.variant = 9;
+        p.state = 200;
+        p.text = Some("sig\nn".into());
+        let mut c = Component::Prop(p);
+        c.tidy();
+        let Component::Prop(p) = c else { panic!("still a prop") };
+        assert_eq!(p.yaw, 1);
+        assert_eq!(p.variant, 7);
+        assert_eq!(p.state, 7);
+        assert_eq!(p.text.as_deref(), Some("sign"));
+        assert_eq!(Component::Prop(p).validate(), Ok(()));
     }
 
     #[test]

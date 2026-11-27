@@ -8,13 +8,15 @@
 //! [`Component::validate`] checks the values; this module checks rights, destinations, place
 //! and caps. Each refusal is a distinct [`EntityWhy`] so a client can say why.
 
-use crate::entity::{Component, Dest, EntityWhy};
+use crate::entity::{Component, Dest, EntityWhy, Prop, prop_cell};
 use crate::world::{Bounds, Cell};
 
 /// Most entities one zone holds.
 pub const MAX_ZONE_ENTITIES: usize = 4_000;
 /// Most player portals one plot holds (the directory's PORTALS_PER_PLOT).
 pub const PORTALS_PER_PLOT: usize = 2;
+/// Most props one plot holds (docs/design/props.md, "Placing").
+pub const PROPS_PER_PLOT: usize = 64;
 /// How far, in blocks from the eyes, a player may edit. The same value as vox-server's REACH
 /// until the server switches to this module; its own copy is then removed.
 pub const REACH: f32 = 16.0;
@@ -70,6 +72,15 @@ pub struct Ctx<'a> {
     pub spawns: usize,
     /// Is that cell solid?
     pub ground: &'a dyn Fn(Cell) -> bool,
+    /// Props already in the plot a prop lands in (the caller counts for the plot the new
+    /// position falls in).
+    pub props_in_plot: usize,
+    /// Is the prop's footprint free: no solid block and no other prop's footprint under it?
+    /// The caller answers from its occupancy and must leave out the entity being changed, or
+    /// a prop could never be turned in place.
+    pub prop_footprint_free: &'a dyn Fn(&Prop) -> bool,
+    /// Does the world accept this prop (its version hash)?
+    pub known_prop: &'a dyn Fn(&[u8; 16]) -> bool,
 }
 
 /// The cell a position stands in: the floor of each coordinate.
@@ -86,17 +97,20 @@ fn within_reach(at: Option<[f32; 3]>, cell: Cell) -> bool {
     d2 <= REACH * REACH
 }
 
-/// Is the position's cell inside a plot where `account` builds?
-fn in_own_plot(plots: &[PlotArea], account: u64, at: [f32; 3]) -> bool {
-    let c = cell_of(at);
+/// Is the cell inside a plot where `account` builds?
+fn in_own_plot(plots: &[PlotArea], account: u64, cell: Cell) -> bool {
     plots
         .iter()
-        .any(|p| p.holds(c[0], c[2]) && p.builders.contains(&account))
+        .any(|p| p.holds(cell[0], cell[2]) && p.builders.contains(&account))
 }
 
-/// A position must be inside the world and within the player's reach.
-fn check_position(ctx: &Ctx, at: [f32; 3]) -> Result<(), EntityWhy> {
-    let cell = cell_of(at);
+/// The index of the plot holding a cell, if one does.
+fn plot_index(plots: &[PlotArea], cell: Cell) -> Option<usize> {
+    plots.iter().position(|p| p.holds(cell[0], cell[2]))
+}
+
+/// A cell must be inside the world and within the player's reach.
+fn check_cell(ctx: &Ctx, cell: Cell) -> Result<(), EntityWhy> {
     if !ctx.bounds.contains(cell) {
         return Err(EntityWhy::Outside);
     }
@@ -158,6 +172,10 @@ fn valid_dungeon(name: &str) -> bool {
 /// stamped after the directory charges, so a client never sets one and a changed one is
 /// refused), the destination, the size, the caps, then the place.
 ///
+/// A prop's owner is the account that placed it: a new prop must name the placer, and an edit
+/// keeps the owner it had, so nobody hands a prop over or takes one. Editors place props
+/// anywhere in reach; the plot cap then applies to a prop only when it lies in a plot.
+///
 /// Reach applies to every role ("anywhere in the world, within reach of where you stand"). With
 /// no known position (`ctx.at` None) nothing is in reach, so the check fails closed.
 pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<(), EntityWhy> {
@@ -190,37 +208,65 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
         }
     }
 
-    if ctx.role == Role::Builder {
-        // Basic builders place and move portals in their own plot and nothing else.
-        let Component::Portal(p) = new else {
-            return Err(EntityWhy::NotYours);
+    if let Component::Prop(p) = new {
+        if !(ctx.known_prop)(&p.prop) {
+            return Err(EntityWhy::NoSuchProp);
+        }
+        let owner_kept = match old {
+            Some(Component::Prop(o)) => p.owner == o.owner,
+            _ => p.owner == Some(account),
         };
-        if let Some(old) = old {
-            let Component::Portal(o) = old else {
-                return Err(EntityWhy::NotYours);
-            };
-            // A portal from a level file has no key and is not a player's to move. A new
-            // portal has no key yet (checked above), so only an existing one must have one.
-            if o.key.is_none() || !in_own_plot(ctx.plots, account, o.at) {
-                return Err(EntityWhy::NotYours);
-            }
-        }
-        if !in_own_plot(ctx.plots, account, p.at) {
+        if !owner_kept {
             return Err(EntityWhy::NotYours);
         }
-        match &p.to {
-            Dest::World { world } if valid_world_id(world) => {}
-            // A pair's key names another doorway; only the directory knows which exist, so it
-            // checks the key.
-            Dest::Pair { .. } => {}
-            _ => return Err(EntityWhy::BadDest),
-        }
-        let [w, h] = p.size;
-        if !(4.0..=8.0).contains(&w) || !(6.0..=16.0).contains(&h) {
-            return Err(EntityWhy::TooBig);
-        }
-        if old.is_none() && ctx.plot_portals >= PORTALS_PER_PLOT {
-            return Err(EntityWhy::TooMany);
+    }
+
+    if ctx.role == Role::Builder {
+        match new {
+            Component::Portal(p) => {
+                // Basic builders place and move portals in their own plot and nothing else.
+                if let Some(old) = old {
+                    let Component::Portal(o) = old else {
+                        return Err(EntityWhy::NotYours);
+                    };
+                    // A portal from a level file has no key and is not a player's to move. A
+                    // new portal has no key yet (checked above), so only an existing one must
+                    // have one.
+                    if o.key.is_none() || !in_own_plot(ctx.plots, account, cell_of(o.at)) {
+                        return Err(EntityWhy::NotYours);
+                    }
+                }
+                if !in_own_plot(ctx.plots, account, cell_of(p.at)) {
+                    return Err(EntityWhy::NotYours);
+                }
+                match &p.to {
+                    Dest::World { world } if valid_world_id(world) => {}
+                    // A pair's key names another doorway; only the directory knows which exist,
+                    // so it checks the key.
+                    Dest::Pair { .. } => {}
+                    _ => return Err(EntityWhy::BadDest),
+                }
+                let [w, h] = p.size;
+                if !(4.0..=8.0).contains(&w) || !(6.0..=16.0).contains(&h) {
+                    return Err(EntityWhy::TooBig);
+                }
+                if old.is_none() && ctx.plot_portals >= PORTALS_PER_PLOT {
+                    return Err(EntityWhy::TooMany);
+                }
+            }
+            Component::Prop(p) => {
+                // A builder places props in their own plot, and moves or changes only the
+                // props they placed (the owner was checked above to be unchanged).
+                if let Some(Component::Prop(o)) = old
+                    && (o.owner != Some(account) || !in_own_plot(ctx.plots, account, prop_cell(o.at)))
+                {
+                    return Err(EntityWhy::NotYours);
+                }
+                if !in_own_plot(ctx.plots, account, prop_cell(p.at)) {
+                    return Err(EntityWhy::NotYours);
+                }
+            }
+            _ => return Err(EntityWhy::NotYours),
         }
     }
 
@@ -233,20 +279,42 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
         }
     }
 
-    // Settings have no position; everything else is placed.
-    let position = match new {
-        Component::Portal(p) => Some(p.at),
-        Component::Spawn(s) => Some(s.at),
-        Component::Objective(o) => Some(o.at),
+    // Settings have no position; everything else is placed, in the cell it stands in.
+    let cell = match new {
+        Component::Portal(p) => Some(cell_of(p.at)),
+        Component::Spawn(s) => Some(cell_of(s.at)),
+        Component::Objective(o) => Some(cell_of(o.at)),
+        Component::Prop(p) => Some(prop_cell(p.at)),
         Component::Settings(_) => None,
     };
-    if let Some(at) = position {
-        check_position(ctx, at)?;
+    if let Some(cell) = cell {
+        check_cell(ctx, cell)?;
     }
 
     // A new entity, or one moving into another zone, needs room in the zone it lands in.
     if (old.is_none() || ctx.moves_zone) && ctx.zone_entities >= MAX_ZONE_ENTITIES {
         return Err(EntityWhy::TooMany);
+    }
+
+    if let Component::Prop(p) = new {
+        let here = prop_cell(p.at);
+        // A prop that is new here, or moves into another plot, needs room in that plot.
+        let entering = match old {
+            Some(Component::Prop(o)) => plot_index(ctx.plots, prop_cell(o.at)) != plot_index(ctx.plots, here),
+            _ => true,
+        };
+        if entering && plot_index(ctx.plots, here).is_some() && ctx.props_in_plot >= PROPS_PER_PLOT {
+            return Err(EntityWhy::TooMany);
+        }
+        // Turning or moving a prop needs its footprint free; a change of text alone does not.
+        // a variant may change what the prop covers, so it counts as part of the placement
+        let placement_kept = matches!(
+            old,
+            Some(Component::Prop(o)) if o.prop == p.prop && o.at == p.at && o.yaw == p.yaw && o.variant == p.variant
+        );
+        if !placement_kept && !(ctx.prop_footprint_free)(p) {
+            return Err(EntityWhy::Blocked);
+        }
     }
 
     if let Component::Spawn(s) = new {
@@ -256,8 +324,9 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
 }
 
 /// May this player remove this entity? Basic builders remove only their own plot's player
-/// portals. Advanced editors remove anything except the world's settings (never removable)
-/// and its last spawn point (a world needs one). Reach applies to every removal, as to a Put.
+/// portals and the props they placed there. Advanced editors remove anything except the
+/// world's settings (never removable) and its last spawn point (a world needs one). Reach
+/// applies to every removal, as to a Put.
 ///
 /// Refusal choices: removing settings is `NotYours` (it is the world's own, not an entity
 /// anyone owns); removing the last spawn is `Blocked`.
@@ -265,22 +334,29 @@ pub fn check_remove(ctx: &Ctx, old: &Component) -> Result<(), EntityWhy> {
     let Some(account) = ctx.account else {
         return Err(EntityWhy::NotYours);
     };
-    let position = match (ctx.role, old) {
+    let cell = match (ctx.role, old) {
         (Role::Builder, Component::Portal(p)) => {
-            if p.key.is_none() || !in_own_plot(ctx.plots, account, p.at) {
+            if p.key.is_none() || !in_own_plot(ctx.plots, account, cell_of(p.at)) {
                 return Err(EntityWhy::NotYours);
             }
-            Some(p.at)
+            Some(cell_of(p.at))
+        }
+        (Role::Builder, Component::Prop(p)) => {
+            if p.owner != Some(account) || !in_own_plot(ctx.plots, account, prop_cell(p.at)) {
+                return Err(EntityWhy::NotYours);
+            }
+            Some(prop_cell(p.at))
         }
         (Role::Builder, _) => return Err(EntityWhy::NotYours),
         (Role::Editor, Component::Settings(_)) => return Err(EntityWhy::NotYours),
         (Role::Editor, Component::Spawn(_)) if ctx.spawns <= 1 => return Err(EntityWhy::Blocked),
-        (Role::Editor, Component::Portal(p)) => Some(p.at),
-        (Role::Editor, Component::Spawn(s)) => Some(s.at),
-        (Role::Editor, Component::Objective(o)) => Some(o.at),
+        (Role::Editor, Component::Portal(p)) => Some(cell_of(p.at)),
+        (Role::Editor, Component::Spawn(s)) => Some(cell_of(s.at)),
+        (Role::Editor, Component::Objective(o)) => Some(cell_of(o.at)),
+        (Role::Editor, Component::Prop(p)) => Some(prop_cell(p.at)),
     };
-    if let Some(at) = position {
-        check_position(ctx, at)?;
+    if let Some(cell) = cell {
+        check_cell(ctx, cell)?;
     }
     Ok(())
 }
@@ -288,7 +364,18 @@ pub fn check_remove(ctx: &Ctx, old: &Component) -> Result<(), EntityWhy> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entity::{Axis, Objective, Portal, Settings, Spawn};
+    use crate::entity::{Axis, Objective, Portal, Prop, Settings, Spawn};
+
+    /// The prop every test places: a catalogue name nobody's world refuses by default.
+    const HASH: [u8; 16] = [9; 16];
+
+    fn any_prop(_: &[u8; 16]) -> bool {
+        true
+    }
+
+    fn free_footprint(_: &Prop) -> bool {
+        true
+    }
 
     fn floor(c: Cell) -> bool {
         c[1] < 0
@@ -325,7 +412,15 @@ mod tests {
             plot_portals: 0,
             spawns: 2,
             ground,
+            props_in_plot: 0,
+            prop_footprint_free: &free_footprint,
+            known_prop: &any_prop,
         }
+    }
+
+    /// A prop at `at` (5 cm units) owned by `owner`.
+    fn prop(at: [i32; 3], owner: Option<u64>) -> Prop {
+        Prop { prop: HASH, at, yaw: 0, variant: 0, state: 0, channel: None, text: None, owner }
     }
 
     fn portal(at: [f32; 3], to: Dest) -> Portal {
@@ -740,5 +835,177 @@ mod tests {
         // within its own zone, a full zone is no obstacle (the entity is already counted there)
         c.moves_zone = false;
         assert_eq!(check_put(&c, Some(&old), &moved), Ok(()));
+    }
+
+    // Props: a builder's plot is x and z in 0..10 (blocks), and the reach point is (5, 0, 5).
+    // A prop at 5 cm units [55, 0, 55] is in block [5, 0, 5].
+
+    #[test]
+    fn unknown_prop_is_no_such_prop() {
+        let plots: [PlotArea; 0] = [];
+        let unknown = |_: &[u8; 16]| false;
+        let c = Ctx { known_prop: &unknown, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NoSuchProp));
+    }
+
+    #[test]
+    fn builder_places_own_prop_in_own_plot() {
+        let plots = [plot(&[7])];
+        let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let p = Component::Prop(prop([55, 0, 55], Some(7)));
+        assert_eq!(check_put(&c, None, &p), Ok(()));
+    }
+
+    #[test]
+    fn new_prop_owned_by_someone_else_is_not_yours() {
+        let plots = [plot(&[7])];
+        let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let p = Component::Prop(prop([55, 0, 55], Some(8)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NotYours));
+        let unowned = Component::Prop(prop([55, 0, 55], None));
+        assert_eq!(check_put(&c, None, &unowned), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn builder_prop_outside_own_plot_is_not_yours() {
+        let plots = [plot(&[7])];
+        let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let p = Component::Prop(prop([555, 0, 55], Some(7)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn builder_cannot_move_someone_elses_prop() {
+        let plots = [plot(&[7])];
+        let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let old = Component::Prop(prop([55, 0, 55], Some(8)));
+        let moved = Component::Prop(Prop { yaw: 1, ..prop([55, 0, 55], Some(8)) });
+        assert_eq!(check_put(&c, Some(&old), &moved), Err(EntityWhy::NotYours));
+        // a level file's prop (no owner) is not a builder's to move either
+        let level = Component::Prop(prop([55, 0, 55], None));
+        assert_eq!(check_put(&c, Some(&level), &moved), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn builder_moves_own_prop_within_plot() {
+        let plots = [plot(&[7])];
+        let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let old = Component::Prop(prop([55, 0, 55], Some(7)));
+        let moved = Component::Prop(prop([65, 0, 55], Some(7)));
+        assert_eq!(check_put(&c, Some(&old), &moved), Ok(()));
+    }
+
+    #[test]
+    fn prop_owner_cannot_be_handed_over() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let old = Component::Prop(prop([55, 0, 55], Some(1)));
+        let handed = Component::Prop(prop([55, 0, 55], Some(2)));
+        assert_eq!(check_put(&c, Some(&old), &handed), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn editor_places_prop_in_reach_outside_plots() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        assert_eq!(check_put(&c, None, &p), Ok(()));
+        let far = Component::Prop(prop([1000, 0, 55], Some(1)));
+        assert_eq!(check_put(&c, None, &far), Err(EntityWhy::TooFar));
+    }
+
+    #[test]
+    fn sixty_fifth_prop_in_a_plot_is_too_many() {
+        let plots = [plot(&[7])];
+        let mut c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let p = Component::Prop(prop([55, 0, 55], Some(7)));
+        c.props_in_plot = PROPS_PER_PLOT - 1;
+        assert_eq!(check_put(&c, None, &p), Ok(()));
+        c.props_in_plot = PROPS_PER_PLOT;
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::TooMany));
+    }
+
+    #[test]
+    fn moving_a_prop_within_its_plot_is_not_counted_again() {
+        let plots = [plot(&[7])];
+        let mut c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        c.props_in_plot = PROPS_PER_PLOT;
+        let old = Component::Prop(prop([55, 0, 55], Some(7)));
+        let moved = Component::Prop(prop([65, 0, 55], Some(7)));
+        assert_eq!(check_put(&c, Some(&old), &moved), Ok(()));
+    }
+
+    #[test]
+    fn prop_on_a_taken_footprint_is_blocked() {
+        let plots: [PlotArea; 0] = [];
+        let taken = |_: &Prop| false;
+        let c = Ctx { prop_footprint_free: &taken, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Blocked));
+    }
+
+    #[test]
+    fn changing_only_a_prop_text_skips_the_footprint_check() {
+        let plots: [PlotArea; 0] = [];
+        let taken = |_: &Prop| false;
+        let c = Ctx { prop_footprint_free: &taken, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        let old = Component::Prop(prop([55, 0, 55], Some(1)));
+        let mut text = prop([55, 0, 55], Some(1));
+        text.text = Some("open".into());
+        assert_eq!(check_put(&c, Some(&old), &Component::Prop(text)), Ok(()));
+        // turning it is a placement change, so the footprint is checked again
+        let turned = Component::Prop(Prop { yaw: 3, ..prop([55, 0, 55], Some(1)) });
+        assert_eq!(check_put(&c, Some(&old), &turned), Err(EntityWhy::Blocked));
+    }
+
+    #[test]
+    fn prop_yaw_24_is_invalid() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let p = Component::Prop(Prop { yaw: 24, ..prop([55, 0, 55], Some(1)) });
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn prop_text_over_140_is_too_big_and_control_characters_are_invalid() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let long = Component::Prop(Prop { text: Some("a".repeat(141)), ..prop([55, 0, 55], Some(1)) });
+        assert_eq!(check_put(&c, None, &long), Err(EntityWhy::TooBig));
+        let ctl = Component::Prop(Prop { text: Some("hi\u{7}".into()), ..prop([55, 0, 55], Some(1)) });
+        assert_eq!(check_put(&c, None, &ctl), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn prop_into_a_full_zone_is_too_many() {
+        let plots: [PlotArea; 0] = [];
+        let mut c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        c.zone_entities = MAX_ZONE_ENTITIES;
+        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::TooMany));
+    }
+
+    #[test]
+    fn remove_prop_by_role() {
+        let plots = [plot(&[7])];
+        let builder = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let own = Component::Prop(prop([55, 0, 55], Some(7)));
+        assert_eq!(check_remove(&builder, &own), Ok(()));
+        let theirs = Component::Prop(prop([55, 0, 55], Some(8)));
+        assert_eq!(check_remove(&builder, &theirs), Err(EntityWhy::NotYours));
+        let level = Component::Prop(prop([55, 0, 55], None));
+        assert_eq!(check_remove(&builder, &level), Err(EntityWhy::NotYours));
+
+        let editor = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        assert_eq!(check_remove(&editor, &theirs), Ok(()));
+        assert_eq!(check_remove(&editor, &level), Ok(()));
+        let far = Component::Prop(prop([1000, 0, 55], Some(1)));
+        assert_eq!(check_remove(&editor, &far), Err(EntityWhy::TooFar));
+    }
+
+    #[test]
+    fn prop_cell_is_the_block_for_a_negative_position() {
+        assert_eq!(prop_cell([-1, -10, -11]), [-1, -1, -2]);
     }
 }

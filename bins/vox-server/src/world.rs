@@ -456,8 +456,9 @@ impl WorldState {
         }
     }
 
-    /// The world as a newcomer gets it: welcome, chunks, ready, weather, who's here, then every
-    /// entity, nearest `from` first. False if they couldn't keep up.
+    /// The world as a newcomer gets it: welcome, chunks, every entity (nearest `from` first),
+    /// ready, weather, who's here. The entities come before `Ready` so a client has them all
+    /// when it is told the world is complete. False if they couldn't keep up.
     pub(super) fn send_world(&self, tx: &mpsc::Sender<Message>, you: u32, name: &str, names: bool, from: [f32; 3]) -> bool {
         let mut ok = Self::send_to(
             tx,
@@ -476,6 +477,9 @@ impl WorldState {
             let c = self.world.chunk(k).expect("listed");
             ok &= Self::send_to(tx, &ToClient::Chunk { key: k, version: c.version, data: c.encode() });
         }
+        for batch in entities::batches(self.entities.all_from(from)) {
+            ok &= Self::send_to(tx, &ToClient::Entities(batch));
+        }
         ok &= Self::send_to(tx, &ToClient::Ready);
         if let Some(w) = &self.weather {
             ok &= Self::send_to(tx, &ToClient::Weather(Box::new(w.keyframe())));
@@ -483,9 +487,6 @@ impl WorldState {
         for p in self.players.values() {
             let name = if names { p.name.clone() } else { String::new() };
             ok &= Self::send_to(tx, &ToClient::Joined { player: p.id, name, avatar: p.avatar.clone() });
-        }
-        for batch in entities::batches(self.entities.all_from(from)) {
-            ok &= Self::send_to(tx, &ToClient::Entities(batch));
         }
         ok
     }
@@ -957,7 +958,13 @@ impl WorldState {
         }
         // the zones it was in and is in are changed for the next snapshot
         self.snap_changed.extend(zones);
+        let done = ToClient::EntityDone { id, entity: change.entity, seq };
         self.broadcast_entities(vec![change]);
+        // to the sender alone, after the change itself, so the page's `done` follows the
+        // `entities` event that carries it
+        if !Self::send_to(&tx, &done) {
+            self.leave(conn);
+        }
         if touched {
             self.refresh_from_entities();
         }
@@ -990,12 +997,18 @@ impl WorldState {
                     Some(id) => Some(self.held(*id, *expect)?),
                 };
                 let zone = entities::zone_key(component);
+                // Props are not wired into the server yet (vox-tol.4.9): refuse every prop.
+                let refuse_prop = |_: &vox_core::entity::Prop| false;
+                let refuse_hash = |_: &[u8; 16]| false;
                 let ctx = Ctx {
                     role,
                     account,
                     at,
                     bounds: self.cfg.bounds,
                     plots: &plots,
+                    props_in_plot: 0,
+                    prop_footprint_free: &refuse_prop,
+                    known_prop: &refuse_hash,
                     zone_entities: self.entities.zone_count(zone),
                     moves_zone: old.is_some_and(|o| entities::zone_key(o) != zone),
                     plot_portals: plot_portals_at(&plots, component, &self.entities),
@@ -1018,12 +1031,18 @@ impl WorldState {
             }
             Edit::Remove { entity, expect } => {
                 let old = self.held(*entity, *expect)?;
+                // Props are not wired into the server yet (vox-tol.4.9): refuse every prop.
+                let refuse_prop = |_: &vox_core::entity::Prop| false;
+                let refuse_hash = |_: &[u8; 16]| false;
                 let ctx = Ctx {
                     role,
                     account,
                     at,
                     bounds: self.cfg.bounds,
                     plots: &plots,
+                    props_in_plot: 0,
+                    prop_footprint_free: &refuse_prop,
+                    known_prop: &refuse_hash,
                     zone_entities: 0,
                     moves_zone: false,
                     plot_portals: 0,

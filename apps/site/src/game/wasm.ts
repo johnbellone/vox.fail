@@ -6,6 +6,8 @@ declare global {
     vox_status?: (text: string) => void;
     vox_ready?: () => void;
     vox_error?: (text: string) => void;
+    /** the editor's events, as JSON text (see editor.ts) */
+    vox_editor?: (json: string) => void;
   }
 }
 
@@ -19,16 +21,23 @@ export interface StartConfig {
   wear?: string[];
   /** look at the world without joining it: no sign-in, no avatar, no controls */
   watch?: boolean;
+  /** start in edit mode (the world editor); the client refuses commands otherwise */
+  edit?: boolean;
   base?: string;
 }
 
 interface Client {
   default: () => Promise<unknown>;
   start: (config: string) => void;
+  /** the editor's command entry point (client/src/lib.rs, `editor_command`) */
+  editor_command?: (json: string) => void;
 }
 
 // where the client is served; a variable so the bundler leaves the import alone
 const CLIENT_URL = "/pkg/vox_client.js";
+
+// the loaded client, for the editor's commands; undefined until loadClient has run
+let loaded: Client | undefined;
 
 export async function loadClient(): Promise<(config: StartConfig) => void> {
   let client: Client;
@@ -39,7 +48,16 @@ export async function loadClient(): Promise<(config: StartConfig) => void> {
     console.error(err);
     throw new Error("the browser client isn't installed on this server yet (tools/dev/build_web.sh builds it)");
   }
+  loaded = client;
   return (config) => client.start(JSON.stringify({ base: location.origin, ...config }));
+}
+
+/** Sends one editor command (JSON text) to the running client. Throws when no client is loaded
+ *  or it predates the editor. */
+export function editorCommand(json: string): void {
+  const send = loaded?.editor_command;
+  if (!send) throw new Error("the editor isn't running");
+  send(json);
 }
 
 interface Gpu {
