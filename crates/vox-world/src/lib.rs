@@ -26,6 +26,7 @@ pub mod menu;
 pub mod outdoors;
 pub mod portals;
 pub mod pose;
+pub mod props;
 pub mod proto;
 pub mod voice;
 

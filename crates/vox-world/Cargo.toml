@@ -7,6 +7,8 @@ description = "A Vox world on screen: blocks, sky and weather, portals, the link
 [dependencies]
 bevy.workspace = true
 vox-core.workspace = true
+vox-format.workspace = true
+vox-art = { path = "../vox-art" }
 serde.workspace = true
 serde_json.workspace = true
 postcard.workspace = true

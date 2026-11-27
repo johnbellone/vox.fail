@@ -124,7 +124,7 @@ pub fn app(start: Start, assets: String) -> App {
         MaterialPlugin::<outdoors::RainMaterial>::default(),
         MaterialPlugin::<portals::PortalMaterial>::default(),
     ))
-    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::voice::plugin::VoicePlugin, vox_world::hud::HudPlugin, vox_world::menu::MenuPlugin))
+    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::voice::plugin::VoicePlugin, vox_world::hud::HudPlugin, vox_world::menu::MenuPlugin, vox_world::props::PropPlugin))
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
     .insert_resource(
         world::WorldClient::new(Some(start.url.clone()), start.name.clone())
