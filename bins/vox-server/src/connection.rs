@@ -20,21 +20,51 @@ pub(super) fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+/// Who may come in: the directory's key (None: anyone, under any name), whether guests may too,
+/// this world's id (what tickets must name), and the tickets already used.
+pub(super) struct Gate {
+    pub key: Option<vox_core::auth::VerifyingKey>,
+    pub guests: bool,
+    pub world: String,
+    /// ticket nonces seen, with when each ticket runs out (forgotten after that)
+    pub used: Mutex<HashMap<u64, u64>>,
+}
+
+/// Tickets remembered at most; more than this many unexpired at once and new ones are refused
+/// (a minute's worth of arrivals is far fewer).
+const MAX_USED_TICKETS: usize = 100_000;
+
+/// Someone let in: the name they go by, their account, and where a ticket says they arrive.
+#[derive(Debug, PartialEq)]
+pub(super) struct Admitted {
+    pub name: String,
+    pub account: Option<u64>,
+    pub arrive: Option<[f32; 3]>,
+}
+
 /// May this player in, and under what name? With a directory key, a good token gives their
-/// name and account; without one they're a guest (if guests are let in). Without a key, any
-/// name goes.
-pub(super) fn admit(
-    gate: &(Option<vox_core::auth::VerifyingKey>, bool),
-    name: String,
-    token: Option<&str>,
-    now: u64,
-) -> Result<(String, Option<u64>), String> {
-    let Some(key) = &gate.0 else { return Ok((name, None)) };
+/// name and account, and a ticket also where they arrive (once: a ticket used before is
+/// refused); without either they're a guest (if guests are let in). Without a key, any name
+/// goes.
+pub(super) fn admit(gate: &Gate, name: String, token: Option<&str>, now: u64) -> Result<Admitted, String> {
+    let Some(key) = &gate.key else { return Ok(Admitted { name, account: None, arrive: None }) };
     match token {
-        Some(t) => vox_core::auth::verify(t, key, now).map(|c| (c.name, Some(c.account))),
-        None if gate.1 => {
+        Some(t) if vox_core::auth::is_ticket(t) => {
+            let t = vox_core::auth::verify_ticket(t, key, &gate.world, now)?;
+            let mut used = gate.used.lock().unwrap_or_else(|e| e.into_inner());
+            used.retain(|_, until| *until > now);
+            if used.len() >= MAX_USED_TICKETS {
+                return Err("too many arrivals at once: try again in a minute".into());
+            }
+            if used.insert(t.nonce, t.claims.expires).is_some() {
+                return Err("that ticket has been used: go through again".into());
+            }
+            Ok(Admitted { name: t.claims.name, account: Some(t.claims.account), arrive: Some(t.arrive) })
+        }
+        Some(t) => vox_core::auth::verify(t, key, now).map(|c| Admitted { name: c.name, account: Some(c.account), arrive: None }),
+        None if gate.guests => {
             let n = clean(&name, 24);
-            Ok((if n.is_empty() { "guest".into() } else { format!("{n} (guest)") }, None))
+            Ok(Admitted { name: if n.is_empty() { "guest".into() } else { format!("{n} (guest)") }, account: None, arrive: None })
         }
         None => Err("this world needs you to sign in first".into()),
     }
@@ -96,7 +126,7 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
         }
     };
     // who they are: from their sign-in, when this world checks it
-    let (name, account) = match admit(&server.gate, name, token.as_deref(), unix_now()) {
+    let Admitted { name, account, arrive } = match admit(&server.gate, name, token.as_deref(), unix_now()) {
         Ok(x) => x,
         Err(why) => {
             let bye = wire::encode(&ToClient::Bye { why });
@@ -114,7 +144,7 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
         let _ = sink.close().await;
     });
     let name = clean(&name, 32);
-    if server.tx.send(Event::Join { conn, tx, protocol, name, avatar, account }).await.is_err() {
+    if server.tx.send(Event::Join { conn, tx, protocol, name, avatar, account, arrive }).await.is_err() {
         return;
     }
     // poses are the one message with no limit further on: cap them here, before they queue
@@ -200,5 +230,38 @@ pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world,
         }
         let wake = next_rules.min(next_report);
         tokio::time::sleep(wake.saturating_duration_since(Instant::now()).max(Duration::from_millis(20))).await;
+    }
+}
+
+/// Asking the directory for tickets: the world thread hands over trips ([`Trip`]) and this asks
+/// the directory for each, then tells the world how it went ([`Event::Ticket`]). A directory
+/// that's down or doesn't know the way gives no ticket; the player is then sent on without one.
+pub(super) async fn ticket_office(tx: mpsc::Sender<Event>, mut trips: mpsc::Receiver<Trip>, url: String, secret: String, world: String) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(5)).build() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("no link to the directory for tickets: {e}"),
+    };
+    while let Some(trip) = trips.recv().await {
+        let http = http.clone();
+        let (tx, url, secret, world) = (tx.clone(), url.clone(), secret.clone(), world.clone());
+        // one at a time would hold everyone up behind a slow answer
+        tokio::spawn(async move {
+            let body = serde_json::json!({ "world": world, "account": trip.account, "to": trip.to, "arrive": trip.arrive });
+            let got = http.post(format!("{url}/api/world/travel")).bearer_auth(&secret).json(&body).send().await;
+            let answer = match got {
+                Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+                Ok(r) => {
+                    eprintln!("the directory gave no ticket to {} ({})", trip.to, r.status());
+                    None
+                }
+                Err(e) => {
+                    eprintln!("can't reach the directory for a ticket: {e}");
+                    None
+                }
+            };
+            let ticket = answer.as_ref().and_then(|a| a["ticket"].as_str()).map(String::from);
+            let to = answer.as_ref().and_then(|a| a["url"].as_str()).map_or(trip.to, String::from);
+            let _ = tx.send(Event::Ticket { conn: trip.conn, url: to, ticket, arrive: trip.arrive }).await;
+        });
     }
 }

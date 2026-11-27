@@ -180,6 +180,7 @@ impl Directory {
             .route("/api/crews/answer", post(people::answer_invite))
             .route("/api/crews/leave", post(people::leave))
             .route("/api/world/report", post(game::report))
+            .route("/api/world/travel", post(game::travel))
             .route("/api/world/{id}/rules", get(game::rules))
             .route("/auth/steam", get(social::steam_start))
             .route("/auth/steam/return", get(social::steam_return))

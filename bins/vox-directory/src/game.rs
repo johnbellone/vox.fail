@@ -16,7 +16,9 @@
 //!   (raids finished); the explorer also shows your coins and the wardrobe.
 //! - World servers (with the directory's world secret) report each minute who is there,
 //!   where they stand and how many blocks they placed, and fetch the plots and portals in
-//!   their world.
+//!   their world. When a player goes through a portal to another world, their world asks for a
+//!   **ticket** (`/api/world/travel`): it lets them into that world only, once, within a minute,
+//!   at the arrival point the world they left worked out.
 
 use std::collections::HashMap;
 
@@ -819,4 +821,67 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
         })
         .collect();
     Ok(Json(json!({ "plots": plots, "portals": portals })))
+}
+
+// ---- tickets
+
+#[derive(Deserialize)]
+pub struct Trip {
+    /// the world they're leaving (its id)
+    pub world: String,
+    pub account: u64,
+    /// where the portal leads: its url as the level gives it (`":7781"`, `"/w/7781/ws"`, a
+    /// whole address) or a world's id
+    pub to: String,
+    /// where they arrive there, blocks
+    pub arrive: [f32; 3],
+}
+
+/// What tells worlds apart in an address: the `<x>` of `/w/<x>/`, else the port. Two addresses
+/// for the same world (`":7781"` from a level, `"/w/7781/ws"` on the directory's list) agree.
+pub fn way(url: &str) -> Option<String> {
+    let u = url.trim();
+    if let Some(i) = u.find("/w/") {
+        let rest = &u[i + 3..];
+        let seg = rest.split('/').next().unwrap_or("");
+        return (!seg.is_empty()).then(|| seg.to_string());
+    }
+    let authority = u.split_once("://").map_or(u, |(_, r)| r).split('/').next().unwrap_or("");
+    let port = authority.rsplit_once(':').map(|(_, p)| p)?;
+    (!port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())).then(|| port.to_string())
+}
+
+/// A ticket for a player going through a portal (see the module's docs). Asked by the world
+/// they're leaving, which checked they were in the doorway; answered with the world it leads
+/// to, its address and the ticket.
+pub(crate) async fn travel(State(d): State<Directory>, h: HeaderMap, Json(t): Json<Trip>) -> Res<Json<Value>> {
+    d.from_world(&h)?;
+    d.world(&t.world)?;
+    if !t.arrive.iter().all(|v| v.is_finite()) {
+        return Err(bad("nowhere to arrive"));
+    }
+    let to = d
+        .0
+        .worlds
+        .iter()
+        .find(|w| w.id == t.to || (way(&t.to).is_some() && way(&t.to) == way(&w.url)))
+        .ok_or_else(|| no(StatusCode::NOT_FOUND, "that portal leads to no world of this directory"))?;
+    let name: String = {
+        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.query_row("SELECT name FROM accounts WHERE id = ?1", params![t.account as i64], |r| r.get(0))
+            .optional()
+            .map_err(oops)?
+            .ok_or_else(|| bad("there's no such account"))?
+    };
+    let character = d.character(t.account).unwrap_or_default();
+    let now = now();
+    let mut nonce = [0u8; 8];
+    getrandom::fill(&mut nonce).map_err(oops)?;
+    let ticket = vox_core::auth::Ticket {
+        claims: vox_core::auth::Claims { account: t.account, name, character, issued: now, expires: now + vox_core::auth::TICKET_LIFETIME },
+        world: to.id.clone(),
+        arrive: t.arrive,
+        nonce: u64::from_le_bytes(nonce),
+    };
+    Ok(Json(json!({ "world": to.id, "url": to.url, "ticket": vox_core::auth::sign_ticket(&ticket, &d.0.key) })))
 }

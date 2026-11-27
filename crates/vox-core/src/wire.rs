@@ -13,7 +13,7 @@ use crate::world::{Bounds, Cell, ChunkKey, Why};
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever these messages change in a way old players can't read.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ToServer {
@@ -37,6 +37,10 @@ pub enum ToServer {
     /// is not a player, and may send nothing more. Added last, so older messages keep their
     /// numbers.
     Watch { protocol: u32 },
+    /// Through the doorway called `portal` (to another world), from `side` (+1 from its +x/+z
+    /// side, -1 the other). The world checks you're there and answers [`ToClient::Travel`].
+    /// Added last, so older messages keep their numbers.
+    Through { portal: String, side: i8 },
 }
 
 /// An edit the server made.
@@ -83,6 +87,10 @@ pub enum ToClient {
     /// You can't have got there: go back to `at` (blocks, feet). Added last, so older messages
     /// keep their numbers.
     Correct { at: [f32; 3] },
+    /// Go through: connect to `url` (as a portal's url: `":7781"`, `"/w/7781/ws"` or whole),
+    /// saying hello with `ticket` if there is one (it's for that world only, once, for a
+    /// minute), and arrive at `arrive` (blocks, feet), which is where the world there puts you.
+    Travel { url: String, ticket: Option<String>, arrive: [f32; 3] },
 }
 
 impl ToClient {
@@ -126,12 +134,16 @@ mod tests {
             ToClient::Left { player: 1 },
             ToClient::Pose { player: 1, blob: vec![0; 40] },
             ToClient::Bye { why: "full".into() },
+            ToClient::Correct { at: [1.0, 2.0, 3.0] },
+            ToClient::Travel { url: ":7781".into(), ticket: Some("t1.a.b".into()), arrive: [0.0, 0.0, 11.5] },
         ];
         for m in msgs {
             let back: ToClient = decode(&encode(&m)).unwrap();
             assert_eq!(back, m);
         }
         let m = ToServer::Hello { protocol: PROTOCOL, name: "Sam".into(), avatar: vec![1], token: Some("w1.a.b".into()) };
+        assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
+        let m = ToServer::Through { portal: "yard".into(), side: -1 };
         assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
         let m = ToServer::Edit { id: 1, cell: [1, -2, 3], block: 5 };
         assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);

@@ -7,6 +7,7 @@
 //! - [`wire`]: the messages between a world server and its players.
 //! - [`auth`]: sign-in tokens from the directory, checked by world servers.
 //! - [`moves`]: how far a player can really move (the server's check on reported positions).
+//! - [`portal`]: doorways to other places: where they are and where going through takes you.
 //! - [`predict`]: a player's view of the world: confirmed blocks plus their own edits that
 //!   the server hasn't answered yet.
 //!
@@ -18,6 +19,7 @@ pub mod body;
 pub mod entitle;
 pub mod level;
 pub mod moves;
+pub mod portal;
 pub mod predict;
 pub mod ray;
 pub mod weather;

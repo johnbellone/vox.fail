@@ -7,6 +7,11 @@
 //!
 //! A token is `v1.<claims>.<signature>`, both parts base64url (no padding); the claims are
 //! postcard. Tokens last a day by default.
+//!
+//! A **ticket** is a token for one trip through a portal: `t1.<ticket>.<signature>`, the claims
+//! plus the world it's for, where you arrive and a nonce, for a minute. The world you leave asks
+//! the directory for one; the world you go to lets you in once with it, at the arrival point. So
+//! a ticket is safe to send to a world on another host: it's good nowhere else and not twice.
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use ed25519_dalek::{Signature, Signer, Verifier};
@@ -15,6 +20,12 @@ use serde::{Deserialize, Serialize};
 
 /// How long a token lasts, s.
 pub const LIFETIME: u64 = 24 * 3600;
+
+/// How long a ticket lasts, s.
+pub const TICKET_LIFETIME: u64 = 60;
+
+/// Signed before a ticket's body, so a ticket's signature can never pass for a token's.
+const TICKET_DOMAIN: &[u8] = b"vox ticket\0";
 
 /// What someone looks like in a world.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -63,6 +74,58 @@ pub fn verify(token: &str, key: &VerifyingKey, now: u64) -> Result<Claims, Strin
         return Err("this token is from the future".into());
     }
     Ok(claims)
+}
+
+/// One trip through a portal: who, to which world, arriving where. See the module's docs.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Ticket {
+    /// who they are; `expires` is [`TICKET_LIFETIME`] after `issued`
+    pub claims: Claims,
+    /// the world it lets them into (its id, `vox-server --name`)
+    pub world: String,
+    /// where they arrive there, blocks (feet)
+    pub arrive: [f32; 3],
+    /// a number used once: a world lets a ticket in only once
+    pub nonce: u64,
+}
+
+/// Make a ticket.
+pub fn sign_ticket(t: &Ticket, key: &SigningKey) -> String {
+    let body = postcard::to_stdvec(t).expect("ticket");
+    let sig = key.sign(&[TICKET_DOMAIN, &body].concat());
+    format!("t1.{}.{}", B64.encode(&body), B64.encode(sig.to_bytes()))
+}
+
+/// Is this a ticket (not a day-long token)?
+pub fn is_ticket(s: &str) -> bool {
+    s.trim().starts_with("t1.")
+}
+
+/// What a ticket says, if `key` signed it, it's for `world`, and it hasn't run out at `now`.
+/// (Whether it was used before is for the world to remember: see [`Ticket::nonce`].)
+pub fn verify_ticket(s: &str, key: &VerifyingKey, world: &str, now: u64) -> Result<Ticket, String> {
+    let mut parts = s.trim().split('.');
+    let (Some("t1"), Some(body), Some(sig), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
+        return Err("not a ticket".into());
+    };
+    let body = B64.decode(body).map_err(|_| "bad ticket")?;
+    let sig = B64.decode(sig).map_err(|_| "bad ticket")?;
+    let sig = Signature::from_slice(&sig).map_err(|_| "bad ticket")?;
+    key.verify(&[TICKET_DOMAIN, &body].concat(), &sig).map_err(|_| "this ticket wasn't signed by the directory")?;
+    let t: Ticket = postcard::from_bytes(&body).map_err(|_| "bad ticket")?;
+    if t.world != world {
+        return Err("that ticket is for another world".into());
+    }
+    if now >= t.claims.expires || t.claims.expires > t.claims.issued + TICKET_LIFETIME {
+        return Err("the way has closed: go through again".into());
+    }
+    if t.claims.issued > now + 300 {
+        return Err("this ticket is from the future".into());
+    }
+    if !t.arrive.iter().all(|v| v.is_finite()) {
+        return Err("bad ticket".into());
+    }
+    Ok(t)
 }
 
 /// What a token says, without checking who signed it (for a client showing its own name).
@@ -118,6 +181,39 @@ mod tests {
         let hex = public_hex(&key.verifying_key());
         assert_eq!(public_from_hex(&hex).unwrap(), key.verifying_key());
         assert!(public_from_hex("abc").is_err());
+    }
+
+    fn ticket(now: u64) -> Ticket {
+        let mut c = claims(now);
+        c.expires = now + TICKET_LIFETIME;
+        Ticket { claims: c, world: "yard".into(), arrive: [1.5, 0.0, -3.0], nonce: 42 }
+    }
+
+    #[test]
+    fn tickets_are_for_one_world_and_a_minute() {
+        let key = key_from_seed([3; 32]);
+        let pubk = key.verifying_key();
+        let t = sign_ticket(&ticket(1000), &key);
+        assert!(is_ticket(&t) && !is_ticket(&sign(&claims(1000), &key)));
+        assert_eq!(verify_ticket(&t, &pubk, "yard", 1010).unwrap(), ticket(1000));
+        // another world, too late, another key
+        assert!(verify_ticket(&t, &pubk, "void", 1010).is_err());
+        assert!(verify_ticket(&t, &pubk, "yard", 1000 + TICKET_LIFETIME).is_err());
+        assert!(verify_ticket(&t, &key_from_seed([4; 32]).verifying_key(), "yard", 1010).is_err());
+        // a ticket that claims to last longer than a ticket may
+        let mut long = ticket(1000);
+        long.claims.expires = 1000 + LIFETIME;
+        assert!(verify_ticket(&sign_ticket(&long, &key), &pubk, "yard", 1010).is_err());
+        // a ticket's signature doesn't make a token, nor a token's a ticket
+        let (_, body_sig) = t.split_once('.').unwrap();
+        assert!(verify(&format!("v1.{body_sig}"), &pubk, 1010).is_err());
+        let tok = sign(&claims(1000), &key);
+        let (_, body_sig) = tok.split_once('.').unwrap();
+        assert!(verify_ticket(&format!("t1.{body_sig}"), &pubk, "yard", 1010).is_err());
+        // nowhere to arrive
+        let mut nan = ticket(1000);
+        nan.arrive[1] = f32::NAN;
+        assert!(verify_ticket(&sign_ticket(&nan, &key), &pubk, "yard", 1010).is_err());
     }
 
     #[test]
