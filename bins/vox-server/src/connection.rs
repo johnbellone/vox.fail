@@ -233,6 +233,24 @@ pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world,
     }
 }
 
+/// Telling the directory a world's objective was reached, and by whom (it decides what that
+/// wins: a raid on the dungeon). Tried a few times; a directory that stays down misses it.
+pub(super) async fn objective_reached(mut goals: mpsc::Receiver<Vec<u64>>, url: String, secret: String, world: String) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(10)).build() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("no link to the directory for objectives: {e}"),
+    };
+    while let Some(players) = goals.recv().await {
+        let body = serde_json::json!({ "world": world, "players": players });
+        for attempt in 0..3u64 {
+            match http.post(format!("{url}/api/world/objective")).bearer_auth(&secret).json(&body).send().await {
+                Ok(r) if r.status().is_success() || r.status().is_client_error() => break,
+                _ => tokio::time::sleep(Duration::from_secs(2 << attempt)).await,
+            }
+        }
+    }
+}
+
 /// Asking the directory for tickets: the world thread hands over trips ([`Trip`]) and this asks
 /// the directory for each, then tells the world how it went ([`Event::Ticket`]). A directory
 /// that's down or doesn't know the way gives no ticket; the player is then sent on without one.

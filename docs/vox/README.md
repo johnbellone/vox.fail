@@ -60,9 +60,12 @@ world. **Issue a currency** (100): a world's owner gives it its own coin, with a
 which anyone can then send to anyone. **Dungeons**: the Low Door, south of the Circle in the Void, leads into the Crypt. A doorway
 whose url is `dungeon:<name>` leads to your raid party's own copy of that
 dungeon (`data/levels/dungeons/<name>.json`): nobody else can come in, and it's gone an hour
-later or once it has been empty for five minutes. A party opens at most three an hour. **Start a raid** (10): your party's leader picks a world;
-when two or more of you spend ten minutes there together within the hour, everyone there gets
-15 authority and a trophy. The **Inventory** page holds coins, deeds, portal keys, banners,
+later or once it has been empty for five minutes. A party opens at most three copies an hour,
+and coming back to one that has gone (a fresh copy) counts as one. **Start a raid** (10): your
+party's leader picks a world, or a dungeon (`dungeon:crypt`); in a world, when two or more of you
+spend ten minutes there together within the hour, everyone there gets 15 authority and a
+trophy; in a dungeon, when one of you reaches its objective (the Crypt's altar), every one of
+the party who's in there with you does. The **Inventory** page holds coins, deeds, portal keys, banners,
 trophies and the wardrobe (filter by kind and world, search, sort), the feats and the ledger
 of every coin moved. **Friends and raids** has friend requests, groups (up to 24, who build
 together) and raid parties (up to 8).

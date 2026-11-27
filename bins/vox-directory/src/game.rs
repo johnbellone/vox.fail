@@ -626,7 +626,12 @@ pub(crate) struct StartRaid {
 pub(crate) async fn start_raid(State(d): State<Directory>, h: HeaderMap, Json(s): Json<StartRaid>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let wname = d.world(&s.world)?.name.clone();
+    // a world, or a dungeon (`dungeon:crypt`), whose raid is won by reaching its objective
+    let wname = match s.world.strip_prefix(DUNGEON) {
+        Some(t) if dungeon_name(t) && d.0.instance_host.is_some() => target_name(&d, &s.world),
+        Some(_) => return Err(bad("there's no such dungeon")),
+        None => d.world(&s.world)?.name.clone(),
+    };
     let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
     let (pname, leader, ends, done): (String, i64, Option<i64>, i64) = tx
@@ -769,23 +774,95 @@ fn raids(db: &Connection, world: &str, wname: &str, here: &[u64]) -> Res<usize> 
         if together < RAID_TOGETHER {
             continue;
         }
-        db.execute("UPDATE crews SET done = 1 WHERE id = ?1", params![party]).map_err(oops)?;
+        finish_raid(db, party, &pname, world, wname, &present, members.len())?;
         finished += 1;
-        for m in present {
-            let paid: i64 = db
-                .query_row(
-                    "SELECT count(*) FROM ledger WHERE dst = ?1 AND currency = ?2 AND memo LIKE '% raided %' AND at > ?3",
-                    params![m as i64, AUTH, t - 86_400],
-                    |r| r.get(0),
-                )
-                .map_err(oops)?;
-            if paid < RAID_REWARDS_PER_DAY {
-                mint(db, m, AUTH, RAID_REWARD, &format!("{pname} raided {wname}")).map_err(oops)?;
-            }
-            give(db, m, "trophy", &format!("Raided {wname}"), Some(world), Some(party), json!({ "party": pname, "finished": t, "with": members.len() }))?;
-        }
     }
     Ok(finished)
+}
+
+/// A raid is won: it's done, and everyone of the party who was `present` gets the reward (up to
+/// `RAID_REWARDS_PER_DAY` a day) and a trophy.
+fn finish_raid(db: &Connection, party: i64, pname: &str, world: &str, wname: &str, present: &[u64], members: usize) -> Res<()> {
+    let t = now() as i64;
+    db.execute("UPDATE crews SET done = 1 WHERE id = ?1", params![party]).map_err(oops)?;
+    for &m in present {
+        let paid: i64 = db
+            .query_row(
+                "SELECT count(*) FROM ledger WHERE dst = ?1 AND currency = ?2 AND memo LIKE '% raided %' AND at > ?3",
+                params![m as i64, AUTH, t - 86_400],
+                |r| r.get(0),
+            )
+            .map_err(oops)?;
+        if paid < RAID_REWARDS_PER_DAY {
+            mint(db, m, AUTH, RAID_REWARD, &format!("{pname} raided {wname}")).map_err(oops)?;
+        }
+        give(db, m, "trophy", &format!("Raided {wname}"), Some(world), Some(party), json!({ "party": pname, "finished": t, "with": members }))?;
+    }
+    Ok(())
+}
+
+/// What a raid's target is called: a world's name, or "the Crypt" for `dungeon:crypt`.
+fn target_name(d: &Directory, target: &str) -> String {
+    match target.strip_prefix(DUNGEON) {
+        Some(t) => {
+            let mut c = t.replace(['-', '_'], " ").chars().collect::<Vec<_>>();
+            if let Some(f) = c.first_mut() {
+                *f = f.to_ascii_uppercase();
+            }
+            format!("the {}", c.into_iter().collect::<String>())
+        }
+        None => d.world_name(target),
+    }
+}
+
+/// Is this a dungeon's name (`crypt`, as in `dungeon:crypt`)?
+fn dungeon_name(t: &str) -> bool {
+    !t.is_empty() && t.len() <= 32 && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+#[derive(Deserialize)]
+pub struct Reached {
+    /// the instance whose objective was reached
+    pub world: String,
+    /// who was in it then (signed-in players)
+    pub players: Vec<u64>,
+}
+
+/// An instance's objective was reached (its world server says so): a raid on that dungeon by
+/// the instance's party is won, by those of the party who were there.
+pub(crate) async fn objective(State(d): State<Directory>, h: HeaderMap, Json(r): Json<Reached>) -> Res<Json<Value>> {
+    d.from_world(&h)?;
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = db.transaction().map_err(oops)?;
+    let (party, template): (i64, String) = tx
+        .query_row("SELECT party, template FROM instances WHERE id = ?1", params![r.world], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()
+        .map_err(oops)?
+        .ok_or_else(|| bad("objectives are for dungeons' instances"))?;
+    let target = format!("{DUNGEON}{template}");
+    let raid: Option<String> = tx
+        .query_row(
+            "SELECT name FROM crews WHERE id = ?1 AND kind = 'party' AND target = ?2 AND done = 0 AND ends > ?3",
+            params![party, target, now() as i64],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(oops)?;
+    let Some(pname) = raid else { return Ok(Json(json!({ "raid": false }))) };
+    let members: Vec<u64> = {
+        let mut st = tx.prepare("SELECT account FROM crew_members WHERE crew = ?1").map_err(oops)?;
+        st.query_map(params![party], |row| row.get::<_, i64>(0)).map_err(oops)?.flatten().map(|a| a as u64).collect()
+    };
+    let mut present: Vec<u64> = r.players.iter().copied().filter(|p| members.contains(p)).collect();
+    present.sort_unstable();
+    present.dedup();
+    if present.is_empty() {
+        return Ok(Json(json!({ "raid": false })));
+    }
+    let tname = target_name(&d, &target);
+    finish_raid(&tx, party, &pname, &target, &tname, &present, members.len())?;
+    tx.commit().map_err(oops)?;
+    Ok(Json(json!({ "raid": true, "won_by": present })))
 }
 
 /// What a world server enforces and shows: who may build where, and the portals players
@@ -911,19 +988,20 @@ pub(crate) async fn travel(State(d): State<Directory>, h: HeaderMap, Json(t): Js
 pub const DUNGEON: &str = "dungeon:";
 /// How long an instance lasts, s: as long as a raid.
 pub const INSTANCE_LENGTH: u64 = RAID_LENGTH;
-/// New instances a party may have made in an hour (so it can't roll copies, or fill the host).
+/// Copies of dungeons a party may have made in an hour, new or afresh (so it can't roll copies,
+/// reset one by leaving it, or fill the host).
 pub const INSTANCES_PER_HOUR: i64 = 3;
 
 /// The instance of dungeon `template` for `account`'s party: the one it has (made again on the
 /// host if the host has let it go), or a new one, if the party may have another.
 async fn instance_for(d: &Directory, account: u64, template: &str) -> Res<String> {
-    if template.is_empty() || template.len() > 32 || !template.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_') {
+    if !dungeon_name(template) {
         return Err(bad("no such dungeon"));
     }
     let Some(host) = d.0.instance_host.clone() else { return Err(no(StatusCode::NOT_FOUND, "there are no dungeons here")) };
     let Some(secret) = d.0.world_secret.clone() else { return Err(no(StatusCode::NOT_FOUND, "there are no dungeons here")) };
     let t = now() as i64;
-    let (id, ends, new) = {
+    let (party, id, ends, new) = {
         let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
         let party: i64 = db
             .query_row(
@@ -943,39 +1021,51 @@ async fn instance_for(d: &Directory, account: u64, template: &str) -> Res<String
             .optional()
             .map_err(oops)?;
         match have {
-            Some((id, ends)) => (id, ends, None),
+            Some((id, ends)) => (party, id, ends, false),
             None => {
-                let made: i64 = db
-                    .query_row("SELECT count(*) FROM instances WHERE party = ?1 AND created > ?2", params![party, t - 3600], |r| r.get(0))
-                    .map_err(oops)?;
-                if made >= INSTANCES_PER_HOUR {
-                    return Err(no(StatusCode::TOO_MANY_REQUESTS, "your party has opened enough dungeons for now: try again later"));
-                }
                 let mut b = [0u8; 6];
                 getrandom::fill(&mut b).map_err(oops)?;
                 let id = format!("{template}-{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
-                (id, t + INSTANCE_LENGTH as i64, Some(party))
+                (party, id, t + INSTANCE_LENGTH as i64, true)
             }
         }
     };
-    // ask the host for it (it says so if it has it already), then remember a new one
     let minutes = ((ends - t).max(60) / 60) as u32;
-    let r = d
-        .0
-        .http
-        .post(format!("{host}/api/host/instance"))
-        .bearer_auth(&secret)
-        .json(&json!({ "id": id, "template": template, "minutes": minutes }))
-        .send()
-        .await
-        .map_err(|_| no(StatusCode::SERVICE_UNAVAILABLE, "the dungeons can't be reached just now"))?;
+    let ask = |make: bool| {
+        d.0.http
+            .post(format!("{host}/api/host/instance"))
+            .bearer_auth(&secret)
+            .json(&json!({ "id": id, "template": template, "minutes": minutes, "make": make }))
+            .send()
+    };
+    // one it has: is the host still holding it? (an instance left empty is thrown away)
+    if !new {
+        let r = ask(false).await.map_err(|_| no(StatusCode::SERVICE_UNAVAILABLE, "the dungeons can't be reached just now"))?;
+        match r.status().as_u16() {
+            200 => return Ok(id),
+            410 => {}
+            _ => return Err(no(StatusCode::SERVICE_UNAVAILABLE, "that dungeon can't be opened just now")),
+        }
+    }
+    // a copy is made, new or afresh (which is a reset): each counts against the hour's limit
+    {
+        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        let opened: i64 = db
+            .query_row("SELECT count(*) FROM instance_opens WHERE party = ?1 AND at > ?2", params![party, t - 3600], |r| r.get(0))
+            .map_err(oops)?;
+        if opened >= INSTANCES_PER_HOUR {
+            return Err(no(StatusCode::TOO_MANY_REQUESTS, "your party has opened enough dungeons for now: try again later"));
+        }
+    }
+    let r = ask(true).await.map_err(|_| no(StatusCode::SERVICE_UNAVAILABLE, "the dungeons can't be reached just now"))?;
     match r.status().as_u16() {
         200 => {}
         404 => return Err(no(StatusCode::NOT_FOUND, "no such dungeon")),
         _ => return Err(no(StatusCode::SERVICE_UNAVAILABLE, "that dungeon can't be opened just now")),
     }
-    if let Some(party) = new {
-        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    db.execute("INSERT INTO instance_opens (party, at) VALUES (?1, ?2)", params![party, t]).map_err(oops)?;
+    if new {
         db.execute("INSERT INTO instances (id, template, party, created, ends) VALUES (?1, ?2, ?3, ?4, ?5)", params![id, template, party, t, ends])
             .map_err(oops)?;
     }

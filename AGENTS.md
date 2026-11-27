@@ -119,7 +119,9 @@ ignores `*.db`).
   (local play) the answer has no ticket. If the way can't be reached the client returns to the
   old world. A portal with `"url": "dungeon:<name>"` leads to the traveller's raid party's own
   instance of that dungeon: the directory (`--instances-at`) has the host make one if the party
-  hasn't one open (at most three new ones an hour), and gives tickets for it only to the party.
+  hasn't one open (at most three copies an hour, fresh copies of a gone one included), and gives
+  tickets for it only to the party. A dungeon's level may name an objective (a place to
+  reach); reaching it ends a raid on `dungeon:<name>` (`POST /api/world/objective`).
 - **Worlds -> directory:** each world reports who is present once a minute (authority, raids,
   plots) over localhost with `VOX_WORLD_SECRET`. Those endpoints (`/api/world/*`) must not be
   exposed publicly; the tunnel config refuses them.

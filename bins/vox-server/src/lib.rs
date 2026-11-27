@@ -236,6 +236,7 @@ impl Server {
             _ => None,
         };
         let (trip_tx, trip_rx) = mpsc::channel(TRIPS_QUEUED);
+        let (goal_tx, goal_rx) = mpsc::channel(GOALS_QUEUED);
         let link = match (&cfg.directory_url, &cfg.world_secret) {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone(), cfg.report_every, cfg.rules_every)),
             _ => None,
@@ -245,6 +246,7 @@ impl Server {
         let mut state = WorldState::open(cfg)?;
         if office.is_some() {
             state.trips = Some(trip_tx);
+            state.goals = Some(goal_tx);
         }
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
@@ -264,6 +266,7 @@ impl Server {
             tokio::spawn(directory_link(tx.clone(), link));
         }
         if let Some((url, secret, world)) = office {
+            tokio::spawn(objective_reached(goal_rx, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(ticket_office(tx.clone(), trip_rx, url, secret, world));
         }
         Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)) })
@@ -363,7 +366,43 @@ struct WorldState {
     /// where trips go to get a ticket from the directory (None: no directory; players go on
     /// without one)
     trips: Option<mpsc::Sender<Trip>>,
+    /// the place to reach (a dungeon's level names one: `"objective": {"name", "at", "radius"}`),
+    /// and whether it has been; reaching it ends a raid on the dungeon
+    objective: Option<Objective>,
+    reached: bool,
+    /// where "the objective was reached, by these accounts" goes (to the directory)
+    goals: Option<mpsc::Sender<Vec<u64>>>,
 }
+
+/// A place in a world to reach: a dungeon's objective.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Objective {
+    pub name: String,
+    /// blocks (feet)
+    pub at: [f32; 3],
+    /// how near counts, blocks
+    pub radius: f32,
+}
+
+impl Objective {
+    /// From a world's settings: `"objective": {"name": "the altar", "at": [0, 0, -9], "radius": 3}`.
+    pub(crate) fn from_settings(settings: &serde_json::Value) -> Option<Objective> {
+        let o = settings.get("objective")?;
+        let a = o.get("at")?.as_array()?;
+        let at = [a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32, a.get(2)?.as_f64()? as f32];
+        let radius = o.get("radius").and_then(|r| r.as_f64()).unwrap_or(3.0) as f32;
+        let name = o.get("name").and_then(|n| n.as_str()).unwrap_or("the objective");
+        let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
+        (at.iter().all(|v| v.is_finite()) && radius.is_finite() && radius > 0.0).then(|| Objective { name, at, radius: radius.min(64.0) })
+    }
+
+    fn holds(&self, p: [f32; 3]) -> bool {
+        (0..3).map(|i| (p[i] - self.at[i]).powi(2)).sum::<f32>() <= self.radius * self.radius
+    }
+}
+
+/// Objectives reached waiting for the directory at most.
+const GOALS_QUEUED: usize = 16;
 
 /// Steps and keyframes of the weather, s.
 const WEATHER_STEP: f32 = 0.5;

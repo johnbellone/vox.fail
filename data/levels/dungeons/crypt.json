@@ -1,6 +1,6 @@
 {
  "name": "The Crypt",
- "about": "A dungeon for a raid party: a roofless stone hall in the dark, an altar at the far end. Each party gets its own copy.",
+ "about": "A dungeon for a raid party: a roofless stone hall in the dark, an altar at the far end. Each party gets its own copy; a raid on it is won by reaching the altar.",
  "world": {
   "sky": "islands",
   "time": 0.0,
@@ -38,7 +38,16 @@
     ],
     "yaw": 0
    }
-  ]
+  ],
+  "objective": {
+   "name": "the altar",
+   "at": [
+    0,
+    0,
+    -8
+   ],
+   "radius": 3
+  }
  },
  "boxes": [
   {

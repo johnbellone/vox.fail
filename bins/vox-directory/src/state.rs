@@ -79,6 +79,8 @@ impl Directory {
                  id TEXT PRIMARY KEY, template TEXT NOT NULL, party INTEGER NOT NULL, created INTEGER NOT NULL,
                  ends INTEGER NOT NULL);
              CREATE INDEX IF NOT EXISTS instances_party ON instances (party, template);
+             CREATE TABLE IF NOT EXISTS instance_opens (party INTEGER NOT NULL, at INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS instance_opens_party ON instance_opens (party, at);
              CREATE TABLE IF NOT EXISTS crew_invites (
                  crew INTEGER NOT NULL, account INTEGER NOT NULL, by INTEGER NOT NULL, at INTEGER NOT NULL,
                  PRIMARY KEY (crew, account));",
@@ -186,6 +188,7 @@ impl Directory {
             .route("/api/crews/leave", post(people::leave))
             .route("/api/world/report", post(game::report))
             .route("/api/world/travel", post(game::travel))
+            .route("/api/world/objective", post(game::objective))
             .route("/api/world/{id}/rules", get(game::rules))
             .route("/auth/steam", get(social::steam_start))
             .route("/auth/steam/return", get(social::steam_return))

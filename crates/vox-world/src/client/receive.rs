@@ -229,6 +229,13 @@ pub fn receive(
                         w.ready = false;
                     }
                     ToClient::Travel { url, ticket, arrive } => w.travelled(&url, ticket, arrive),
+                    ToClient::Notice { text } => {
+                        // from the server, so plain text only, and short
+                        let text: String = text.chars().filter(|c| !c.is_control()).take(120).collect();
+                        if !text.trim().is_empty() {
+                            w.notice(text);
+                        }
+                    }
                     ToClient::Correct { at } => {
                         // the server says we can't have got here: back to where it last saw us
                         if at.iter().all(|v| v.is_finite()) {
