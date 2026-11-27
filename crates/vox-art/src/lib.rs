@@ -9,10 +9,14 @@
 
 pub mod grid;
 pub mod palette;
+pub mod prop;
 pub mod rng;
 pub mod scale;
+pub mod vox;
 
 pub use grid::{GridError, VoxelGrid};
 pub use palette::{Material, Palette};
+pub use prop::PropDef;
 pub use rng::Rng;
 pub use scale::Scale;
+pub use vox::{VoxError, VoxFile, VoxModel};

@@ -7,3 +7,4 @@ description = "Voxel art in the project's style: scales, sparse voxel grids, the
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+blake3 = "1"
