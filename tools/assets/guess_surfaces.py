@@ -26,7 +26,7 @@ import build_animals as B  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "surfaces.json"
-ANIMALS = {"cat", "dog", "donkey", "rhino", "capybara"}
+ANIMALS = {"blue", "cat", "dog", "donkey", "rhino", "capybara"}
 # helmets and visors would read as hair; the peanuts' shells aren't hair or cloth
 SKIP = {"peanut", "rally_sign", "officer", "riot_a", "riot_b", "roasted_army", "roasted_cook", "roasted_garbage", "roasted_medic", "roasted_miami", "roasted_riot"}
 

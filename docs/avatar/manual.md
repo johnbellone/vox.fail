@@ -910,12 +910,12 @@ Each has five poses with hand props that appear only in the poses that use them.
 
 | File | Outfit | Poses | Props |
 |---|---|---|---|
-| `roasted_army.glb` | Olive helmet with chin strap, webbing, pouches, radio pack, rifle slung on the back, boots | Salute, March, Scout, Radio call, Plant the flag | binoculars, handset, flag |
-| `roasted_medic.glb` | Teal scrubs, white vest with a green first-aid cross, stethoscope, headband, blue gloves | Rush in, CPR, Listen, Bandage, Chart | medkit, clipboard, bandage |
-| `roasted_miami.glb` | 1980s Miami detective: pastel jacket with pushed-up sleeves, pink tee, white pants, loafers, aviators | Badge flash, Too cool, Radio in, Freeze!, Donut break | badge, walkie, donut |
-| `roasted_cook.glb` | Fry cook: red uniform, white apron with name tag, paper fold hat | Burger flip, Basket shake, Order up!, Salt it, Wipe brow | spatula, patty, basket, salt, bell |
-| `roasted_garbage.glb` | Lime hi-vis vest with reflective bands, navy work clothes, orange cap, yellow gloves | Bag toss, Haul the can, Sweep, Ride the truck, Thumbs up | trashbag, can, broom |
-| `roasted_riot.glb` | Black helmet with clear visor and neck guard, chest and back plates, shoulder and knee pads | Shield up, Advance, Hold the line, Kneel and cover, Radio check | shield (clear), baton, radio |
+| `roasted_army.glb` (Army peanut) | Olive helmet with chin strap, webbing, pouches, radio pack, rifle slung on the back, boots | Salute, March, Scout, Radio call, Plant the flag | binoculars, handset, flag |
+| `roasted_medic.glb` (Medic peanut) | Teal scrubs, white vest with a green first-aid cross, stethoscope, headband, blue gloves | Rush in, CPR, Listen, Bandage, Chart | medkit, clipboard, bandage |
+| `roasted_miami.glb` (Miami Travis) | 1980s Miami detective: pastel jacket with pushed-up sleeves, pink tee, white pants, loafers, aviators | Badge flash, Too cool, Radio in, Freeze!, Donut break | badge, walkie, donut |
+| `roasted_cook.glb` (Fry cook peanut) | Fry cook: red uniform, white apron with name tag, paper fold hat | Burger flip, Basket shake, Order up!, Salt it, Wipe brow | spatula, patty, basket, salt, bell |
+| `roasted_garbage.glb` (Garbage collector peanut) | Lime hi-vis vest with reflective bands, navy work clothes, orange cap, yellow gloves | Bag toss, Haul the can, Sweep, Ride the truck, Thumbs up | trashbag, can, broom |
+| `roasted_riot.glb` (Riot peanut) | Black helmet with clear visor and neck guard, chest and back plates, shoulder and knee pads | Shield up, Advance, Hold the line, Kneel and cover, Radio check | shield (clear), baton, radio |
 
 The medic uses a green cross on purpose: the red cross on white is a protected emblem.
 

@@ -54,7 +54,7 @@
    "group": "Cast",
    "model": "models/scene_all.glb",
    "portrait": "portraits/scene_all.png",
-   "about": ""
+   "about": "The original lead, no longer the main character: red cap, blue overalls over a white undershirt, short brown beard."
   },
   {
    "id": "officer",
@@ -218,51 +218,51 @@
   },
   {
    "id": "roasted_army",
-   "name": "Army",
+   "name": "Army peanut",
    "group": "Roast",
    "model": "models/roasted_army.glb",
    "portrait": "portraits/roasted_army.png",
-   "about": ""
+   "about": "Roasted peanut as an army man: olive helmet with chin strap, webbing, belt pouches, radio pack, rifle slung on the back, combat boots."
   },
   {
    "id": "roasted_cook",
-   "name": "Cook",
+   "name": "Fry cook peanut",
    "group": "Roast",
    "model": "models/roasted_cook.glb",
    "portrait": "portraits/roasted_cook.png",
-   "about": ""
+   "about": "Roasted peanut as a fry cook: red uniform, white apron with a name tag, paper fold hat, black work shoes."
   },
   {
    "id": "roasted_garbage",
-   "name": "Garbage",
+   "name": "Garbage collector peanut",
    "group": "Roast",
    "model": "models/roasted_garbage.glb",
    "portrait": "portraits/roasted_garbage.png",
-   "about": ""
+   "about": "Roasted peanut as a garbage collector: lime hi-vis vest with silver reflective bands over navy work clothes, orange cap, yellow work gloves, brown boots."
   },
   {
    "id": "roasted_medic",
-   "name": "Medic",
+   "name": "Medic peanut",
    "group": "Roast",
    "model": "models/roasted_medic.glb",
    "portrait": "portraits/roasted_medic.png",
-   "about": ""
+   "about": "Roasted peanut as a medic: teal scrubs, white vest with a green first-aid cross front and back, stethoscope, headband, blue gloves."
   },
   {
    "id": "roasted_miami",
-   "name": "Miami tourist",
+   "name": "Miami Travis",
    "group": "Roast",
    "model": "models/roasted_miami.glb",
    "portrait": "portraits/roasted_miami.png",
-   "about": ""
+   "about": "Roasted peanut as a 1980s Miami detective: pastel teal jacket with pushed-up sleeves over a pink tee, white pants, loafers without socks, aviator shades."
   },
   {
    "id": "roasted_riot",
-   "name": "Riot",
+   "name": "Riot peanut",
    "group": "Roast",
    "model": "models/roasted_riot.glb",
    "portrait": "portraits/roasted_riot.png",
-   "about": ""
+   "about": "Roasted peanut as a riot officer: black helmet with a clear visor and neck guard, chest and back plates, shoulder and knee pads; clear shield, baton, radio."
   },
   {
    "id": "cat",
@@ -270,7 +270,7 @@
    "group": "Animals",
    "model": "models/cat.glb",
    "portrait": "portraits/cat.png",
-   "about": ""
+   "about": "Grey tabby cat: striped back and crown, white chest and socks, pink nose, whiskers, tall tail."
   },
   {
    "id": "dog",
@@ -278,7 +278,7 @@
    "group": "Animals",
    "model": "models/dog.glb",
    "portrait": "portraits/dog.png",
-   "about": ""
+   "about": "Golden-furred dog: cream muzzle and paws, floppy brown ears, red bandana with a gold tag."
   },
   {
    "id": "donkey",
@@ -286,7 +286,7 @@
    "group": "Animals",
    "model": "models/donkey.glb",
    "portrait": "portraits/donkey.png",
-   "about": ""
+   "about": "Donkey in a blue blazer over an open-collar white shirt and jeans; tall ears, dark mane, pale muzzle."
   },
   {
    "id": "peanut",
@@ -294,7 +294,7 @@
    "group": "Animals",
    "model": "models/peanut.glb",
    "portrait": "portraits/peanut.png",
-   "about": ""
+   "about": "Original peanut character: two-lobed dimpled shell, stick limbs, cream hands, orange ball cap, sneakers."
   },
   {
    "id": "rhino",
@@ -302,7 +302,7 @@
    "group": "Animals",
    "model": "models/rhino.glb",
    "portrait": "portraits/rhino.png",
-   "about": ""
+   "about": "Rhino in a navy suit, white shirt, red tie and flag pin; big ivory horn, wrinkled grey hide."
   },
   {
    "id": "capybara",
