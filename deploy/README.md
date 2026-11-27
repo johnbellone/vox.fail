@@ -43,14 +43,20 @@ unchanged locally and here. The tunnel can't rewrite paths, so world servers ans
    `systemctl enable --now vox-world@void vox-world@yard vox-world@islands vox-world@sea vox-world@orbit`. The directory
    goes first: it makes the signing key (`/var/lib/vox/directory.key`, and `.pub` for the
    worlds).
-6. The tunnel: install `cloudflared`, then
-   `cloudflared tunnel login`, `cloudflared tunnel create vox` (copy the credentials file it
-   names to `/etc/cloudflared/vox.json`), `cloudflared tunnel route dns vox vox.fail` (remove
-   any A/AAAA/CNAME record for vox.fail first), copy `cloudflared/config.yml` to
-   `/etc/cloudflared/config.yml`, and `cloudflared service install`.
-   (Or make the tunnel in the dashboard, Zero Trust → Networks → Tunnels, with the same four
-   public hostnames: `vox.fail` path `^/w/7780/` → `http://127.0.0.1:7780`, and so on, the
-   directory last; then `cloudflared service install <token>`.)
+6. The tunnel. Cloudflare's side is made by `deploy/cloudflare-setup.sh` (run it anywhere `cf` is
+   signed in; it's safe to run again): the zone settings and rules below, the tunnel `vox`
+   (managed in Cloudflare, not by a config file), its routes and the DNS records. The tunnel
+   sends `/w/...` to vox-host on `127.0.0.1:7790` (every world; see "All worlds in one process"
+   below, and run `vox-host.service` rather than the `vox-world@` units), refuses
+   `/api/world/...`, and sends the rest to the directory on `127.0.0.1:7700`. On the server,
+   install `cloudflared` and connect it:
+   `sudo cloudflared service install "$(cf tunnels token get <tunnel id>)"` (the script prints
+   the command with the id; the token is the tunnel's only credential, so don't save it
+   anywhere else). Until a server connects, the tunnel answers error 1033 and the edge Worker
+   shows the offline page.
+   (`cloudflared/config.yml` is the same routes for a locally managed tunnel, with one world
+   server per port: `cloudflared tunnel create vox`, `cloudflared tunnel route dns vox vox.fail`,
+   then that file as `/etc/cloudflared/config.yml`. Use one or the other, not both.)
 
 ## Automatic deploys
 
@@ -91,10 +97,7 @@ releases are kept.
 A Cloudflare Worker (`apps/edge`, on `vox.fail/*`) sits in front of the tunnel. While the server
 is up it passes everything through unchanged. When the tunnel or the directory can't be reached,
 pages show an offline page (what Vox is, the worlds' screenshots, "offline right now") and the API
-answers `503` with an offline message, so the site never shows Cloudflare's error 1033. Until
-the tunnel is routed to vox.fail, a proxied placeholder record (`AAAA vox.fail 100::`) keeps the
-name resolving to the Worker; delete it before `cloudflared tunnel route dns vox vox.fail` in step 6
-above. It's
+answers `503` with an offline message, so the site never shows Cloudflare's error 1033. It's
 deployed from `.github/workflows/edge.yml` through the `production` environment (only `main`
 deploys; it holds `CLOUDFLARE_API_TOKEN`, a token named "vox-edge CI" with Workers Scripts Edit on
 the account and Workers Routes Edit and Zone Read on vox.fail, and `CLOUDFLARE_ACCOUNT_ID`).
@@ -122,6 +125,8 @@ parties' copies of the dungeons in `data/levels/dungeons`. The directory asks fo
 `docs/design/world-network.md`.
 
 ## In the Cloudflare dashboard (vox.fail)
+
+`deploy/cloudflare-setup.sh` sets all of these except the cache purge token.
 
 - SSL/TLS: Always Use HTTPS on.
 - Network: WebSockets on (the default).

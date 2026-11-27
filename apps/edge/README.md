@@ -24,10 +24,9 @@ The page shares its text with the home page (`apps/site/src/features/home/Pitch.
 it, build and serve `dist/` (`python3 -m http.server -d dist`), then open `/_offline/offline.html`.
 
 The Worker is set up in `cloudflare.config.ts` (name, route `vox.fail/*`, the `ASSETS` binding)
-and `wrangler.config.ts` (the assets folder); `cf` runs on Node, not Bun. The route only gets
-traffic while vox.fail has a proxied DNS record: until the tunnel is routed there, a placeholder
-`AAAA vox.fail 100::` (proxied) points nowhere, so the Worker always shows the offline page.
-Delete it before `cloudflared tunnel route dns vox vox.fail`.
+and `wrangler.config.ts` (the assets folder); `cf` runs on Node, not Bun. The route needs vox.fail's proxied DNS
+record, which points at the tunnel (`deploy/cloudflare-setup.sh`); while no server is connected
+the tunnel answers 530 and the Worker shows the offline page.
 
 Deploys run from `.github/workflows/edge.yml` on main, through the `production` environment
 (only `main` may use it; it holds the Cloudflare token and account ID). Requests through a Worker count
