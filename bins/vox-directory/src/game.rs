@@ -584,13 +584,45 @@ fn idem_ok(s: &str) -> bool {
     (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
 }
 
+/// A player portal's doorway as the rules show it when a request gives none: 4 wide, 6 high,
+/// facing along the wall's own direction (yaw 0).
+const DEFAULT_SIZE: [f64; 2] = [4.0, 6.0];
+const DEFAULT_YAW: f64 = 0.0;
+
+/// A doorway's size is 4 to 8 wide and 6 to 16 high (the editor's limits), with finite numbers.
+fn size_ok(s: [f32; 2]) -> bool {
+    s.iter().all(|v| v.is_finite()) && (4.0..=8.0).contains(&s[0]) && (6.0..=16.0).contains(&s[1])
+}
+
 /// Where a player portal goes: its plot (already checked to be the account's), the world, the
-/// wall's axis and the doorway's place.
+/// wall's axis, the doorway's place, its size and its turn (degrees).
 pub(crate) struct Site<'a> {
     world: &'a str,
     plot: i64,
     axis: &'a str,
     at: [f64; 3],
+    size: [f64; 2],
+    yaw: f64,
+}
+
+/// The account's plot in `world` that holds the point `at` (x and z floored), if any.
+fn plot_at(db: &Connection, world: &str, account: u64, at: [f64; 3]) -> Res<Option<i64>> {
+    db.query_row(
+        "SELECT id FROM plots WHERE world = ?1 AND owner = ?2 AND x0 <= ?3 AND ?3 < x1 AND z0 <= ?4 AND ?4 < z1",
+        params![world, account as i64, at[0].floor() as i64, at[2].floor() as i64],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(oops)
+}
+
+/// Deletes a player portal and the pointers at it: its key item goes, and a partner is left with
+/// no live pair (it leads to its world's spawn). No Authority comes back; the callers decide that.
+fn drop_portal(db: &Connection, account: u64, key: i64) -> Res<()> {
+    db.execute("DELETE FROM items WHERE kind = 'key' AND ref = ?1 AND account = ?2", params![key, account as i64]).map_err(oops)?;
+    db.execute("UPDATE portals SET dest_key = NULL WHERE dest_key = ?1", params![key]).map_err(oops)?;
+    db.execute("DELETE FROM portals WHERE id = ?1", params![key]).map_err(oops)?;
+    Ok(())
 }
 
 /// A portal as the rules and the answers describe it.
@@ -612,6 +644,12 @@ pub(crate) struct WorldPortal {
     account: u64,
     at: [f32; 3],
     axis: String,
+    /// the doorway's width and height (4 to 8, 6 to 16); 4 by 6 when the caller gives none
+    #[serde(default)]
+    size: Option<[f32; 2]>,
+    /// the doorway's turn in degrees; 0 when the caller gives none
+    #[serde(default)]
+    yaw: Option<f32>,
     /// the world it leads to (one of `to` and `pair` is given)
     #[serde(default)]
     to: Option<String>,
@@ -619,6 +657,27 @@ pub(crate) struct WorldPortal {
     #[serde(default)]
     pair: Option<i64>,
     idem: String,
+}
+
+/// A player moving or turning its own portal (`/api/world/portal/update`): where it stands now
+/// and how it is shaped. The plot it stands in may change, to another of the account's.
+#[derive(Deserialize)]
+pub(crate) struct UpdatePortal {
+    world: String,
+    account: u64,
+    key: i64,
+    at: [f32; 3],
+    axis: String,
+    size: [f32; 2],
+    yaw: f32,
+}
+
+/// Removing one of the account's own portals (`/api/world/portal/remove`). Nothing is refunded.
+#[derive(Deserialize)]
+pub(crate) struct RemovePortal {
+    world: String,
+    account: u64,
+    key: i64,
 }
 
 #[derive(Deserialize)]
@@ -665,8 +724,24 @@ impl Directory {
         spend(db, account, AUTH, COST_PORTAL, &format!("opened a portal from {here} to {there}"))?;
         let key = next_portal_key(db)?;
         db.execute(
-            "INSERT INTO portals (id, world, owner, plot, x, y, z, axis, dest, dest_key, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![key, site.world, account as i64, site.plot, site.at[0], site.at[1], site.at[2], site.axis, to, pair, now() as i64],
+            "INSERT INTO portals (id, world, owner, plot, x, y, z, axis, dest, dest_key, created, size_w, size_h, yaw)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                key,
+                site.world,
+                account as i64,
+                site.plot,
+                site.at[0],
+                site.at[1],
+                site.at[2],
+                site.axis,
+                to,
+                pair,
+                now() as i64,
+                site.size[0],
+                site.size[1],
+                site.yaw
+            ],
         )
         .map_err(oops)?;
         if let Some(other) = pair {
@@ -731,7 +806,7 @@ pub(crate) async fn open_portal(State(d): State<Directory>, h: HeaderMap, Json(o
         .ok_or_else(|| bad("stand in a plot of yours to open a portal there"))?;
     // the doorway's sill: where you stood, on the half block
     let at = [(x * 2.0).round() / 2.0, y.floor(), (z * 2.0).round() / 2.0];
-    let site = Site { world: &o.world, plot, axis: "z", at };
+    let site = Site { world: &o.world, plot, axis: "z", at, size: DEFAULT_SIZE, yaw: DEFAULT_YAW };
     let made = d.make_portal(&tx, id, site, &o.to, None, None)?;
     tx.commit().map_err(oops)?;
     Ok(Json(json!({ "portal": made.key, "at": made.at })))
@@ -754,6 +829,14 @@ pub(crate) async fn world_portal(State(d): State<Directory>, h: HeaderMap, Json(
     if p.to.is_some() == p.pair.is_some() {
         return Err(bad("a portal leads to a world (to) or pairs with a portal (pair), not both or neither"));
     }
+    let size = p.size.unwrap_or([DEFAULT_SIZE[0] as f32, DEFAULT_SIZE[1] as f32]);
+    if !size_ok(size) {
+        return Err(bad("a portal is 4 to 8 wide and 6 to 16 high"));
+    }
+    let yaw = p.yaw.unwrap_or(DEFAULT_YAW as f32);
+    if !yaw.is_finite() {
+        return Err(bad("a portal's turn is a finite number of degrees"));
+    }
     let to = p.to.clone().unwrap_or_default();
     let at = p.at.map(f64::from);
     let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
@@ -762,16 +845,8 @@ pub(crate) async fn world_portal(State(d): State<Directory>, h: HeaderMap, Json(
         return Ok(Json(json!({ "key": made.key, "at": made.at, "name": made.name })));
     }
     tx.execute("DELETE FROM portal_requests WHERE created < ?1", params![now().saturating_sub(REQUESTS_KEPT) as i64]).map_err(oops)?;
-    let plot: i64 = tx
-        .query_row(
-            "SELECT id FROM plots WHERE world = ?1 AND owner = ?2 AND x0 <= ?3 AND ?3 < x1 AND z0 <= ?4 AND ?4 < z1",
-            params![p.world, p.account as i64, at[0].floor() as i64, at[2].floor() as i64],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(oops)?
-        .ok_or_else(|| bad("that portal's place is not in a plot of the player's in that world"))?;
-    let site = Site { world: &p.world, plot, axis: &p.axis, at };
+    let plot = plot_at(&tx, &p.world, p.account, at)?.ok_or_else(|| bad("that portal's place is not in a plot of the player's in that world"))?;
+    let site = Site { world: &p.world, plot, axis: &p.axis, at, size: size.map(f64::from), yaw: f64::from(yaw) };
     let made = d.make_portal(&tx, p.account, site, &to, p.pair, Some(&p.idem))?;
     tx.commit().map_err(oops)?;
     Ok(Json(json!({ "key": made.key, "at": made.at, "name": made.name })))
@@ -814,6 +889,86 @@ pub(crate) async fn link_portal(State(d): State<Directory>, h: HeaderMap, Json(l
     Ok(Json(json!({ "key": l.key, "pair": l.pair })))
 }
 
+/// A player moves, turns or reshapes one of their own portals in a world (`free`: no Authority).
+/// The new place must be in one of the account's plots in that world; when that is a different
+/// plot from the portal's own, the cap of portals per plot applies to the new one. Partners see
+/// the new place on their next rules fetch, since they arrive at this row.
+pub(crate) async fn update_portal(State(d): State<Directory>, h: HeaderMap, Json(u): Json<UpdatePortal>) -> Res<Json<Value>> {
+    d.from_world(&h)?;
+    d.world(&u.world)?;
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = db.transaction().map_err(oops)?;
+    let row: Option<(i64, i64, String)> = tx
+        .query_row("SELECT owner, plot, world FROM portals WHERE id = ?1", params![u.key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .optional()
+        .map_err(oops)?;
+    let Some((owner, plot, world)) = row else { return Err(no(StatusCode::NOT_FOUND, "that portal is gone")) };
+    if owner != u.account as i64 {
+        return Err(no(StatusCode::FORBIDDEN, "that portal is another player's"));
+    }
+    if world != u.world {
+        return Err(no(StatusCode::NOT_FOUND, "that portal is gone"));
+    }
+    if !u.at.iter().all(|v| v.is_finite()) {
+        return Err(bad("nowhere to put that portal"));
+    }
+    if u.axis != "x" && u.axis != "z" {
+        return Err(bad("a portal's wall is along x or z"));
+    }
+    if !size_ok(u.size) {
+        return Err(bad("a portal is 4 to 8 wide and 6 to 16 high"));
+    }
+    if !u.yaw.is_finite() {
+        return Err(bad("a portal's turn is a finite number of degrees"));
+    }
+    let at = u.at.map(f64::from);
+    let target = plot_at(&tx, &u.world, u.account, at)?.ok_or_else(|| no(StatusCode::FORBIDDEN, "that place is not in a plot of yours in that world"))?;
+    if target != plot {
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM portals WHERE plot = ?1", params![target], |r| r.get(0)).map_err(oops)?;
+        if count >= PORTALS_PER_PLOT {
+            return Err(bad(format!("a plot holds {PORTALS_PER_PLOT} portals")));
+        }
+    }
+    tx.execute(
+        "UPDATE portals SET x = ?1, y = ?2, z = ?3, axis = ?4, plot = ?5, size_w = ?6, size_h = ?7, yaw = ?8 WHERE id = ?9",
+        params![at[0], at[1], at[2], u.axis, target, f64::from(u.size[0]), f64::from(u.size[1]), f64::from(u.yaw), u.key],
+    )
+    .map_err(oops)?;
+    // the key item says where it opens, so it follows the portal
+    let items: Vec<(i64, String)> = {
+        let mut st = tx.prepare("SELECT id, detail FROM items WHERE kind = 'key' AND ref = ?1").map_err(oops)?;
+        st.query_map(params![u.key], |r| Ok((r.get(0)?, r.get(1)?))).map_err(oops)?.flatten().collect()
+    };
+    for (id, detail) in items {
+        let mut v: Value = serde_json::from_str(&detail).unwrap_or_else(|_| json!({}));
+        v["at"] = json!(at);
+        tx.execute("UPDATE items SET detail = ?1 WHERE id = ?2", params![v.to_string(), id]).map_err(oops)?;
+    }
+    tx.commit().map_err(oops)?;
+    Ok(Json(json!({ "key": u.key, "at": at })))
+}
+
+/// Removes one of a player's own portals in a world: the portal, its key and the pointers at it
+/// go, and nothing is refunded (a portal taken back within a minute is `refund_portal`'s). A
+/// portal that is someone else's, or gone, is `removed: false`.
+pub(crate) async fn remove_portal(State(d): State<Directory>, h: HeaderMap, Json(r): Json<RemovePortal>) -> Res<Json<Value>> {
+    d.from_world(&h)?;
+    d.world(&r.world)?;
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = db.transaction().map_err(oops)?;
+    let mine = tx
+        .query_row("SELECT 1 FROM portals WHERE id = ?1 AND world = ?2 AND owner = ?3", params![r.key, r.world, r.account as i64], |_| Ok(()))
+        .optional()
+        .map_err(oops)?
+        .is_some();
+    if !mine {
+        return Ok(Json(json!({ "removed": false })));
+    }
+    drop_portal(&tx, r.account, r.key)?;
+    tx.commit().map_err(oops)?;
+    Ok(Json(json!({ "removed": true })))
+}
+
 /// Takes back a portal a world made a moment ago (its plot or rights went before the answer
 /// came): the portal and its key go, and the Authority comes back. Only the account that made it,
 /// in the world that made it, and only within `REFUND_WITHIN` seconds. The request id stays
@@ -837,10 +992,7 @@ pub(crate) async fn refund_portal(State(d): State<Directory>, h: HeaderMap, Json
     if !mine {
         return Ok(Json(json!({ "refunded": false })));
     }
-    tx.execute("DELETE FROM items WHERE kind = 'key' AND ref = ?1 AND account = ?2", params![r.key, r.account as i64]).map_err(oops)?;
-    // a partner is left with no live pair (it leads to its world's spawn)
-    tx.execute("UPDATE portals SET dest_key = NULL WHERE dest_key = ?1", params![r.key]).map_err(oops)?;
-    tx.execute("DELETE FROM portals WHERE id = ?1", params![r.key]).map_err(oops)?;
+    drop_portal(&tx, r.account, r.key)?;
     mint(&tx, r.account, AUTH, COST_PORTAL, &format!("portal {} placed and then refused: refunded", r.key)).map_err(oops)?;
     tx.commit().map_err(oops)?;
     Ok(Json(json!({ "refunded": true })))
@@ -1172,7 +1324,8 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
     // otherwise it arrives at its destination world's spawn
     let mut st = db
         .prepare(
-            "SELECT p.id, p.x, p.y, p.z, p.axis, p.dest, s.level, s.spawn, p.dest_key, o.x, o.y, o.z
+            "SELECT p.id, p.x, p.y, p.z, p.axis, p.dest, s.level, s.spawn, p.dest_key, o.x, o.y, o.z,
+                    COALESCE(p.size_w, 4.0), COALESCE(p.size_h, 6.0), COALESCE(p.yaw, 0.0)
              FROM portals p JOIN world_state s ON s.world = p.dest
              LEFT JOIN portals o ON o.id = p.dest_key AND o.world = p.dest
              WHERE p.world = ?1",
@@ -1193,18 +1346,20 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
                 r.get::<_, String>(7)?,
                 r.get::<_, Option<i64>>(8)?,
                 other,
+                [r.get::<_, f64>(12)?, r.get::<_, f64>(13)?],
+                r.get::<_, f64>(14)?,
             ))
         })
         .map_err(oops)?
         .flatten()
-        .filter_map(|(pid, at, axis, dest, level, spawn, dest_key, other)| {
+        .filter_map(|(pid, at, axis, dest, level, spawn, dest_key, other, size, yaw)| {
             let w = d.0.worlds.iter().find(|w| w.id == dest)?;
             // a portal's name is at most MAX_NAME characters (the server drops a longer one), so
             // the world's name is cut to fit beside " (pid)"
             let name = portal_name(pid, &w.name);
             let mut entry = json!({
-                "key": pid, "name": name, "at": at, "axis": axis, "size": [4, 6],
-                "level": level, "url": w.url, "yaw": 0,
+                "key": pid, "name": name, "at": at, "axis": axis, "size": size,
+                "level": level, "url": w.url, "yaw": yaw,
             });
             match (dest_key, other) {
                 (Some(pair), Some(end)) => {

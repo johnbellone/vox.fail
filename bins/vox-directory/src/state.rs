@@ -98,6 +98,16 @@ impl Directory {
         if has_key == 0 {
             db.execute_batch("ALTER TABLE portals ADD COLUMN dest_key INTEGER").map_err(|e| e.to_string())?;
         }
+        // and databases made before the doorway's size and turn lack those: old rows keep NULL, which
+        // the rules show as the defaults (4 by 6, facing 0)
+        for (column, kind) in [("size_w", "REAL"), ("size_h", "REAL"), ("yaw", "REAL")] {
+            let has: i64 = db
+                .query_row("SELECT COUNT(*) FROM pragma_table_info('portals') WHERE name = ?1", params![column], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            if has == 0 {
+                db.execute_batch(&format!("ALTER TABLE portals ADD COLUMN {column} {kind}")).map_err(|e| e.to_string())?;
+            }
+        }
         let catalogue = Catalogue::load(&cfg.data);
         if catalogue.characters.is_empty() {
             return Err(format!("no characters in {}/characters.json (tools/assets/build_catalogue.py makes it)", cfg.data.display()));
@@ -212,6 +222,8 @@ impl Directory {
             .route("/api/world/portal", post(game::world_portal))
             .route("/api/world/portal/refund", post(game::refund_portal))
             .route("/api/world/portal/link", post(game::link_portal))
+            .route("/api/world/portal/update", post(game::update_portal))
+            .route("/api/world/portal/remove", post(game::remove_portal))
             .route("/api/worlds/editors", post(editors::change).get(editors::list))
             .route("/api/world/{id}/editor", get(editors::check))
             .route("/api/world/{id}/rules", get(game::rules))

@@ -530,3 +530,167 @@ async fn pair_plain_to_portal_is_turned_around_when_paired_to() {
     assert_eq!(pa["pair"], b["key"]);
     assert_eq!(pa["arrive"], json!([44.0, 1.0, 44.0]));
 }
+
+/// A world server's request to move, turn or reshape one of a player's portals.
+fn upd(world: &str, account: u64, key: i64, at: [f64; 3], axis: &str, size: [f64; 2], yaw: f64) -> Value {
+    json!({ "world": world, "account": account, "key": key, "at": at, "axis": axis, "size": size, "yaw": yaw })
+}
+
+async fn update(base: &str, body: Value) -> (u16, Value) {
+    let r = Client::new().post(format!("{base}/api/world/portal/update")).bearer_auth(SECRET).json(&body).send().await.unwrap();
+    (r.status().as_u16(), r.json().await.unwrap_or(Value::Null))
+}
+
+async fn remove(base: &str, world: &str, account: u64, key: &Value) -> (u16, Value) {
+    let r = Client::new()
+        .post(format!("{base}/api/world/portal/remove"))
+        .bearer_auth(SECRET)
+        .json(&json!({ "world": world, "account": account, "key": key }))
+        .send()
+        .await
+        .unwrap();
+    (r.status().as_u16(), r.json().await.unwrap_or(Value::Null))
+}
+
+/// How many key items the player holds (one per portal they opened).
+async fn keys_held(p: &P) -> usize {
+    p.get("/api/inventory").await["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "key").count()
+}
+
+#[tokio::test]
+async fn portal_update_moves_and_turns_within_its_plot() {
+    let (_d, base, ann, _bob) = plotted().await;
+    let (st, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "u1")).await;
+    assert_eq!(st, 200, "{a}");
+    let key = a["key"].clone();
+    let before = ann.authority().await;
+    let (st, v) = update(&base, upd("void", ann.id, key.as_i64().unwrap(), [42.5, 1.0, 43.0], "z", [5.0, 7.0], 90.0)).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v, json!({ "key": key, "at": [42.5, 1.0, 43.0] }));
+    assert_eq!(ann.authority().await, before, "moving is free");
+    let e = entry(&rules(&base, "void").await, &key);
+    assert_eq!(e["at"], json!([42.5, 1.0, 43.0]));
+    assert_eq!(e["axis"], "z");
+    assert_eq!(e["size"], json!([5.0, 7.0]));
+    assert_eq!(e["yaw"], json!(90.0));
+}
+
+#[tokio::test]
+async fn portal_update_into_another_plot_obeys_the_cap() {
+    let (d, base, ann, _bob) = plotted().await;
+    // a second plot of Ann's, far from the first
+    report(&base, "void", json!([{ "account": ann.id, "at": [100.5, 1.0, 100.5] }])).await;
+    assert_eq!(ann.post("/api/feats/plot", json!({"world": "void"})).await.0, 200);
+    d.grant("Ann", 100, "test").unwrap();
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, b) = world_portal(&base, req("void", ann.id, [41.0, 1.0, 41.0], "yard", "b")).await;
+    let a_key = a["key"].as_i64().unwrap();
+    let b_key = b["key"].as_i64().unwrap();
+    // the second plot takes two: A and B move there
+    assert_eq!(update(&base, upd("void", ann.id, a_key, [100.0, 1.0, 100.0], "x", [4.0, 6.0], 0.0)).await.0, 200);
+    assert_eq!(update(&base, upd("void", ann.id, b_key, [101.0, 1.0, 101.0], "x", [4.0, 6.0], 0.0)).await.0, 200);
+    // the first plot is free again: a third portal goes there
+    let (st, c) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "c")).await;
+    assert_eq!(st, 200, "{c}");
+    let c_key = c["key"].as_i64().unwrap();
+    // the second plot is full: C may not move there
+    let (st, v) = update(&base, upd("void", ann.id, c_key, [102.0, 1.0, 102.0], "x", [4.0, 6.0], 0.0)).await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(entry(&rules(&base, "void").await, &c["key"])["at"], json!([40.0, 1.0, 40.0]));
+    // moving within its own plot is not capped
+    assert_eq!(update(&base, upd("void", ann.id, c_key, [41.0, 1.0, 41.0], "x", [4.0, 6.0], 0.0)).await.0, 200);
+}
+
+#[tokio::test]
+async fn portal_update_outside_your_plots_is_403() {
+    let (_d, base, ann, _bob) = plotted().await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let key = a["key"].as_i64().unwrap();
+    let (st, v) = update(&base, upd("void", ann.id, key, [10.0, 1.0, 10.0], "x", [4.0, 6.0], 0.0)).await;
+    assert_eq!(st, 403, "{v}");
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+}
+
+#[tokio::test]
+async fn portal_update_someone_elses_key_is_403() {
+    let (_d, base, ann, bob) = plotted().await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let key = a["key"].as_i64().unwrap();
+    // Bob moves Ann's portal to a place in Ann's own plot: still refused
+    let (st, v) = update(&base, upd("void", bob.id, key, [41.0, 1.0, 41.0], "x", [4.0, 6.0], 0.0)).await;
+    assert_eq!(st, 403, "{v}");
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+    // a key that does not exist: 404
+    let (st, _) = update(&base, upd("void", ann.id, 999_999, [41.0, 1.0, 41.0], "x", [4.0, 6.0], 0.0)).await;
+    assert_eq!(st, 404);
+}
+
+#[tokio::test]
+async fn portal_update_bad_values_are_400() {
+    let (_d, base, ann, _bob) = plotted().await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let key = a["key"].as_i64().unwrap();
+    let before = ann.authority().await;
+    // too narrow, too wide, too short, too tall
+    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [3.0, 6.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [9.0, 6.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [4.0, 5.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [4.0, 17.0], 0.0)).await.0, 400);
+    // a wall along neither x nor z
+    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "y", [4.0, 6.0], 0.0)).await.0, 400);
+    // nothing moved, nothing charged
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(ann.authority().await, before);
+}
+
+#[tokio::test]
+async fn portal_remove_clears_partner_and_key() {
+    let (_d, base, ann, bob) = plotted().await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (st, b) = world_portal(&base, pair_req("void", ann.id, [41.0, 1.0, 41.0], &a["key"], "b")).await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(keys_held(&ann).await, 2);
+    let before = ann.authority().await;
+    // someone else's portal: nothing happens
+    assert_eq!(remove(&base, "void", bob.id, &a["key"]).await.1, json!({ "removed": false }));
+    assert!(!entry(&rules(&base, "void").await, &a["key"])["arrive"].is_null());
+    // ours: gone, with its key; its partner is left to lead to the spawn
+    assert_eq!(remove(&base, "void", ann.id, &b["key"]).await, (200, json!({ "removed": true })));
+    assert_eq!(ann.authority().await, before, "removing refunds nothing");
+    let r = rules(&base, "void").await;
+    assert!(entry(&r, &b["key"]).is_null());
+    let pa = entry(&r, &a["key"]);
+    assert!(pa.get("pair").is_none(), "{pa}");
+    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(keys_held(&ann).await, 1);
+    // a second remove, and one through another world, find nothing
+    assert_eq!(remove(&base, "void", ann.id, &b["key"]).await.1, json!({ "removed": false }));
+    assert_eq!(remove(&base, "yard", ann.id, &a["key"]).await.1, json!({ "removed": false }));
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+}
+
+#[tokio::test]
+async fn portal_size_and_yaw_default_for_old_callers() {
+    let (_d, base, ann, _bob) = plotted().await;
+    // a request without size or yaw (as older world servers send it): 4 by 6, facing 0
+    let (st, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "old")).await;
+    assert_eq!(st, 200, "{a}");
+    let e = entry(&rules(&base, "void").await, &a["key"]);
+    assert_eq!(e["size"], json!([4.0, 6.0]));
+    assert_eq!(e["yaw"], json!(0.0));
+    // one that gives them is shown as given
+    let mut body = req("void", ann.id, [41.0, 1.0, 41.0], "yard", "new");
+    body["size"] = json!([6.0, 8.0]);
+    body["yaw"] = json!(-45.0);
+    let (st, b) = world_portal(&base, body).await;
+    assert_eq!(st, 200, "{b}");
+    let e = entry(&rules(&base, "void").await, &b["key"]);
+    assert_eq!(e["size"], json!([6.0, 8.0]));
+    assert_eq!(e["yaw"], json!(-45.0));
+    // a size outside the limits is refused before anything is charged
+    let before = ann.authority().await;
+    let mut bad = req("void", ann.id, [40.5, 1.0, 40.5], "yard", "huge");
+    bad["size"] = json!([9.0, 6.0]);
+    assert_eq!(world_portal(&base, bad).await.0, 400);
+    assert_eq!(ann.authority().await, before);
+}
