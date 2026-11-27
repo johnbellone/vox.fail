@@ -16,6 +16,7 @@ vox-world = { path = "crates/vox-world" }
 avatar-voice = { path = "crates/avatar-voice" }
 vox-link = { path = "crates/vox-link" }
 vox-format = { path = "crates/vox-format" }
+vox-server = { path = "bins/vox-server" }
 bevy = "0.19.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

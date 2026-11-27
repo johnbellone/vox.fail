@@ -1,0 +1,27 @@
+# Every world in one process (vox-host), instead of a vox-world@ unit per world. Uses the same
+# files (/var/lib/vox/<id>.db), so stop the vox-world@ units first and start this instead. The
+# tunnel then sends all of ^/w/ to 127.0.0.1:7790; the old ports still work as aliases
+# (/w/7781/ws is the yard).
+[Unit]
+Description=Vox worlds
+After=network-online.target vox-directory.service
+
+[Service]
+User=vox
+WorkingDirectory=/opt/vox
+# VOX_WORLD_SECRET, the same as the directory's
+EnvironmentFile=/etc/vox/worlds.env
+ExecStart=/opt/vox/bin/vox-host --listen 127.0.0.1:7790 --data /var/lib/vox --directory-key /var/lib/vox/directory.key.pub --directory-url http://127.0.0.1:7700 --world void@7780 --world yard@7781 --world islands@7782 --world sea@7783 --world orbit@7784
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vox
+Restart=on-failure
+KillSignal=SIGINT
+# every world saves and takes a last snapshot on the way out
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
