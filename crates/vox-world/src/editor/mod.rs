@@ -1,6 +1,6 @@
 //! The in-world editor: the edit mode a player turns on in a world they may change. It is
-//! made of the [`bridge`] (the messages between the page and the client), and, in later
-//! steps, the edit camera, picking, ghosts, gizmos and undo.
+//! made of the [`bridge`] (the messages between the page and the client), the [`camera`] (the
+//! edit flight and fly-to), and, in later steps, picking, ghosts, gizmos and undo.
 //!
 //! [`EditorPlugin`] is added only when the client starts in edit mode. Its systems take the
 //! page's commands from [`EditorInbox`], send the entity changes to the server, and put what
@@ -17,6 +17,7 @@
 //! forgotten (except after `Unavailable`, which keeps it so the page's retry reuses the number).
 
 pub mod bridge;
+pub mod camera;
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -166,7 +167,9 @@ impl Plugin for EditorPlugin {
         app.init_resource::<EditorInbox>()
             .init_resource::<EditorOutbox>()
             .init_resource::<EditorState>()
-            .add_systems(Update, (apply_commands, send_changes).chain().in_set(EditorSystems).after(receive));
+            .init_resource::<camera::EditFly>()
+            .add_systems(Update, (apply_commands, send_changes).chain().in_set(EditorSystems).after(receive))
+            .add_systems(Update, camera::fly_to.after(EditorSystems).before(crate::client::controls));
     }
 }
 

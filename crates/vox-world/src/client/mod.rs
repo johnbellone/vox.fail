@@ -77,7 +77,7 @@ const HEIGHT: f32 = 3.6;
 /// Speeds in metres per second; gravity in m/s².
 const WALK: f32 = 3.2;
 const RUN: f32 = 6.0;
-const FLY: f32 = 7.0;
+pub(crate) const FLY: f32 = 7.0;
 const GRAVITY: f32 = 22.0;
 /// A jump clears a block and a bit.
 const JUMP_HEIGHT: f32 = 0.7;
@@ -798,7 +798,7 @@ impl WorldClient {
     }
 
     /// Solid to walk into (water and fire aren't; the endless floor is).
-    fn stands_on(&self, c: [i32; 3]) -> bool {
+    pub(crate) fn stands_on(&self, c: [i32; 3]) -> bool {
         if self.floor.is_some_and(|f| c[1] < f) {
             return true;
         }

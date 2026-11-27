@@ -28,6 +28,7 @@ pub fn controls(
     mut shown: Query<&mut Visibility>,
     mut repeat: Local<BuildRepeat>,
     wheel: Option<Res<crate::hud::QuickWheel>>,
+    mut editor: Option<ResMut<crate::editor::EditorState>>,
 ) {
     if !w.active() {
         return;
@@ -60,6 +61,10 @@ pub fn controls(
     let now = w.now();
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let pad_active = active.is_gamepad();
+    // edit mode is the editor's state being there (EditorPlugin is added only then): the player
+    // always flies, at the edit flight's speed (editor::camera)
+    let edit = editor.is_some();
+    let fly_speed = if edit { crate::editor::camera::EDIT_FLY } else { FLY };
     if actions.just_pressed(A::View) {
         w.cam_mode = w.cam_mode.next();
         let s = w.cam_mode.label();
@@ -170,7 +175,13 @@ pub fn controls(
         let n = w.hotbar.len() as i32;
         w.slot = ((w.slot as i32 + cycle).rem_euclid(n)) as usize;
     }
-    if toggle_fly {
+    if edit {
+        // nothing turns the edit flight off
+        if !w.fly {
+            w.fly = true;
+            w.vy = 0.0;
+        }
+    } else if toggle_fly {
         w.fly = !w.fly;
         w.vy = 0.0;
         let s = if w.fly { "Flying" } else { "Walking" };
@@ -227,7 +238,21 @@ pub fn controls(
             dir = to.normalize() * (to.length() / 2.0).clamp(0.35, 1.0);
         }
     }
-    let speed = if w.fly { FLY } else if run { RUN } else { WALK } / size;
+    // a fly-to (the page's go-to, editor::camera) gives way to the player's own motion: any
+    // walking, flying or click-to-walk cancels it; while it runs, the keys add nothing, so the
+    // total speed stays at the flight's
+    let mut flying_to = false;
+    if let Some(s) = editor.as_mut().filter(|s| s.fly_to.is_some()) {
+        if dir.length() > 0.1 || up || down {
+            s.fly_to = None;
+        } else {
+            flying_to = true;
+        }
+    }
+    if flying_to {
+        dir = Vec3::ZERO;
+    }
+    let speed = if w.fly { fly_speed } else if run { RUN } else { WALK } / size;
     // in steps of at most 50 ms, so a slow frame (or a slow machine) still moves in real time
     let frame = real.delta_secs().min(0.25);
     let steps = (frame / 0.05).ceil().max(1.0) as usize;
@@ -237,7 +262,7 @@ pub fn controls(
     for _ in 0..steps {
         let mut vel = dir * speed;
         if w.fly {
-            vel.y = (up as i32 - down as i32) as f32 * FLY / size;
+            vel.y = (up as i32 - down as i32) as f32 * fly_speed / size;
         } else {
             if w.grounded && std::mem::take(&mut jump) {
                 w.vy = (2.0 * GRAVITY * JUMP_HEIGHT).sqrt() / size;

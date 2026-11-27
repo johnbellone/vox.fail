@@ -265,8 +265,15 @@ fn wheel_spot(i: usize, n: usize) -> Vec2 {
     Vec2::new(a.sin(), -a.cos()) * WHEEL_RADIUS
 }
 
-fn quick_wheel(actions: Res<crate::input::Actions>, mode: Res<UiMode>, mut wheel: ResMut<QuickWheel>, mut w: ResMut<WorldClient>) {
-    let playing = w.active() && w.ready && !w.watch && *mode == UiMode::Game;
+fn quick_wheel(
+    actions: Res<crate::input::Actions>,
+    mode: Res<UiMode>,
+    mut wheel: ResMut<QuickWheel>,
+    mut w: ResMut<WorldClient>,
+    edit: Option<Res<crate::editor::camera::EditFly>>,
+) {
+    // in edit mode the wheel stays shut: the mouse and stick fly the edit camera
+    let playing = w.active() && w.ready && !w.watch && *mode == UiMode::Game && edit.is_none();
     if !playing {
         wheel.open = false;
         return;
