@@ -2,7 +2,9 @@
 //!
 //! Each colour the model uses is snapped to the nearest palette colour (squared RGB distance,
 //! alpha ignored; a tie goes to the lower palette index), and the snaps are reported so the
-//! caller can see how far each colour moved. Index 0 is empty and stays empty. A duplicate
+//! caller can see how far each colour moved. A colour further than [`MAX_SNAP_DISTANCE`] from
+//! every palette colour refuses the whole import, naming the colours, so a prop never ships with
+//! a colour the palette cannot represent. Index 0 is empty and stays empty. A duplicate
 //! position keeps its first non-zero colour, as the notes on the `.vox` reader require.
 
 use std::collections::BTreeSet;
@@ -13,6 +15,13 @@ use crate::palette::Palette;
 use crate::scale::Scale;
 use crate::vox::{VoxError, VoxFile, VoxModel};
 
+/// The largest squared RGB distance a colour may be from its nearest palette colour: 48 squared.
+/// The owner's limit (2026-11-27); an import past it is refused, not snapped.
+pub const MAX_SNAP_DISTANCE: u32 = 48 * 48;
+
+/// How many offending colours an error message names before it says "and N more".
+const NAMED_OFFENDERS: usize = 8;
+
 /// Why a model could not be imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportError {
@@ -20,6 +29,9 @@ pub enum ImportError {
     NoSuchModel { model: usize, models: usize },
     /// The model uses colours but the palette has none to snap them to.
     EmptyPalette,
+    /// Some colours are further than [`MAX_SNAP_DISTANCE`] from every palette colour. Holds each
+    /// offending snap, in file index order.
+    ColoursTooFar { offenders: Vec<Snap> },
     /// The model could not be read into a grid at this scale.
     Vox(VoxError),
 }
@@ -31,6 +43,32 @@ impl fmt::Display for ImportError {
                 write!(f, "model {model} is not in a file of {models} models")
             }
             ImportError::EmptyPalette => write!(f, "the palette has no colours to snap to"),
+            ImportError::ColoursTooFar { offenders } => {
+                let noun = if offenders.len() == 1 {
+                    "colour is"
+                } else {
+                    "colours are"
+                };
+                write!(
+                    f,
+                    "{} {noun} further than {MAX_SNAP_DISTANCE} (squared RGB distance) from every palette colour:",
+                    offenders.len()
+                )?;
+                for (i, snap) in offenders.iter().take(NAMED_OFFENDERS).enumerate() {
+                    let separator = if i == 0 { " " } else { ", " };
+                    let [r, g, b, _] = snap.from;
+                    write!(
+                        f,
+                        "{separator}#{r:02x}{g:02x}{b:02x} (distance {})",
+                        snap.distance
+                    )?;
+                }
+                let more = offenders.len().saturating_sub(NAMED_OFFENDERS);
+                if more > 0 {
+                    write!(f, " and {more} more")?;
+                }
+                Ok(())
+            }
             ImportError::Vox(err) => write!(f, "{err}"),
         }
     }
@@ -70,9 +108,10 @@ impl SnapReport {
 
 /// Imports model `model` of `file` at `scale`, snapping its colours to `palette`.
 ///
-/// It never refuses for colour distance: a far snap is reported in the [`SnapReport`] and the
-/// grid is made anyway. The caller (the prop import tool) must refuse past its limit, as
-/// `docs/design/props.md` (Lane B, "Snaps the palette") requires, naming the colours it refused.
+/// It refuses with [`ImportError::ColoursTooFar`] when any colour is further than
+/// [`MAX_SNAP_DISTANCE`] from its nearest palette colour (`docs/design/props.md`, Lane B, "Snaps
+/// the palette"), naming those colours. Snaps within the limit are reported in the
+/// [`SnapReport`], which is returned for the caller to show as warnings.
 pub fn import(
     file: &VoxFile,
     model: usize,
@@ -105,6 +144,15 @@ pub fn import(
         let (to, distance) = nearest(palette, from).ok_or(ImportError::EmptyPalette)?;
         table[usize::from(colour)] = to;
         snaps.push(Snap { from, to, distance });
+    }
+
+    let offenders: Vec<Snap> = snaps
+        .iter()
+        .filter(|snap| snap.distance > MAX_SNAP_DISTANCE)
+        .cloned()
+        .collect();
+    if !offenders.is_empty() {
+        return Err(ImportError::ColoursTooFar { offenders });
     }
 
     let grid = deduped.to_grid(scale, |index| table[usize::from(index)])?;
@@ -267,6 +315,82 @@ mod tests {
         assert_eq!(report.snaps.len(), 1);
         assert_eq!(report.snaps[0].to, 1);
         assert_eq!(report.snaps[0].distance, 243);
+    }
+
+    /// A one-voxel file whose only colour is `colour`, against a palette of pure black.
+    fn one_colour_file(colour: [u8; 4]) -> VoxFile {
+        let mut palette_colours = [[0u8; 4]; 256];
+        palette_colours[1] = colour;
+        VoxFile {
+            models: vec![VoxModel {
+                size: [1, 1, 1],
+                voxels: vec![([0, 0, 0], 1)],
+            }],
+            palette: palette_colours,
+        }
+    }
+
+    #[test]
+    fn a_colour_at_the_limit_passes_and_one_past_it_is_refused_by_name() {
+        let palette = palette_of(&[[0, 0, 0, 255]]);
+
+        // 48 squared is exactly the limit: distance 2304 is allowed.
+        let at_limit = one_colour_file([48, 0, 0, 255]);
+        let (_, report) = import(&at_limit, 0, &palette, Scale::Prop).unwrap();
+        assert_eq!(report.max_distance(), MAX_SNAP_DISTANCE);
+
+        // 2305 is one past it.
+        let past_limit = one_colour_file([48, 1, 0, 255]);
+        let err = import(&past_limit, 0, &palette, Scale::Prop).unwrap_err();
+        assert_eq!(
+            err,
+            ImportError::ColoursTooFar {
+                offenders: vec![Snap {
+                    from: [48, 1, 0, 255],
+                    to: 1,
+                    distance: 2305,
+                }],
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "1 colour is further than 2304 (squared RGB distance) from every palette colour: \
+             #300100 (distance 2305)"
+        );
+    }
+
+    #[test]
+    fn far_colours_are_all_refused_but_only_eight_are_named() {
+        let mut palette_colours = [[0u8; 4]; 256];
+        for (i, colour) in palette_colours.iter_mut().enumerate().take(11).skip(1) {
+            *colour = [200, i as u8, 0, 255];
+        }
+        let file = VoxFile {
+            models: vec![VoxModel {
+                size: [10, 1, 1],
+                voxels: (1..=10u8).map(|i| ([i - 1, 0, 0], i)).collect(),
+            }],
+            palette: palette_colours,
+        };
+        let palette = palette_of(&[[0, 0, 0, 255]]);
+
+        let err = import(&file, 0, &palette, Scale::Prop).unwrap_err();
+        let ImportError::ColoursTooFar { offenders } = &err else {
+            panic!("expected ColoursTooFar, got {err:?}");
+        };
+        assert_eq!(offenders.len(), 10);
+        let message = err.to_string();
+        assert!(
+            message.starts_with("10 colours are further than 2304"),
+            "{message}"
+        );
+        assert!(message.contains("#c80100 (distance 40001)"), "{message}");
+        assert!(message.contains("#c80800"), "{message}");
+        assert!(
+            !message.contains("#c80900"),
+            "ninth colour must not be named: {message}"
+        );
+        assert!(message.ends_with(" and 2 more"), "{message}");
     }
 
     #[test]
