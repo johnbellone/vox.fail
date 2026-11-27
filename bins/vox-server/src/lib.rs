@@ -239,6 +239,8 @@ pub(crate) struct BuildJob {
     /// the builder's player id and name, as their edits are made
     pub player: u32,
     pub name: String,
+    /// the builder's directory account, when signed in (logged with their edits)
+    pub account: Option<u64>,
     /// blocks left to apply: their cells and block ids, in order
     pub blocks: VecDeque<([i32; 3], u16)>,
     /// the edit number of the last block applied (or the number at the start, if none was)
@@ -495,6 +497,9 @@ struct Player {
     kept: VecDeque<KeptBuild>,
 }
 
+/// One block edit in the log: (seq, at, player name, account, cell, old, new).
+type BlockEdit = (u64, u64, String, Option<u64>, [i32; 3], u16, u16);
+
 struct WorldState {
     cfg: Config,
     db: Connection,
@@ -504,8 +509,8 @@ struct WorldState {
     /// connections watching without playing: they get what everyone sees, names left out
     watchers: HashMap<u64, mpsc::Sender<Message>>,
     dirty: HashSet<ChunkKey>,
-    /// edits not written yet: (seq, at, player name, cell, old, new)
-    log: Vec<(u64, u64, String, [i32; 3], u16, u16)>,
+    /// edits not written yet
+    log: Vec<BlockEdit>,
     spawn: [f32; 3],
     /// the world's settings (JSON: sky, time), from its seed level when it was made
     settings: String,

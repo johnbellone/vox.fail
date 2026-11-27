@@ -32,9 +32,11 @@ impl WorldState {
              CREATE TABLE IF NOT EXISTS chunks(x INTEGER, y INTEGER, z INTEGER, version INTEGER NOT NULL,
                  data BLOB NOT NULL, PRIMARY KEY(x, y, z));
              CREATE TABLE IF NOT EXISTS edits(seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, player TEXT NOT NULL,
-                 x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL, old INTEGER NOT NULL, new INTEGER NOT NULL);",
+                 account INTEGER, x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL, old INTEGER NOT NULL, new INTEGER NOT NULL);",
         )
         .map_err(e)?;
+        // a log from before accounts were recorded gets the column (the table is kept as it is)
+        crate::entities::ensure_account_column(&db, "edits")?;
         crate::entities::create_tables(&db)?;
         let meta = |k: &str| -> Option<String> {
             db.query_row("SELECT value FROM meta WHERE key = ?1", [k], |r| r.get(0)).ok()
@@ -303,11 +305,11 @@ impl WorldState {
                 }
             }
         }
-        for (seq, at, player, c, old, new) in self.log.iter() {
+        for (seq, at, player, account, c, old, new) in self.log.iter() {
             let (seq, at) = (*seq, *at);
             t.execute(
-                "INSERT OR REPLACE INTO edits(seq, at, player, x, y, z, old, new) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![seq as i64, at as i64, player, c[0], c[1], c[2], old, new],
+                "INSERT OR REPLACE INTO edits(seq, at, player, account, x, y, z, old, new) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![seq as i64, at as i64, player, account.map(|a| a as i64), c[0], c[1], c[2], old, new],
             )
             .map_err(e)?;
         }
@@ -385,7 +387,7 @@ impl WorldState {
             // the edit number is taken only once the change is made, so none is skipped
             let seq = self.seq + 1;
             let left = self.entities.map.get(&id).map(|(_, old)| entities::zone_key(old));
-            if let Some(old) = self.entities.remove(seq, at, "directory".into(), id) {
+            if let Some(old) = self.entities.remove(seq, at, "directory".into(), None, id) {
                 self.props.index_change(id, Some(&old), None);
                 self.seq = seq;
                 // the zone it leaves is changed for the next snapshot
@@ -403,7 +405,7 @@ impl WorldState {
             let left = held.and_then(|id| self.entities.map.get(&id)).map(|(_, old)| entities::zone_key(old));
             let was = held.and_then(|id| self.entities.map.get(&id)).map(|(_, old)| old.clone());
             // None only when the id counter is spent: this portal is then not placed
-            if let Some(id) = self.entities.put(seq, at, "directory".into(), held, c.clone()) {
+            if let Some(id) = self.entities.put(seq, at, "directory".into(), None, held, c.clone()) {
                 self.props.index_change(id, was.as_ref(), Some(&c));
                 self.seq = seq;
                 self.snap_changed.extend(left);
@@ -962,7 +964,7 @@ impl WorldState {
     /// for a new entity), the player has been refused.
     fn commit_edit(&mut self, conn: u64, id: u32, edit: Edit) -> bool {
         let Some(p) = self.players.get(&conn) else { return false };
-        let (name, tx) = (p.name.clone(), p.tx.clone());
+        let (name, tx, account) = (p.name.clone(), p.tx.clone(), p.account);
         let by = name.clone();
         let seq = self.seq + 1;
         let when = now_unix();
@@ -975,7 +977,7 @@ impl WorldState {
                 let old = entity.and_then(|e| self.entities.map.get(&e)).map(|(_, c)| c.clone());
                 keyed = matches!(component, Component::Portal(ref p) if p.key.is_some())
                     || matches!(old, Some(Component::Portal(ref p)) if p.key.is_some());
-                let Some(eid) = self.entities.put(seq, when, name, entity, component.clone()) else {
+                let Some(eid) = self.entities.put(seq, when, name, account, entity, component.clone()) else {
                     // no id left to give a new entity
                     self.refuse_entity(conn, &tx, id, EntityWhy::TooMany);
                     return false;
@@ -991,7 +993,7 @@ impl WorldState {
             }
             Edit::Build { node } => return self.start_build(conn, id, node),
             Edit::Remove { entity, .. } => {
-                let Some(old) = self.entities.remove(seq, when, name, entity) else {
+                let Some(old) = self.entities.remove(seq, when, name, account, entity) else {
                     self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
                     return false;
                 };
@@ -1028,7 +1030,7 @@ impl WorldState {
         // the same rule as for a broken block: what was held up by the prop that went (or moved
         // away) goes with it, as the player who did it
         if !vacated.is_empty() {
-            self.drop_unsupported(&by, vacated);
+            self.drop_unsupported(&by, account, vacated);
         }
         true
     }
@@ -1115,7 +1117,7 @@ impl WorldState {
     /// (placed before this rule) is left alone, and so is an orphan (its hash is not in the
     /// catalogue, so it has no surfaces to lose). Nothing goes back to an inventory yet: there
     /// is none.
-    pub(super) fn drop_unsupported(&mut self, by: &str, broken: Vec<[i32; 3]>) {
+    pub(super) fn drop_unsupported(&mut self, by: &str, account: Option<u64>, broken: Vec<[i32; 3]>) {
         let mut changes = Vec::new();
         let mut broken = broken;
         while !broken.is_empty() {
@@ -1131,7 +1133,7 @@ impl WorldState {
                 }
                 let p = p.clone();
                 let seq = self.seq + 1;
-                let Some(old) = self.entities.remove(seq, now_unix(), by.to_string(), id) else { continue };
+                let Some(old) = self.entities.remove(seq, now_unix(), by.to_string(), account, id) else { continue };
                 self.props.index_change(id, Some(&old), None);
                 self.seq = seq;
                 self.snap_changed.insert(entities::zone_key(&old));
@@ -1166,6 +1168,7 @@ impl WorldState {
             node,
             player,
             name,
+            account,
             blocks: VecDeque::from(blocks),
             last_seq: self.seq,
             undo: None,
@@ -1217,6 +1220,7 @@ impl WorldState {
             node: EntityId(0),
             player,
             name,
+            account,
             blocks,
             last_seq: self.seq,
             undo: Some(Undo { expect, restored: 0, left }),
@@ -1296,7 +1300,7 @@ impl WorldState {
                 changed_cells.push(cell);
             }
             self.seq += 1;
-            self.log.push((self.seq, now_unix(), job.name.clone(), cell, old, block));
+            self.log.push((self.seq, now_unix(), job.name.clone(), job.account, cell, old, block));
             let key = ChunkKey::of(cell);
             self.dirty.insert(key);
             self.snap_changed.insert(vox_format::zone_of(key));
@@ -1328,7 +1332,7 @@ impl WorldState {
         }
         // after the blocks, so everyone sees the support go and then the prop
         if !changed_cells.is_empty() {
-            self.drop_unsupported(&job.name, changed_cells);
+            self.drop_unsupported(&job.name, job.account, changed_cells);
         }
         if job.blocks.is_empty() {
             // a build that changed nothing has nothing to undo, and would take a kept slot
@@ -1477,7 +1481,7 @@ impl WorldState {
         let Some(p) = self.players.get_mut(&conn) else { return };
         // a block that held something and was changed: who changed it, and where (props that
         // stood on it are dealt with once the player is no longer borrowed)
-        let mut broke: Option<(String, [i32; 3])> = None;
+        let mut broke: Option<(String, Option<u64>, [i32; 3])> = None;
         match msg {
             ToServer::Hello { .. } | ToServer::Watch { .. } => {}
             ToServer::Put { id, entity, expect, component } => {
@@ -1634,19 +1638,19 @@ impl WorldState {
                         }
                         self.seq += 1;
                         let a = Applied { seq: self.seq, player: p.id, id, cell, block };
-                        self.log.push((self.seq, now_unix(), p.name.clone(), cell, old, block));
+                        self.log.push((self.seq, now_unix(), p.name.clone(), p.account, cell, old, block));
                         self.dirty.insert(ChunkKey::of(cell));
                         self.snap_changed.insert(vox_format::zone_of(ChunkKey::of(cell)));
                         if old != 0 {
-                            broke = Some((p.name.clone(), cell));
+                            broke = Some((p.name.clone(), p.account, cell));
                         }
                         self.broadcast(&ToClient::Edits(vec![a]), None);
                     }
                 }
             }
         }
-        if let Some((by, cell)) = broke {
-            self.drop_unsupported(&by, vec![cell]);
+        if let Some((by, account, cell)) = broke {
+            self.drop_unsupported(&by, account, vec![cell]);
         }
     }
 }

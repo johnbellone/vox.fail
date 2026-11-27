@@ -34,6 +34,8 @@ pub(crate) struct EntityEdit {
     pub seq: u64,
     pub at: u64,
     pub player: String,
+    /// the editor's directory account (None for guests and for the directory's own changes)
+    pub account: Option<u64>,
     pub entity: EntityId,
     pub old: Option<Component>,
     pub new: Option<Component>,
@@ -44,9 +46,29 @@ pub(crate) fn create_tables(db: &Connection) -> Result<(), String> {
         "CREATE TABLE IF NOT EXISTS entities(id INTEGER PRIMARY KEY, zone_x INTEGER NOT NULL, zone_z INTEGER NOT NULL,
              name TEXT NOT NULL, version INTEGER NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL);
          CREATE TABLE IF NOT EXISTS entity_edits(seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, player TEXT NOT NULL,
-             entity INTEGER NOT NULL, old BLOB, new BLOB);",
+             account INTEGER, entity INTEGER NOT NULL, old BLOB, new BLOB);",
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    ensure_account_column(db, "entity_edits")
+}
+
+/// Adds the `account` column to an edit log written before it existed (`CREATE TABLE IF NOT
+/// EXISTS` leaves such a table alone). Old rows keep NULL: no account was recorded for them.
+/// The table name comes only from this file's callers, and the statement is picked from a fixed
+/// list, so nothing is built from input.
+pub(crate) fn ensure_account_column(db: &Connection, table: &str) -> Result<(), String> {
+    let alter = match table {
+        "edits" => "ALTER TABLE edits ADD COLUMN account INTEGER",
+        "entity_edits" => "ALTER TABLE entity_edits ADD COLUMN account INTEGER",
+        other => return Err(format!("no edit log named {other}")),
+    };
+    let has: i64 = db
+        .query_row("SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = 'account'", params![table], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if has == 0 {
+        db.execute_batch(alter).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 impl Entities {
@@ -104,6 +126,7 @@ impl Entities {
         seq: u64,
         at: u64,
         player: String,
+        account: Option<u64>,
         id: Option<EntityId>,
         c: Component,
     ) -> Option<EntityId> {
@@ -119,15 +142,22 @@ impl Entities {
             }
         };
         let old = self.map.insert(id, (seq, c.clone())).map(|(_, old)| old);
-        self.log.push(EntityEdit { seq, at, player, entity: id, old, new: Some(c) });
+        self.log.push(EntityEdit { seq, at, player, account, entity: id, old, new: Some(c) });
         self.dirty.insert(id);
         Some(id)
     }
 
     /// Removes entity `id`, returning what it was (None if there was no such entity).
-    pub(crate) fn remove(&mut self, seq: u64, at: u64, player: String, id: EntityId) -> Option<Component> {
+    pub(crate) fn remove(
+        &mut self,
+        seq: u64,
+        at: u64,
+        player: String,
+        account: Option<u64>,
+        id: EntityId,
+    ) -> Option<Component> {
         let (_, old) = self.map.remove(&id)?;
-        self.log.push(EntityEdit { seq, at, player, entity: id, old: Some(old.clone()), new: None });
+        self.log.push(EntityEdit { seq, at, player, account, entity: id, old: Some(old.clone()), new: None });
         self.dirty.insert(id);
         Some(old)
     }
@@ -254,11 +284,12 @@ impl Entities {
         }
         for g in &self.log {
             tx.execute(
-                "INSERT OR REPLACE INTO entity_edits(seq, at, player, entity, old, new) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT OR REPLACE INTO entity_edits(seq, at, player, account, entity, old, new) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     g.seq as i64,
                     g.at as i64,
                     g.player,
+                    g.account.map(|a| a as i64),
                     g.entity.0,
                     g.old.as_ref().map(wire::encode),
                     g.new.as_ref().map(wire::encode)
@@ -416,9 +447,9 @@ mod tests {
         ]);
         assert!(e.changed());
         // a new portal (id 4) in a zone further out, and the spawn (id 2) removed
-        let new = e.put(5, 100, "Ann".into(), None, portal("sea", [300.0, 2.0, 40.0])).unwrap();
+        let new = e.put(5, 100, "Ann".into(), Some(7), None, portal("sea", [300.0, 2.0, 40.0])).unwrap();
         assert_eq!(new, EntityId(4));
-        assert!(e.remove(6, 101, "Ann".into(), EntityId(2)).is_some());
+        assert!(e.remove(6, 101, "Ann".into(), None, EntityId(2)).is_some());
         assert_eq!(e.seq_of(new), Some(5));
 
         let t = db.transaction().unwrap();
@@ -456,16 +487,43 @@ mod tests {
         assert_eq!(count("SELECT zone_x FROM entities WHERE id = 4"), 0);
         // and a portal at x 600 lands in zone 1
         assert_eq!(zone_of(&portal("far", [600.0, 0.0, 0.0])), (1, 0));
+        // the signed-in editor's account is kept with the edit; the removal had none
+        assert_eq!(count("SELECT account FROM entity_edits WHERE seq = 5"), 7);
+        assert_eq!(count("SELECT count(*) FROM entity_edits WHERE seq = 6 AND account IS NULL"), 1);
+    }
+
+    #[test]
+    fn edit_logs_gain_the_account_column() {
+        let db = Connection::open_in_memory().unwrap();
+        // logs as they were before accounts were recorded, with one old row each
+        db.execute_batch(
+            "CREATE TABLE edits(seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, player TEXT NOT NULL,
+                 x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL, old INTEGER NOT NULL, new INTEGER NOT NULL);
+             INSERT INTO edits VALUES (1, 0, 'Ann', 0, 0, 0, 0, 1);
+             CREATE TABLE entity_edits(seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, player TEXT NOT NULL,
+                 entity INTEGER NOT NULL, old BLOB, new BLOB);
+             INSERT INTO entity_edits VALUES (1, 0, 'Ann', 4, NULL, NULL);",
+        )
+        .unwrap();
+        ensure_account_column(&db, "edits").unwrap();
+        create_tables(&db).unwrap();
+        // a second open changes nothing
+        create_tables(&db).unwrap();
+        ensure_account_column(&db, "edits").unwrap();
+        let old_block: Option<i64> = db.query_row("SELECT account FROM edits WHERE seq = 1", [], |r| r.get(0)).unwrap();
+        let old_entity: Option<i64> = db.query_row("SELECT account FROM entity_edits WHERE seq = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!((old_block, old_entity), (None, None));
+        assert!(ensure_account_column(&db, "nope").is_err());
     }
 
     #[test]
     fn ids_are_not_reused_past_the_last() {
         let mut e = Entities::new();
         e.next = u32::MAX;
-        assert_eq!(e.put(1, 0, "Ann".into(), None, portal("last", [0.0, 0.0, 0.0])), None);
+        assert_eq!(e.put(1, 0, "Ann".into(), None, None, portal("last", [0.0, 0.0, 0.0])), None);
         assert!(e.map.is_empty() && e.log.is_empty() && !e.changed());
         // an explicit id still lands, and the counter stays put (no wrap, no reuse)
-        assert_eq!(e.put(2, 0, "Ann".into(), Some(EntityId(9)), portal("here", [0.0, 0.0, 0.0])), Some(EntityId(9)));
-        assert_eq!(e.put(3, 0, "Ann".into(), None, portal("again", [0.0, 0.0, 0.0])), None);
+        assert_eq!(e.put(2, 0, "Ann".into(), None, Some(EntityId(9)), portal("here", [0.0, 0.0, 0.0])), Some(EntityId(9)));
+        assert_eq!(e.put(3, 0, "Ann".into(), None, None, portal("again", [0.0, 0.0, 0.0])), None);
     }
 }

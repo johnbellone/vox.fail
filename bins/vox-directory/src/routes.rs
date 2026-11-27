@@ -1,5 +1,5 @@
 //! The account pages' API: signing up, in and out, who you are, the catalogue, your character,
-//! launch tokens, the worlds, the public key; and the headers every answer gets.
+//! changing your name, launch tokens, the worlds, the public key; and the headers every answer gets.
 
 #[allow(unused_imports)]
 use super::*;
@@ -68,6 +68,10 @@ pub(super) async fn signup(
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "try again".into()))?;
     let id = {
         let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        // a held name looks taken, so nobody learns whose it is
+        if held_by_other(&db, &name, None) {
+            return Err(ApiError(StatusCode::CONFLICT, "that name is taken".into()));
+        }
         match db.execute("INSERT INTO accounts (name, pass, created) VALUES (?1, ?2, ?3)", params![name, hash, now() as i64]) {
             Ok(_) => {
                 let id = db.last_insert_rowid() as u64;
@@ -130,10 +134,90 @@ pub(super) async fn me(State(d): State<Directory>, h: HeaderMap) -> Json<Value> 
     let offered = d.0.social.offered();
     match d.account(&h) {
         Some((id, name)) => {
-            Json(json!({ "name": name, "character": d.character(id), "linked": d.linked(id), "sign_in_with": offered }))
+            Json(json!({
+                "name": name,
+                "character": d.character(id),
+                "linked": d.linked(id),
+                "sign_in_with": offered,
+                "rename_after": d.rename_after(id),
+            }))
         }
         None => Json(json!({ "name": null, "sign_in_with": offered })),
     }
+}
+
+#[derive(Deserialize)]
+pub(super) struct NewName {
+    name: String,
+}
+
+/// Changes the signed-in account's name. Capitals only (`sam` to `Sam`) is always allowed and
+/// doesn't start the 30 days. A full change is allowed once per `NAME_HOLD`, and the old name is
+/// held for the account a week longer than that, so its owner can take it back first (see
+/// docs/design/name-change.md).
+pub(super) async fn rename(
+    State(d): State<Directory>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    h: HeaderMap,
+    Json(n): Json<NewName>,
+) -> Res<Json<Value>> {
+    json_only(&h)?;
+    let (id, _) = d.account(&h).ok_or(ApiError(StatusCode::UNAUTHORIZED, "sign in first".into()))?;
+    if d.tried(&d.visitor(addr, &h)) {
+        return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, "too many tries: wait a few minutes".into()));
+    }
+    let name = check_name(&n.name).map_err(bad)?;
+    let fail = || ApiError(StatusCode::INTERNAL_SERVER_ERROR, "try again".into());
+    let taken = || ApiError(StatusCode::CONFLICT, "that name is taken".into());
+    let at = now();
+    {
+        // one transaction under the directory lock: "is it free?" and "take it" can't be split
+        let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = db.transaction().map_err(|_| fail())?;
+        // the current name is read here, not from the session lookup, so two requests at once
+        // can't both judge themselves against the same old name
+        let (old, renamed): (String, Option<i64>) = tx
+            .query_row("SELECT name, renamed FROM accounts WHERE id = ?1", params![id as i64], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|_| fail())?;
+        if name == old {
+            drop(tx);
+            drop(db);
+            return Ok(Json(json!({ "name": name, "rename_after": d.rename_after(id) })));
+        }
+        // ASCII only, as SQLite's NOCASE: a change that NOCASE sees as a different name (é to É,
+        // K to the Kelvin sign) must pay the full price
+        let capitals_only = name.eq_ignore_ascii_case(&old);
+        if !capitals_only {
+            if let Some(t) = renamed {
+                let until = t as u64 + NAME_HOLD;
+                if until > at {
+                    let days = (until - at).div_ceil(86400).max(1);
+                    return Err(ApiError(StatusCode::TOO_MANY_REQUESTS, format!("you can change your name again in {days} days")));
+                }
+            }
+            if held_by_other(&tx, &name, Some(id)) {
+                return Err(taken());
+            }
+        }
+        match tx.execute("UPDATE accounts SET name = ?1 WHERE id = ?2", params![name, id as i64]) {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => return Err(taken()),
+            Err(_) => return Err(fail()),
+        }
+        if !capitals_only {
+            tx.execute("UPDATE accounts SET renamed = ?1 WHERE id = ?2", params![at as i64, id as i64]).map_err(|_| fail())?;
+            tx.execute("DELETE FROM held_names WHERE until <= ?1", params![at as i64]).map_err(|_| fail())?;
+            // getting your own old name back ends its hold
+            tx.execute("DELETE FROM held_names WHERE name = ?1 AND account = ?2", params![name, id as i64]).map_err(|_| fail())?;
+            tx.execute(
+                "INSERT OR REPLACE INTO held_names (name, account, until) VALUES (?1, ?2, ?3)",
+                params![old, id as i64, (at + NAME_HOLD + NAME_GRACE) as i64],
+            )
+            .map_err(|_| fail())?;
+        }
+        tx.commit().map_err(|_| fail())?;
+    }
+    Ok(Json(json!({ "name": name, "rename_after": d.rename_after(id) })))
 }
 
 pub(super) async fn catalogue(State(d): State<Directory>) -> Json<Value> {

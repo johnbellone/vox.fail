@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { api, findCast, messageOf, post } from "../../api/client";
 import { useApi } from "../../api/hooks";
 import type { Catalogue, Me, Token, Wallet, Worlds } from "../../api/types";
+import { NameChange } from "./NameChange";
 import { SITES } from "./SignIn";
 
-export function SignedIn({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
+export function SignedIn({ me, onSignOut, onChanged }: { me: Me; onSignOut: () => void; onChanged: () => void }) {
   const cat = useApi<Catalogue>("/api/catalogue");
   const worlds = useApi<Worlds>("/api/worlds");
   const [authority, setAuthority] = useState<number>();
@@ -32,6 +33,8 @@ export function SignedIn({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           {c && <Text c="moon.5">as {c.name}</Text>}
         </div>
       </Group>
+
+      <NameChange me={me} onChanged={onChanged} />
 
       <Stack gap="xs">
         <Button component="a" href="/play" size="lg">
@@ -67,7 +70,8 @@ export function SignedIn({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
             ))}
           </Group>
         )}
-        <LaunchCode />
+        {/* keyed by name: after a rename, a code copied earlier carries the old name */}
+        <LaunchCode key={me.name} />
       </Stack>
 
       <Group gap="md" justify="center" c="moon.5" fz="sm">
