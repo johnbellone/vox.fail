@@ -18,11 +18,16 @@
 //! - Top: from +y, looking down: +x right, -z at the top of the picture.
 //! - Iso: dimetric, from the (+x, +y, +z) corner: +x runs right and down, +z left and down.
 
+use crate::check::MAX_VOXELS;
 use crate::grid::VoxelGrid;
 use crate::palette::Palette;
 
 /// Largest width or height of any picture made here, in pixels.
 pub const MAX_SIDE: usize = 4096;
+
+/// Largest width or height of a dimetric picture, in pixels. A prop is small and its iso view
+/// is the one drawn per voxel, so a bigger canvas is refused rather than cut down.
+const MAX_ISO_SIDE: usize = 1024;
 
 /// A picture: `rgba` holds `width * height` pixels of 4 bytes each, row by row from the top.
 /// Pixels nothing covers are `[0, 0, 0, 0]`.
@@ -218,6 +223,18 @@ fn checked_side(side: usize) -> Result<usize, String> {
     }
 }
 
+/// Refuses a grid of more voxels than a prop may have, before the dimetric view draws it. The
+/// orthographic views are not limited this way.
+fn check_iso_voxels(grid: &VoxelGrid) -> Result<(), String> {
+    if grid.len() > MAX_VOXELS {
+        return Err(format!(
+            "an iso picture is drawn for at most {MAX_VOXELS} voxels, this grid has {}",
+            grid.len()
+        ));
+    }
+    Ok(())
+}
+
 /// Width or height of the dimetric picture for a span of `span` half-pixels.
 fn iso_side(span: i64) -> Result<usize, String> {
     let pixels = ((span + 1) / 2).max(1);
@@ -268,6 +285,7 @@ fn view_size(grid: &VoxelGrid, view: View, px: u32) -> Result<(usize, usize), St
     check_px(px)?;
     match view {
         View::Iso => {
+            check_iso_voxels(grid)?;
             let frame = iso_frame(grid.size(), px)?;
             Ok((frame.width, frame.height))
         }
@@ -366,11 +384,18 @@ fn iso_frame(size: [u16; 3], px: u32) -> Result<IsoFrame, String> {
             }
         }
     }
+    let width = iso_side(u1 - u0)?;
+    let height = iso_side(v1 - v0)?;
+    if width > MAX_ISO_SIDE || height > MAX_ISO_SIDE {
+        return Err(format!(
+            "an iso picture of {width} by {height} pixels is over {MAX_ISO_SIDE} by {MAX_ISO_SIDE}; use fewer pixels a voxel"
+        ));
+    }
     Ok(IsoFrame {
         u0,
         v0,
-        width: iso_side(u1 - u0)?,
-        height: iso_side(v1 - v0)?,
+        width,
+        height,
     })
 }
 
@@ -433,6 +458,7 @@ fn shade(colour: [u8; 4], percent: u32) -> [u8; 4] {
 }
 
 fn iso(grid: &VoxelGrid, colours: &Colours, px: u32) -> Result<Image, String> {
+    check_iso_voxels(grid)?;
     let s = i64::from(px);
     let frame = iso_frame(grid.size(), px)?;
     let (u0, v0) = (frame.u0, frame.v0);
@@ -614,13 +640,31 @@ mod tests {
     }
 
     #[test]
-    fn a_sheet_too_wide_is_refused_though_each_part_fits() {
-        // Front, Top and Iso are each under MAX_SIDE wide at 40 pixels a voxel, but the four
-        // side by side are not.
+    fn an_iso_picture_over_1024_pixels_is_refused_and_so_is_a_sheet_with_one() {
+        // Front is 64 voxels wide, 2560 pixels at 40 a voxel, and fits under MAX_SIDE. The iso
+        // view of the same bar is 65 voxels wide, 2600 pixels, over the iso cap.
         let grid = VoxelGrid::new(Scale::Prop, [64, 1, 1]).unwrap();
         assert!(view(&grid, &palette(), View::Front, 40).is_ok());
-        assert!(view(&grid, &palette(), View::Iso, 40).is_ok());
+        assert!(view(&grid, &palette(), View::Iso, 40).is_err());
         assert!(contact_sheet(&grid, &palette(), 40).is_err());
+        // at 15 a voxel the iso view is 975 pixels wide, under the cap
+        assert!(view(&grid, &palette(), View::Iso, 15).is_ok());
+    }
+
+    #[test]
+    fn an_iso_picture_of_more_than_20000_voxels_is_refused() {
+        // 32 by 32 by 20 is 20480 voxels: over the prop limit, so the iso view is refused,
+        // while the orthographic views of the same grid still draw.
+        let mut grid = VoxelGrid::new(Scale::Prop, [32, 32, 20]).unwrap();
+        for x in 0..32u16 {
+            for y in 0..32u16 {
+                for z in 0..20u16 {
+                    grid.set([x, y, z], 1).unwrap();
+                }
+            }
+        }
+        assert!(view(&grid, &palette(), View::Iso, 1).is_err());
+        assert!(view(&grid, &palette(), View::Front, 1).is_ok());
     }
 
     #[test]

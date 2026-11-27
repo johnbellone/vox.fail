@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{box_volume, corner_problems, material_index, material_problem};
+use super::{corner_problems, material_index, material_problem};
 use crate::palette::Palette;
 use crate::recipe::eval::Env;
 use crate::rng::Rng;
@@ -60,10 +60,31 @@ impl Openings {
         }
     }
 
-    /// The face's area: an upper bound, since openings cover only part of it.
+    /// The voxels this row writes: the openings that fit along the face, times each one's
+    /// `width * height`. Openings may overlap, and every overlapping write counts, so this is an
+    /// upper bound on the writes `apply` makes (equal to them when the openings fit under the
+    /// box's top), not the face's area. `None` when the count overflows `u64`, as the other
+    /// operations report it.
     pub(crate) fn writes(&self) -> Option<u64> {
         let (from, to) = self.face_box();
-        box_volume(from, to)
+        // The same axis `apply` runs the openings along.
+        let across = match self.face {
+            Face::PosX | Face::NegX => 2,
+            Face::PosZ | Face::NegZ => 0,
+        };
+        let start = u64::from(from[across]);
+        let end = u64::from(to[across]);
+        let [width, height] = self.size.map(u64::from);
+        // `every` is at least 1 here: a zero step is refused by `check`, and must not divide by zero.
+        let every = u64::from(self.every).max(1);
+        let first = start + u64::from(self.every) / 2;
+        // An opening fits while its last voxel is still on the face: its start is at most
+        // `end + 1 - width`. A face narrower than one opening has none.
+        let Some(last_start) = (end + 1).checked_sub(width).filter(|&s| s >= first) else {
+            return Some(0);
+        };
+        let openings = (last_start - first) / every + 1;
+        openings.checked_mul(width)?.checked_mul(height)
     }
 
     pub(crate) fn check(&self, size: [u16; 3], palette: &Palette) -> Vec<String> {
@@ -137,5 +158,43 @@ impl Openings {
             at += u32::from(self.every);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(face: Face, of: [u16; 6], every: u16, size: [u16; 2]) -> Openings {
+        Openings {
+            face,
+            of,
+            every,
+            size,
+            sill: 0,
+            mat: None,
+            tone: 0,
+        }
+    }
+
+    #[test]
+    fn overlapping_openings_count_every_write() {
+        // A 64-long face with 32-wide openings every 2: the starts are 1, 3, ..., 31, which is
+        // sixteen openings of 32 by 64 each. The face's own area (64 by 64) is not the count.
+        let op = row(Face::PosZ, [0, 0, 0, 63, 63, 63], 2, [32, 64]);
+        assert_eq!(op.writes(), Some(16 * 32 * 64));
+    }
+
+    #[test]
+    fn an_opening_wider_than_the_face_writes_nothing() {
+        let op = row(Face::NegX, [0, 0, 0, 0, 9, 9], 2, [32, 4]);
+        assert_eq!(op.writes(), Some(0));
+    }
+
+    #[test]
+    fn a_zero_step_does_not_divide_by_zero() {
+        // `check` refuses a step under 2; `writes` must still return for such a recipe.
+        let op = row(Face::PosX, [0, 0, 0, 63, 63, 63], 0, [4, 4]);
+        assert!(op.writes().is_some());
     }
 }

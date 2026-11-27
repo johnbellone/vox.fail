@@ -12,8 +12,9 @@ use crate::grid::VoxelGrid;
 use crate::palette::Palette;
 use crate::prop::{Behaviour, PropDef, Surface};
 
-/// Most voxels a prop may have.
-const MAX_VOXELS: usize = 20_000;
+/// Most voxels a prop may have. The renderer uses it too, so a picture is never drawn for a grid
+/// the check would refuse.
+pub(crate) const MAX_VOXELS: usize = 20_000;
 /// Most distinct palette colours one prop may use.
 const MAX_COLOURS: usize = 24;
 /// Most light behaviours (emitters) one prop may have.
@@ -250,6 +251,9 @@ fn check_floating(def: &PropDef, grid: &VoxelGrid, found: &mut Vec<Finding>) {
     }
 }
 
+/// Most thin-wall warnings reported one by one; the rest are counted in one finding.
+const MAX_THIN_REPORTS: usize = 8;
+
 /// The index of the largest component, the first one of the largest size.
 fn largest(parts: &[Vec<[u16; 3]>]) -> Option<usize> {
     let mut best: Option<usize> = None;
@@ -266,9 +270,17 @@ fn largest(parts: &[Vec<[u16; 3]>]) -> Option<usize> {
 /// axis and warns when a group is more than [`MAX_THIN_SPAN`] voxels across. This is an
 /// approximation of "a slab one voxel thick": it sees a thin wall that bends, and a thin plate
 /// at a surface edge, but not a thin wall that is thick in another place.
+///
+/// Like [`check_floating`], the warnings are capped: a grid of many slabs could otherwise give
+/// thousands of findings. A grid over [`MAX_VOXELS`] is not scanned at all.
 fn check_thin_walls(grid: &VoxelGrid, found: &mut Vec<Finding>) {
+    if grid.len() > MAX_VOXELS {
+        return;
+    }
     let size = grid.size();
     let filled: BTreeSet<[u16; 3]> = grid.iter().map(|(pos, _)| pos).collect();
+    let mut reported = 0usize;
+    let mut unreported = 0usize;
     for axis in 0..3 {
         let is_empty = |pos: Option<[u16; 3]>| pos.is_none_or(|p| !filled.contains(&p));
         let thin: BTreeSet<[u16; 3]> = filled
@@ -309,16 +321,28 @@ fn check_thin_walls(grid: &VoxelGrid, found: &mut Vec<Finding>) {
                 .max()
                 .unwrap_or(0);
             if span > MAX_THIN_SPAN {
-                group.sort_unstable();
-                found.push(Finding::warning(
-                    "thin walls",
-                    group.first().copied(),
-                    format!(
-                        "a single voxel thick across {span} voxels (axis {axis}); it may shimmer"
-                    ),
-                ));
+                if reported < MAX_THIN_REPORTS {
+                    reported += 1;
+                    group.sort_unstable();
+                    found.push(Finding::warning(
+                        "thin walls",
+                        group.first().copied(),
+                        format!(
+                            "a single voxel thick across {span} voxels (axis {axis}); it may shimmer"
+                        ),
+                    ));
+                } else {
+                    unreported += 1;
+                }
             }
         }
+    }
+    if unreported > 0 {
+        found.push(Finding::warning(
+            "thin walls",
+            None,
+            format!("and {unreported} more thin wall(s)"),
+        ));
     }
 }
 
@@ -589,6 +613,46 @@ mod tests {
             .collect();
         assert_eq!(floating.len(), MAX_FLOATING_REPORTS + 1, "{found:?}");
         assert!(floating.last().unwrap().what.starts_with("and 11 more"));
+    }
+
+    #[test]
+    fn thin_walls_are_capped_at_eight_then_counted() {
+        // Forty columns one voxel apart on a 40 by 1 by 40 floor: every column is a thin
+        // group forty voxels long, and each column is seen along two axes (x and y), so the
+        // check finds 40 thin walls in all.
+        let mut grid = VoxelGrid::new(Scale::Prop, [40, 1, 40]).unwrap();
+        for x in (0..40u16).step_by(2) {
+            for z in 0..40u16 {
+                grid.set([x, 0, z], 1).unwrap();
+            }
+        }
+        let json = BLOCK.replace("[4, 4, 4]", "[40, 1, 40]");
+        let found = check(&def(&json), &grid, &palette(1));
+        let thin: Vec<&Finding> = found.iter().filter(|f| f.check == "thin walls").collect();
+        assert_eq!(thin.len(), MAX_THIN_REPORTS + 1, "{found:?}");
+        assert!(thin.iter().all(|f| f.kind == Kind::Warning), "{found:?}");
+        assert!(
+            thin.last().unwrap().what.starts_with("and ")
+                && thin.last().unwrap().what.ends_with("more thin wall(s)"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_grid_over_the_voxel_budget_is_not_scanned_for_thin_walls() {
+        // 20480 voxels in even-x columns: over MAX_VOXELS, so only the voxels error is raised.
+        let mut grid = VoxelGrid::new(Scale::Prop, [64, 64, 10]).unwrap();
+        for x in (0..64u16).step_by(2) {
+            for y in 0..64u16 {
+                for z in 0..10u16 {
+                    grid.set([x, y, z], 1).unwrap();
+                }
+            }
+        }
+        let json = BLOCK.replace("[4, 4, 4]", "[64, 64, 10]");
+        let found = check(&def(&json), &grid, &palette(1));
+        assert_eq!(kinds(&found, "voxels"), vec![Kind::Error]);
+        assert!(kinds(&found, "thin walls").is_empty(), "{found:?}");
     }
 
     #[test]

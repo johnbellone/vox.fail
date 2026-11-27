@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use vox_art::{PropDef, VoxelGrid, grid::GridError, prop::Reason};
 
-use crate::{Error, err, store::Hash, zone::unzstd};
+use crate::{Error, err, store::Hash};
 
 /// The blob's first four bytes.
 const MAGIC: &[u8; 4] = b"VOXP";
@@ -41,6 +41,13 @@ const VOXEL_BYTES: usize = 7;
 const MAX_CATALOGUE_BYTES: usize = 1 << 20;
 /// Most entries a catalogue may list.
 const MAX_CATALOGUE_ENTRIES: usize = 10_000;
+// The limits a catalogue entry shares with `vox_art::PropDef::validate` (`crates/vox-art/src/prop.rs`:
+// `MAX_ID`, `MAX_NAME`, `MAX_TAGS`, `MAX_TAG`, and the id's characters). A catalogue entry is not
+// a PropDef, so the rules are repeated here; keep the two in step.
+const MAX_ID: usize = 64;
+const MAX_NAME: usize = 64;
+const MAX_TAGS: usize = 16;
+const MAX_TAG: usize = 32;
 
 /// A prop: its definition and its voxels. Its name is [`PropBlob::hash`].
 #[derive(Debug, Clone, PartialEq)]
@@ -111,19 +118,23 @@ impl PropBlob {
         }
         let cap = (count as usize).checked_mul(VOXEL_BYTES).ok_or_else(|| Error("too many voxels for a prop".into()))?;
         let frame = blob.get(pos..).ok_or_else(|| Error("the prop is cut short".into()))?;
-        let raw = unzstd(frame, cap)?;
+        let raw = unzstd_frame(frame, cap)?;
         if raw.len() != cap {
             return err(format!("the voxel data holds {} bytes, not {cap} for {count} voxels", raw.len()));
         }
         let mut grid = VoxelGrid::new(def.scale.scale(), def.size).map_err(grid_error)?;
+        // Records must come in strictly increasing (x, y, z) order, the order `encode` writes
+        // them in. That one rule also refuses a voxel listed twice.
+        let mut previous: Option<[u16; 3]> = None;
         // the length was checked to be exactly count × 7, so there is no remainder to drop
         for &[x0, x1, y0, y1, z0, z1, index] in raw.as_chunks::<VOXEL_BYTES>().0 {
             let pos = [u16::from_le_bytes([x0, x1]), u16::from_le_bytes([y0, y1]), u16::from_le_bytes([z0, z1])];
+            if previous.is_some_and(|p| pos <= p) {
+                return err(format!("the voxel at {pos:?} is out of order or listed twice"));
+            }
+            previous = Some(pos);
             if index == 0 {
                 return err(format!("the voxel at {pos:?} is empty; empty voxels are not stored"));
-            }
-            if grid.get(pos).is_some() {
-                return err(format!("the voxel at {pos:?} is listed twice"));
             }
             grid.set(pos, index).map_err(grid_error)?;
         }
@@ -166,6 +177,54 @@ fn grid_error(e: GridError) -> Error {
     Error(e.to_string())
 }
 
+/// Decompresses the blob's zstd frame, refusing more than `cap` bytes, a cut-short frame, and
+/// any bytes after the frame. The streaming decoder reads its source only as far as the frame
+/// goes, so whatever is left unread is the trailing data. This is the zone reader's `unzstd`
+/// with that last check.
+fn unzstd_frame(frame: &[u8], cap: usize) -> Result<Vec<u8>, Error> {
+    use std::io::Read;
+    let mut dec = ruzstd::decoding::StreamingDecoder::new(frame).map_err(|e| Error(format!("zstd: {e}")))?;
+    let mut out = Vec::new();
+    let read = (&mut dec).take(cap as u64 + 1).read_to_end(&mut out).map_err(|e| Error(format!("zstd: {e}")))?;
+    if read > cap {
+        return err("decompresses to too much");
+    }
+    if !dec.decoder.is_finished() {
+        return err("the zstd frame is cut short");
+    }
+    if !dec.get_ref().is_empty() {
+        return err("the prop has bytes after its zstd frame");
+    }
+    Ok(out)
+}
+
+/// The limits on one catalogue entry, the same as `PropDef::validate` gives a def: its id (the
+/// map key) and its name, tags and tag count. Text must be 1 to its cap in characters and have
+/// no control characters.
+fn check_entry(id: &str, entry: &CatalogueEntry) -> Result<(), Error> {
+    let id_len = id.chars().count();
+    let id_ok = id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'));
+    if !(1..=MAX_ID).contains(&id_len) || !id_ok {
+        return err(format!("catalogue id {id:?} is not a prop id"));
+    }
+    if !short_text(&entry.name, MAX_NAME) {
+        return err(format!("catalogue prop {id}: name must be 1 to {MAX_NAME} characters, with no control characters"));
+    }
+    if entry.tags.len() > MAX_TAGS {
+        return err(format!("catalogue prop {id}: more than {MAX_TAGS} tags"));
+    }
+    for tag in &entry.tags {
+        if !short_text(tag, MAX_TAG) {
+            return err(format!("catalogue prop {id}: tag {tag:?} must be 1 to {MAX_TAG} characters, with no control characters"));
+        }
+    }
+    Ok(())
+}
+
+fn short_text(s: &str, max: usize) -> bool {
+    (1..=max).contains(&s.chars().count()) && !s.chars().any(char::is_control)
+}
+
 /// The accepted props: each def id to the name of its accepted version, with its display name
 /// and tags. Serialised as JSON; a zone or a world may name only props listed here.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -199,6 +258,10 @@ impl Catalogue {
         if self.props.len() > MAX_CATALOGUE_ENTRIES {
             return err("too many props in the catalogue");
         }
+        // Refused here too, so a catalogue this tool writes is one that `decode` reads.
+        for (id, entry) in &self.props {
+            check_entry(id, entry)?;
+        }
         let json = serde_json::to_vec(self).map_err(|e| Error(format!("catalogue: {e}")))?;
         if json.len() > MAX_CATALOGUE_BYTES {
             return err("the catalogue is too big");
@@ -214,6 +277,10 @@ impl Catalogue {
         let cat: Catalogue = serde_json::from_slice(bytes).map_err(|e| Error(format!("catalogue: {e}")))?;
         if cat.props.len() > MAX_CATALOGUE_ENTRIES {
             return err("too many props in the catalogue");
+        }
+        // The whole catalogue is refused on one bad entry: this file is written by our own tool.
+        for (id, entry) in &cat.props {
+            check_entry(id, entry)?;
         }
         Ok(cat)
     }
@@ -410,5 +477,83 @@ mod tests {
         }
         assert!(cat.encode().is_err());
         assert!(Catalogue::decode(b"{\"props\":{}}extra").is_err());
+    }
+
+    #[test]
+    fn voxel_records_out_of_order_are_refused() {
+        let backwards = [rec(2, 2, 2, 3), rec(1, 0, 1, 1)].concat();
+        assert!(PropBlob::decode(&craft(BOX.as_bytes(), 2, &backwards)).is_err());
+        // y before x in the order is also backwards: (0, 3, 0) comes before (1, 0, 0)
+        let by_y = [rec(1, 0, 0, 1), rec(0, 3, 0, 1)].concat();
+        assert!(PropBlob::decode(&craft(BOX.as_bytes(), 2, &by_y)).is_err());
+        // in order, the same two voxels are read
+        let sorted = [rec(1, 0, 1, 1), rec(2, 2, 2, 3)].concat();
+        assert!(PropBlob::decode(&craft(BOX.as_bytes(), 2, &sorted)).is_ok());
+    }
+
+    #[test]
+    fn encoded_voxels_are_in_sorted_order_whatever_the_insertion_order() {
+        let def = def_from(BOX);
+        let mut grid = VoxelGrid::new(Scale::Prop, def.size).unwrap();
+        grid.set([2, 2, 2], 3).unwrap();
+        grid.set([1, 0, 1], 1).unwrap();
+        let (blob, _) = PropBlob { def, grid }.encode().unwrap();
+        let back = PropBlob::decode(&blob).unwrap();
+        assert_eq!(back.grid.get([1, 0, 1]), Some(1));
+        assert_eq!(back.grid.get([2, 2, 2]), Some(3));
+    }
+
+    #[test]
+    fn bytes_after_the_zstd_frame_are_refused() {
+        let raw = rec(1, 0, 1, 1);
+        let mut frame = zstd::bulk::compress(&raw, 9).unwrap();
+        assert!(PropBlob::decode(&craft_frame(BOX.as_bytes(), 1, &frame)).is_ok());
+        frame.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        assert!(PropBlob::decode(&craft_frame(BOX.as_bytes(), 1, &frame)).is_err());
+    }
+
+    fn entry(name: &str, tags: Vec<String>) -> CatalogueEntry {
+        let (_, hash) = sample().encode().unwrap();
+        CatalogueEntry { hash, name: name.into(), tags }
+    }
+
+    fn one(id: &str, entry: CatalogueEntry) -> Catalogue {
+        let mut cat = Catalogue::default();
+        cat.props.insert(id.into(), entry);
+        cat
+    }
+
+    #[test]
+    fn a_catalogue_entry_that_prop_validation_would_refuse_is_refused() {
+        // An id with a space and a capital letter.
+        let bad_id = one("Crate Box", entry("Crate", vec![]));
+        assert!(bad_id.encode().is_err());
+        assert!(Catalogue::decode(&serde_json::to_vec(&bad_id).unwrap()).is_err());
+
+        // A name of 65 characters, and an empty name.
+        assert!(one("crate.box", entry(&"n".repeat(MAX_NAME + 1), vec![])).encode().is_err());
+        assert!(one("crate.box", entry("", vec![])).encode().is_err());
+
+        // A control character in the name.
+        assert!(one("crate.box", entry("cr\u{7}ate", vec![])).encode().is_err());
+
+        // Seventeen tags, and a tag of 33 characters.
+        let many: Vec<String> = (0..=MAX_TAGS).map(|i| format!("t{i}")).collect();
+        assert!(one("crate.box", entry("Crate", many)).encode().is_err());
+        assert!(one("crate.box", entry("Crate", vec!["t".repeat(MAX_TAG + 1)])).encode().is_err());
+
+        // Sixteen tags of 32 characters each are at the limit and pass.
+        let at_limit: Vec<String> = (0..MAX_TAGS).map(|_| "t".repeat(MAX_TAG)).collect();
+        assert!(one("crate.box", entry("Crate", at_limit)).encode().is_ok());
+    }
+
+    #[test]
+    fn one_bad_entry_refuses_the_whole_catalogue() {
+        let (_, hash) = sample().encode().unwrap();
+        let mut cat = Catalogue::default();
+        cat.props.insert("crate.box".into(), CatalogueEntry { hash, name: "Crate".into(), tags: vec![] });
+        cat.props.insert("Bad".into(), CatalogueEntry { hash, name: "Bad".into(), tags: vec![] });
+        let json = serde_json::to_vec(&cat).unwrap();
+        assert!(Catalogue::decode(&json).is_err());
     }
 }
