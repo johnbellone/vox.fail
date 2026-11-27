@@ -53,6 +53,7 @@ Two products share one Cargo workspace:
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
 | `apps/site/` | (Bun) | The vox.fail pages: React 19, Mantine 9, built with Bun into `dist/`. `public/pkg/` is the wasm client (generated, ignored). See its README. |
+| `apps/edge/` | (Bun) | vox.fail's Cloudflare Worker: passes requests on to the server, and shows an offline page (sharing the home page's text) when it can't be reached. Deployed by `.github/workflows/edge.yml`. See its README. |
 | `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands, sea, orbit), clip manifests. |
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
 | `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail, and automatic deploys from version tags (`vox-update.sh`, `.github/workflows/release.yml`; see `deploy/README.md`); the container image (`docker/Dockerfile`) and a Helm chart for Kubernetes (`helm/vox`, see `helm/README.md`). |

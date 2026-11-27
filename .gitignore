@@ -19,3 +19,7 @@ apps/site/public/pkg/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# cf build output (apps/edge)
+.cloudflare/
+apps/edge/.env*

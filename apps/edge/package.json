@@ -1,0 +1,26 @@
+{
+  "name": "@vox/edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "deploy": "bun run build.ts && node node_modules/.bin/cf deploy"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.5",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
+    "cf": "1.0.0-rc.6",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.169.0"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.8.2",
+    "@mantine/hooks": "^9.8.2",
+    "@mantine/notifications": "^9.8.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}

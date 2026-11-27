@@ -86,6 +86,20 @@ By hand: `vox-update.sh --rollback` goes back one release, `--tag v0.3.0` instal
 both hold it (the timer stops upgrading) until `vox-update.sh --resume`. The three newest
 releases are kept.
 
+## When the server is offline
+
+A Cloudflare Worker (`apps/edge`, on `vox.fail/*`) sits in front of the tunnel. While the server
+is up it passes everything through unchanged. When the tunnel or the directory can't be reached,
+pages show an offline page (what Vox is, the worlds' screenshots, "offline right now") and the API
+answers `503` with an offline message, so the site never shows Cloudflare's error 1033. Until
+the tunnel is routed to vox.fail, a proxied placeholder record (`AAAA vox.fail 100::`) keeps the
+name resolving to the Worker; delete it before `cloudflared tunnel route dns vox vox.fail` in step 6
+above. It's
+deployed from `.github/workflows/edge.yml` through the `production` environment (only `main`
+deploys; it holds `CLOUDFLARE_API_TOKEN`, a token named "vox-edge CI" with Workers Scripts Edit on
+the account and Workers Routes Edit and Zone Read on vox.fail, and `CLOUDFLARE_ACCOUNT_ID`).
+See [apps/edge/README.md](../apps/edge/README.md).
+
 ## All worlds in one process (vox-host)
 
 Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port
