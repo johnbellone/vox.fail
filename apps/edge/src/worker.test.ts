@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { backTo } from "./back";
-import { portFor } from "./ports";
+import { portFor, toContainer } from "./ports";
 import worker, { encodings, type Env } from "./worker";
 
 const realFetch = globalThis.fetch;
@@ -153,6 +153,23 @@ describe("the servers", () => {
     expect(portFor("/w/void/")).toBe(7790);
     expect(portFor("/api/me")).toBe(7700);
     expect(portFor("/auth/discord")).toBe(7700);
+  });
+
+  test("a request goes to the container over plain HTTP, otherwise unchanged", async () => {
+    const req = new Request("https://vox.fail/api/signin?x=1", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7", cookie: "s=1" },
+      body: '{"name":"a"}',
+    });
+    const out = toContainer(req);
+    expect(out.url).toBe("http://container/api/signin?x=1");
+    expect(out.method).toBe("POST");
+    expect(out.headers.get("cf-connecting-ip")).toBe("203.0.113.7");
+    expect(out.headers.get("cookie")).toBe("s=1");
+    expect(await out.text()).toBe('{"name":"a"}');
+    const ws = toContainer(new Request("https://vox.fail/w/void/ws", { headers: { upgrade: "websocket" } }));
+    expect(ws.url).toBe("http://container/w/void/ws");
+    expect(ws.headers.get("upgrade")).toBe("websocket");
   });
 
   test("the internal routes never reach them", async () => {
