@@ -174,6 +174,10 @@ pub const MAX_DETAIL: u8 = 4;
 /// Longest side of a node's footprint, in blocks.
 pub const MAX_NODE_SIDE: u16 = 64;
 
+/// Largest node seed: the largest whole number a JavaScript number holds exactly (2^53 - 1), so
+/// the editor's page can read a seed and send it back unchanged.
+pub const MAX_NODE_SEED: u64 = (1 << 53) - 1;
+
 /// A node of the world graph placed in a world: what it is, how far it has been refined, where
 /// its footprint starts and how big it is, and the recipe that builds it. The server expands the
 /// recipe with vox-graph when an editor builds the node (`ToServer::Build`). vox-core cannot
@@ -342,7 +346,7 @@ impl Component {
                     return Err(EntityWhy::TooBig);
                 }
                 let word = !n.kind.is_empty() && n.kind.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-                if !word || n.detail > MAX_DETAIL || !n.size.iter().all(|s| (1..=MAX_NODE_SIDE).contains(s)) {
+                if !word || n.detail > MAX_DETAIL || !n.size.iter().all(|s| (1..=MAX_NODE_SIDE).contains(s)) || n.seed > MAX_NODE_SEED {
                     return Err(EntityWhy::Invalid);
                 }
                 match &n.recipe {
@@ -511,6 +515,11 @@ mod tests {
         n.size = [MAX_NODE_SIDE, 12, 8];
         assert_eq!(Component::Node(n.clone()).validate(), Ok(()));
         n.size = [MAX_NODE_SIDE + 1, 12, 8];
+        assert_eq!(Component::Node(n.clone()).validate(), Err(EntityWhy::Invalid));
+        n.size = [8, 12, 8];
+        n.seed = MAX_NODE_SEED;
+        assert_eq!(Component::Node(n.clone()).validate(), Ok(()));
+        n.seed = MAX_NODE_SEED + 1;
         assert_eq!(Component::Node(n).validate(), Err(EntityWhy::Invalid));
     }
 
