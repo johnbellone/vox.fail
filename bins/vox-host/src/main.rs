@@ -16,6 +16,12 @@
 //! for `--instance-idle <minutes>` (5) or its time is up. At most `--instances-most` (50) at
 //! once, `--instance-players` (8, a party) in each.
 //!
+//! `--atlas <name>=<width>x<height>[@<seed>]` (repeatable): a big map of tiles, each tile a world
+//! 256 m across (`/w/atlas-<name>-<i>-<j>/ws`, `0-0` the north-west corner), made the first
+//! time someone goes there with its ground generated from the seed, and kept in
+//! `<data>/atlas-<name>/`. Walking off a tile's edge goes on to the next one. With
+//! `--idle-stop`, tiles nobody is in stop like any world.
+//!
 //! Each `--world` is one world: `<id>` is its name (for the directory too) and its path,
 //! `/w/<id>/ws`; it is kept in `<data>/<id>.db`, with snapshots in `<data>/<id>.db.snapshots/`,
 //! the same files `vox-server --db /var/lib/vox/<id>.db` uses, so worlds move over as they are.
@@ -30,7 +36,7 @@
 
 use std::path::{Path, PathBuf};
 
-use vox_host::{Host, Instances, Options, Spec};
+use vox_host::{Atlas, Host, Instances, Options, Spec};
 
 #[tokio::main]
 async fn main() {
@@ -44,8 +50,8 @@ async fn main() {
     let palette = vox_core::palette_names(&blocks).expect("block palette");
 
     let worlds: Vec<String> = args.windows(2).filter(|w| w[0] == "--world").map(|w| w[1].clone()).collect();
-    if worlds.is_empty() {
-        eprintln!("vox-host: name at least one world: --world void@7780");
+    if worlds.is_empty() && !args.iter().any(|a| a == "--atlas") {
+        eprintln!("vox-host: name at least one world: --world void@7780 (or an --atlas)");
         std::process::exit(2);
     }
     let keep: Vec<String> = args.windows(2).filter(|w| w[0] == "--keep").map(|w| w[1].clone()).collect();
@@ -92,11 +98,30 @@ async fn main() {
             players: count("--instance-players", 8),
         }
     });
-    let host = Host::start(specs, Options { idle, instances }).await.unwrap_or_else(|e| panic!("vox-host: {e}"));
+    let atlases: Vec<Atlas> = args
+        .windows(2)
+        .filter(|w| w[0] == "--atlas")
+        .map(|w| {
+            let a = &w[1];
+            let (name, rest) = a.split_once('=').unwrap_or_else(|| bad_atlas(a));
+            let (dims, seed) = rest.split_once('@').map_or((rest, "1"), |(d, s)| (d, s));
+            let (wd, ht) = dims.split_once('x').unwrap_or_else(|| bad_atlas(a));
+            let n = |s: &str| s.parse::<i32>().ok().filter(|n| *n > 0).unwrap_or_else(|| bad_atlas(a));
+            let mut base = vox_server::Config::new(data_dir.join(format!("atlas-{name}.db")), palette.clone());
+            base.block_size = vox_core::block_size(&blocks);
+            vox_server::flags::apply(&mut base, &args).unwrap_or_else(|e| panic!("{e}"));
+            let snapshots = base.snapshots.is_some();
+            Atlas { name: name.into(), seed: seed.parse().unwrap_or_else(|_| bad_atlas(a)), size: [n(wd), n(ht)], base, data: data_dir.clone(), snapshots }
+        })
+        .collect();
+    let host = Host::start(specs, Options { idle, instances, atlases }).await.unwrap_or_else(|e| panic!("vox-host: {e}"));
     let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
-    eprintln!("vox-host: {} on {listen} (ws://{listen}/w/<id>/ws), saved in {}", host.ids().join(", "), data_dir.display());
+    let names = if host.ids().is_empty() { "no worlds yet (an atlas's tiles are made when visited)".to_string() } else { host.ids().join(", ") };
+    eprintln!("vox-host: {names} on {listen} (ws://{listen}/w/<id>/ws), saved in {}", data_dir.display());
     if let Some(idle) = idle {
-        eprintln!("vox-host: running {}; the others start when asked for and stop after {} s unused", host.running().await.join(", "), idle.as_secs());
+        let running = host.running().await;
+        let running = if running.is_empty() { "nothing yet".to_string() } else { running.join(", ") };
+        eprintln!("vox-host: running {running}; the others start when asked for and stop after {} s unused", idle.as_secs());
     }
     let stop = host.clone();
     axum::serve(listener, host.router())
@@ -107,6 +132,10 @@ async fn main() {
         })
         .await
         .expect("server");
+}
+
+fn bad_atlas(a: &str) -> ! {
+    panic!("--atlas {a}: <name>=<width>x<height>[@<seed>], such as earth=40x30@7")
 }
 
 /// `<id>[=<seed>][@<alias>]`.

@@ -40,7 +40,7 @@ Two products share one Cargo workspace:
 
 | Path | Crate | Role |
 | --- | --- | --- |
-| `crates/vox-core/` | `vox-core` | Engine-free rules shared by everyone: blocks and chunks (`world`), voxel raycast (`ray`), walking physics (`body`), level files (`level`), the wire protocol (`wire`), sign-in tokens (`auth`), client-side prediction (`predict`), weather simulation (`weather`), who may use, copy and edit a structure (`entitle`). **No Bevy here.** |
+| `crates/vox-core/` | `vox-core` | Engine-free rules shared by everyone: blocks and chunks (`world`), voxel raycast (`ray`), walking physics (`body`), level files (`level`), the wire protocol (`wire`), sign-in tokens (`auth`), client-side prediction (`predict`), weather simulation (`weather`), who may use, copy and edit a structure (`entitle`), doorways (`portal`), an atlas's generated ground (`terrain`: integer noise over map-wide coordinates, so tiles agree at their edges). **No Bevy here.** |
 | `crates/vox-world/` | `vox-world` | A world on screen, shared by the app and the client: block meshing and materials (`blocks`), server link, chunks, controls, camera (`client`), input actions, bindings, controller brands and button hints (`input/`), the pixel HUD and quick wheel (`hud`), menus with controller navigation (`menu`), sky and fog (`outdoors`), portals (`portals`), avatar pose streaming (`pose`, `proto`), file access that also works in the browser (`files`). |
 | `crates/vox-format/` | `vox-format` | The world format: regions (16 × 16 chunk columns) as checked, zstd-compressed blobs named by their BLAKE3 hash (`region`), a blob store and snapshots (manifests of region hashes, shared blobs, kept a week; `store`), in a folder or an Oxen repository with a commit per snapshot and history older than the week squashed (`oxen`, runs the `oxen` command line). Decodes in wasm too (`ruzstd`); encoding is native. |
 | `crates/vox-link/` | `vox-link` | A WebSocket kept open on its own thread, reconnecting with backoff; a `Dial` says where and how (world servers, the relay). Desktop only. |
@@ -48,7 +48,7 @@ Two products share one Cargo workspace:
 | `crates/vox-voice/` | `vox-voice` | The voice codecs for world voice chat and Block Avatar, pure Rust with no engine and no dependencies: IMA ADPCM (`adpcm`), a linear resampler (`resample`), a jitter buffer (`jitter`), and 20 ms packets behind a silence gate (`packet`). Shared by `vox-world`, `vox-server` (tests) and `block_avatar`; wasm-safe. |
 | `bins/vox-client/` | `vox-client` | The player client: a thin Bevy app (`lib.rs`) around `vox-world`. Builds natively and to wasm32. Also the FPS counter, the portal sweep and watch mode (the front page's live view). |
 | `bins/vox-server/` | `vox-server` | One world: a single thread owns the blocks, players and edit order; WebSocket on `/ws` for players and watchers; SQLite persistence, with `vox-format` snapshots beside it (`<db>.snapshots/`) and restore (`snapshot`); relays voice (nearby and raid party, decided by the server). |
-| `bins/vox-host/` | `vox-host` | Many worlds in one process on one port, each a `vox-server` world routed by path (`/w/<id>/ws`, plus an alias such as its old port); `GET /` lists them. With `--idle-stop <minutes>` worlds start on their first connection and stop when unused (`--keep <id>` always runs). With `--instances` it makes raid parties' copies of dungeons (`data/levels/dungeons/*.json`) when the directory asks (`POST /api/host/instance`, world secret), thrown away when empty or done. Takes the same world flags (`vox_server::flags`). |
+| `bins/vox-host/` | `vox-host` | Many worlds in one process on one port, each a `vox-server` world routed by path (`/w/<id>/ws`, plus an alias such as its old port); `GET /` lists them. With `--idle-stop <minutes>` worlds start on their first connection and stop when unused (`--keep <id>` always runs). With `--instances` it makes raid parties' copies of dungeons (`data/levels/dungeons/*.json`) when the directory asks (`POST /api/host/instance`, world secret), thrown away when empty or done. With `--atlas <name>=<w>x<h>[@seed]`, any tile `atlas-<name>-<i>-<j>` of a big map is a world, made (ground generated) on its first visit. Takes the same world flags (`vox_server::flags`). |
 | `bins/vox-directory/` | `vox-directory` | Accounts (Steam, Discord, name and password), characters, authority and world currencies, plots, portals, raids, friends and groups, structures and their entitlements (`structures`), token signing; serves the site and the game's files. |
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
@@ -123,6 +123,11 @@ ignores `*.db`).
   hasn't one open (at most three copies an hour, fresh copies of a gone one included), and gives
   tickets for it only to the party. A dungeon's level may name an objective (a place to
   reach); reaching it ends a raid on `dungeon:<name>` (`POST /api/world/objective`).
+- **Atlases:** a big map is a grid of tiles, each an ordinary world 512 blocks across
+  (`vox-core::terrain`). Walking within a block of a tile's edge that leads on, the client sends
+  `Through { portal: "edge:east" }`; the world sends you to the same place on the map just inside
+  the next tile, by ticket like any portal. The directory needs the same `--atlas` to know the
+  tiles.
 - **Worlds -> directory:** each world reports who is present once a minute (authority, raids,
   plots) over localhost with `VOX_WORLD_SECRET`. Those endpoints (`/api/world/*`) must not be
   exposed publicly; the tunnel config refuses them.

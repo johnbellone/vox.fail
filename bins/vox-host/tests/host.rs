@@ -7,7 +7,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use vox_core::wire::{self, PROTOCOL, ToClient, ToServer};
-use vox_host::{Host, Instances, Options, Spec};
+use vox_host::{Atlas, Host, Instances, Options, Spec};
 use vox_server::Config;
 
 const LEVEL: &str = r#"{ "world": { "sky": "void" }, "boxes": [ { "block": "grass", "from": [-4, -1, -4], "to": [4, -1, 4] } ] }"#;
@@ -156,7 +156,7 @@ async fn instances_of_dungeons() {
     std::fs::write(dir.join("crypt.json"), LEVEL).unwrap();
     let base = Config::new(":memory:", ["grass", "stone"].map(String::from).to_vec());
     let instances = Instances { base, templates: dir.clone(), secret: "s3cret".into(), idle: Duration::from_secs(3), most: 2, players: 8 };
-    let host = Host::start(vec![spec("void", None)], Options { idle: None, instances: Some(instances) }).await.unwrap();
+    let host = Host::start(vec![spec("void", None)], Options { idle: None, instances: Some(instances), ..Default::default() }).await.unwrap();
     let addr = serve(&host).await;
     let make = |id: &str, template: &str| serde_json::json!({ "id": id, "template": template, "minutes": 60 });
 
@@ -196,5 +196,31 @@ async fn instances_of_dungeons() {
     // the kept world stays
     assert_eq!(host.running().await, ["void"]);
     host.shutdown().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tiles_of_an_atlas() {
+    let dir = std::env::temp_dir().join(format!("vox-host-atlas-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut base = Config::new(dir.join("atlas-earth.db"), ["grass", "dirt", "stone", "sand", "water"].map(String::from).to_vec());
+    base.snapshots = None;
+    let earth = Atlas { name: "earth".into(), seed: 7, size: [3, 2], base, data: dir.clone(), snapshots: false };
+    let host = Host::start(vec![], Options { idle: None, instances: None, atlases: vec![earth] }).await.unwrap();
+    let addr = serve(&host).await;
+    // a tile nobody has been to: there, not made
+    let status: serde_json::Value = serde_json::from_str(&http_get(&addr, "/w/atlas-earth-2-1/").await).unwrap();
+    assert_eq!(status["running"], false);
+    assert!(host.ids().is_empty());
+    // the first visit makes it, and it keeps its own file
+    assert_eq!(welcomed_by(&format!("ws://{addr}/w/atlas-earth-2-1/ws")).await, "atlas-earth-2-1");
+    assert_eq!(host.ids(), ["atlas-earth-2-1"]);
+    host.shutdown().await;
+    assert!(dir.join("atlas-earth/2-1.db").exists());
+    // off the map, or not a tile's name: nothing
+    for name in ["atlas-earth-3-0", "atlas-earth-0-2", "atlas-earth-01-1", "atlas-mars-0-0"] {
+        assert!(connect_async(format!("ws://{addr}/w/{name}/ws")).await.is_err(), "{name}");
+    }
     let _ = std::fs::remove_dir_all(dir);
 }

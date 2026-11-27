@@ -39,11 +39,17 @@ impl WorldState {
         let seq: u64 = meta("seq").and_then(|s| s.parse().ok()).unwrap_or(0);
         let settings = match meta("settings") {
             Some(s) if !fresh => s,
-            _ => cfg.seed.as_deref().map(vox_core::level::settings).unwrap_or_else(|| "{}".into()),
+            _ => match &cfg.tile {
+                Some(t) => t.settings().to_string(),
+                None => cfg.seed.as_deref().map(vox_core::level::settings).unwrap_or_else(|| "{}".into()),
+            },
         };
         let mut world = World::new(cfg.bounds, cfg.palette.len() as u16);
         let mut dirty = HashSet::new();
-        if fresh {
+        if fresh && let Some(t) = &cfg.tile {
+            vox_core::terrain::fill(&mut world, t, &cfg.palette);
+            dirty.extend(world.keys());
+        } else if fresh {
             if let Some(level) = &cfg.seed {
                 vox_core::level::fill(&mut world, level, &cfg.palette)?;
                 dirty.extend(world.keys());
@@ -375,6 +381,58 @@ impl WorldState {
         self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0 });
     }
 
+    /// On to `url`, arriving at `arrive`: with a ticket from the directory when there is one to
+    /// be had (a signed-in player, a directory), else straight away without.
+    fn send_on(&self, conn: u64, account: Option<u64>, tx: &mpsc::Sender<Message>, url: String, arrive: [f32; 3]) {
+        match (&self.trips, account) {
+            (Some(trips), Some(account)) => {
+                let trip = Trip { conn, account, to: url.clone(), arrive };
+                if trips.try_send(trip).is_err() {
+                    // the directory is far behind: go on without a ticket
+                    let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive });
+                }
+            }
+            // no directory here, or a guest: no ticket to be had
+            _ => {
+                let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive });
+            }
+        }
+    }
+
+    /// Off this tile's `edge` (`east`, `west`, `south`, `north`) onto the next tile of the
+    /// atlas, if there is one that way and they're really at that edge: they come out at the
+    /// same place on the map, just inside the next tile, standing on its ground.
+    fn over_edge(&mut self, conn: u64, edge: &str) {
+        let Some(tile) = &self.cfg.tile else { return };
+        let Some((_, d)) = vox_core::terrain::EDGES.iter().find(|(n, _)| *n == edge) else { return };
+        let Some(next) = tile.next(*d) else { return };
+        let Some(p) = self.players.get(&conn) else { return };
+        let Some(at) = p.at else { return };
+        let b = self.cfg.bounds;
+        let (lo, hi) = ([b.lo[0] as f32, b.lo[2] as f32], [b.hi[0] as f32, b.hi[2] as f32]);
+        let near = match d {
+            [1, 0] => at[0] >= hi[0] - THROUGH_SLACK,
+            [-1, 0] => at[0] <= lo[0] + THROUGH_SLACK,
+            [0, 1] => at[2] >= hi[1] - THROUGH_SLACK,
+            _ => at[2] <= lo[1] + THROUGH_SLACK,
+        };
+        if !self.cfg.trust_moves && !near {
+            return;
+        }
+        // the same place on the map, a step inside the next tile
+        let t = vox_core::terrain::TILE as f32;
+        let mut x = (at[0] - d[0] as f32 * t).clamp(lo[0] + 2.0, hi[0] - 2.0);
+        let mut z = (at[2] - d[1] as f32 * t).clamp(lo[1] + 2.0, hi[1] - 2.0);
+        if !x.is_finite() || !z.is_finite() {
+            (x, z) = (0.5, 0.5);
+        }
+        let ground = next.height(x.floor() as i32, z.floor() as i32).max(vox_core::terrain::SEA) + 1;
+        let arrive = [x, ground as f32, z];
+        let url = format!("/w/{}/ws", next.id());
+        let (account, tx) = (p.account, p.tx.clone());
+        self.send_on(conn, account, &tx, url, arrive);
+    }
+
     /// Someone stands at the objective: it's reached (once), everyone here is told, and the
     /// directory hears who was here.
     pub(super) fn reach(&mut self) {
@@ -431,6 +489,9 @@ impl WorldState {
                 if !p.bucket.take(now) {
                     return;
                 }
+                if let Some(edge) = portal.strip_prefix("edge:") {
+                    return self.over_edge(conn, edge);
+                }
                 let (at, account, tx) = (p.at, p.account, p.tx.clone());
                 let settings: serde_json::Value = serde_json::from_str(&self.settings_now()).unwrap_or_default();
                 let door = vox_core::portal::parse(&settings).into_iter().find(|d| d.name == portal && d.url.is_some());
@@ -443,19 +504,7 @@ impl WorldState {
                 }
                 let arrive = door.carry(at, side);
                 let url = door.url.clone().unwrap_or_default();
-                match (&self.trips, account) {
-                    (Some(trips), Some(account)) => {
-                        let trip = Trip { conn, account, to: url.clone(), arrive };
-                        if trips.try_send(trip).is_err() {
-                            // the directory is far behind: go on without a ticket
-                            let _ = Self::send_to(&tx, &ToClient::Travel { url, ticket: None, arrive });
-                        }
-                    }
-                    // no directory here, or a guest: no ticket to be had
-                    _ => {
-                        let _ = Self::send_to(&tx, &ToClient::Travel { url, ticket: None, arrive });
-                    }
-                }
+                self.send_on(conn, account, &tx, url, arrive);
             }
             ToServer::Climate(c) => {
                 // no air here to change
