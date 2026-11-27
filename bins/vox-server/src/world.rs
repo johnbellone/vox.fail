@@ -3,6 +3,8 @@
 
 #[allow(unused_imports)]
 use super::*;
+use crate::entities::Entities;
+use vox_core::entity::{Component, Settings, Spawn};
 
 /// How far from a doorway's plane (blocks) a player may be and still go through it: their last
 /// checked pose can be a step or two behind the client's.
@@ -21,6 +23,7 @@ impl WorldState {
                  x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL, old INTEGER NOT NULL, new INTEGER NOT NULL);",
         )
         .map_err(e)?;
+        crate::entities::create_tables(&db)?;
         let meta = |k: &str| -> Option<String> {
             db.query_row("SELECT value FROM meta WHERE key = ?1", [k], |r| r.get(0)).ok()
         };
@@ -72,6 +75,23 @@ impl WorldState {
         };
         let set: serde_json::Value = serde_json::from_str(&settings).unwrap_or_default();
         let ground = set.get("floor").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32 * cfg.block_size;
+        // entities: a new world takes its seed level (or an atlas tile's settings); a world
+        // from before entities existed takes its stored settings once; then the spawn. The
+        // mark, not the map, says whether a world was seeded: an emptied world stays empty.
+        let mut ents = Entities::load(&db)?;
+        if meta("entities_seeded").is_none() {
+            let mut seed = if !fresh {
+                vox_core::level::entities(&format!(r#"{{"world":{settings}}}"#))?
+            } else if let Some(t) = &cfg.tile {
+                vec![Component::Settings(Settings { json: t.settings().to_string() })]
+            } else if let Some(level) = &cfg.seed {
+                vox_core::level::entities(level)?
+            } else {
+                Vec::new()
+            };
+            seed.push(Component::Spawn(Spawn { at: spawn, yaw: 0.0 }));
+            ents.seed(seed);
+        }
         let climate = match meta("climate").and_then(|c| serde_json::from_str::<Climate>(&c).ok()) {
             Some(c) if !fresh => c.sane(),
             _ => Climate::from_settings(set.get("weather"), ground),
@@ -117,6 +137,7 @@ impl WorldState {
             objective: Objective::from_settings(&set),
             reached: false,
             goals: None,
+            entities: ents,
         };
         if fresh {
             s.flush()?;
@@ -224,7 +245,7 @@ impl WorldState {
     /// Write changed chunks and the edit log in one transaction.
     pub(super) fn flush(&mut self) -> Result<(), String> {
         self.last_flush = Instant::now();
-        if self.dirty.is_empty() && self.log.is_empty() && self.seq > 0 {
+        if self.dirty.is_empty() && self.log.is_empty() && !self.entities.changed() && self.seq > 0 {
             return Ok(());
         }
         let e = |e: rusqlite::Error| e.to_string();
@@ -256,10 +277,12 @@ impl WorldState {
         t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('palette', ?1)", [palette]).map_err(e)?;
         t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('seq', ?1)", [self.seq.to_string()]).map_err(e)?;
         t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('settings', ?1)", [self.settings.clone()]).map_err(e)?;
+        self.entities.write(&t)?;
         t.commit().map_err(e)?;
         // forget what was written only now: a failed write keeps it for the next flush
         self.dirty.clear();
         self.log.clear();
+        self.entities.written();
         Ok(())
     }
 

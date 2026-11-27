@@ -18,6 +18,7 @@
 //! they opened (added to the settings new arrivals get).
 
 mod connection;
+mod entities;
 pub mod flags;
 mod snapshot;
 mod world;
@@ -388,6 +389,8 @@ struct WorldState {
     reached: bool,
     /// where "the objective was reached, by these accounts" goes (to the directory)
     goals: Option<mpsc::Sender<Vec<u64>>>,
+    /// the world's entities (doorways, spawn, objective, settings), written with the blocks
+    entities: entities::Entities,
 }
 
 /// A place in a world to reach: a dungeon's objective.

@@ -344,6 +344,85 @@ async fn the_world_survives_a_restart() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn a_fresh_yard_world_has_its_entities() {
+    let dir = std::env::temp_dir().join(format!("vox-test-yard-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("yard.db");
+    let _ = std::fs::remove_file(&db);
+    let db = db.to_str().unwrap().to_string();
+    let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/");
+    let blocks = std::fs::read_to_string(format!("{data}blocks.json")).unwrap();
+    let mut cfg = config(&db);
+    cfg.palette = vox_core::palette_names(&blocks).unwrap();
+    cfg.seed = Some(std::fs::read_to_string(format!("{data}levels/yard.json")).unwrap());
+    let (server, _url) = serve(cfg).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    server.shutdown().await;
+    let c = rusqlite::Connection::open(&db).unwrap();
+    let kind = |name: &str| -> i64 {
+        c.query_row("SELECT count(*) FROM entities WHERE name = ?1", [name], |r| r.get(0)).unwrap()
+    };
+    assert_eq!(kind("vox::Portal"), 1);
+    assert_eq!(kind("vox::Spawn"), 1);
+    assert_eq!(kind("vox::Settings"), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Opens the yard world on `db` (seeding it if it is new), then shuts it down.
+async fn open_yard(db: &str) {
+    let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/");
+    let blocks = std::fs::read_to_string(format!("{data}blocks.json")).unwrap();
+    let mut cfg = config(db);
+    cfg.palette = vox_core::palette_names(&blocks).unwrap();
+    cfg.seed = Some(std::fs::read_to_string(format!("{data}levels/yard.json")).unwrap());
+    let (server, _url) = serve(cfg).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    server.shutdown().await;
+}
+
+fn entity_rows(db: &str) -> i64 {
+    let c = rusqlite::Connection::open(db).unwrap();
+    c.query_row("SELECT count(*) FROM entities", [], |r| r.get(0)).unwrap()
+}
+
+#[tokio::test]
+async fn the_yard_entities_seed_once_and_stay_gone() {
+    let dir = std::env::temp_dir().join(format!("vox-test-entities-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("yard.db");
+    let _ = std::fs::remove_file(&db);
+    let db = db.to_str().unwrap().to_string();
+
+    open_yard(&db).await;
+    let seeded = entity_rows(&db);
+    assert_eq!(seeded, 3);
+    // reopening a seeded world adds nothing
+    open_yard(&db).await;
+    assert_eq!(entity_rows(&db), seeded);
+
+    // a world from before entities: no entity rows and no seed mark. It is seeded once,
+    // from its stored settings, and a second reopen leaves it as it is.
+    {
+        let c = rusqlite::Connection::open(&db).unwrap();
+        c.execute("DELETE FROM entities", []).unwrap();
+        c.execute("DELETE FROM meta WHERE key = 'entities_seeded'", []).unwrap();
+    }
+    open_yard(&db).await;
+    assert_eq!(entity_rows(&db), seeded);
+    open_yard(&db).await;
+    assert_eq!(entity_rows(&db), seeded);
+
+    // the mark stays but the rows are gone (an emptied world): nothing comes back
+    {
+        let c = rusqlite::Connection::open(&db).unwrap();
+        c.execute("DELETE FROM entities", []).unwrap();
+    }
+    open_yard(&db).await;
+    assert_eq!(entity_rows(&db), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn rusqlite_count(db: &str) -> i64 {
     let c = rusqlite::Connection::open(db).unwrap();
     c.query_row("SELECT count(*) FROM edits", [], |r| r.get(0)).unwrap()
