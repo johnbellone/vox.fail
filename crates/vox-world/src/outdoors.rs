@@ -20,8 +20,8 @@
 //!
 //! Either way the same sky (without its small detail) is drawn into an environment map, so the
 //! whole sky lights the world softly and shows in glass, metal and water; haze takes the
-//! horizon's colour and reaches as far as the weather lets you see; the nearest lamps and fires
-//! light up (lamps after dark, fires always, flickering). The weather is made visible too
+//! horizon's colour and reaches as far as the weather lets you see; the nearest lamps, fires and
+//! props' lights light up (lamps and prop lights when they are on, fires always, flickering). The weather is made visible too
 //! ([`weather_look`]): a volume of fog baked from the simulation round the camera (High
 //! quality), rain or snow, and flames and water moving with the wind.
 //!
@@ -44,12 +44,36 @@ use bevy::{
 
 use crate::{FillLight, KeyLight, RimLight, WorldRender as Studio};
 use crate::client::{LightKind, WorldClient};
+use crate::props::{PropCache, light_spots};
+use crate::entities::WorldEntities;
 use vox_core::weather::Weather;
 
 /// Faces of the sky cube used for lighting, in pixels.
 const ENV_SIZE: u32 = 64;
-/// Lamps and fires lit at once: the nearest ones.
+/// Lamps, fires and prop lights lit at once: the nearest ones.
 const LIGHTS: usize = 12;
+/// Light a prop light of power 1 gives (candela). A lamp is power 3, as the lamps' 90 000 is.
+const PROP_LIGHT: f32 = 30_000.0;
+/// The lamp's and the fire's colours; a prop's colour name resolves to one of them (or warm white).
+pub(crate) const LAMP_RGB: [f32; 3] = [1.0, 0.78, 0.5];
+pub(crate) const FIRE_RGB: [f32; 3] = [1.0, 0.52, 0.18];
+
+/// How a pool light is driven each frame: a lamp or a fire, or a prop's light (its power, the
+/// flicker phase if its prop flickers, and whether it is on after dark, so it fades with the lamps).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Drive {
+    Fire,
+    Lamp,
+    Prop { power: f32, flicker: Option<f32>, night: bool },
+}
+
+/// A prop light's brightness (candela) at clock time `clock`: its power, times its flicker, and for
+/// a light that is on after dark, times the lamps' level, so it fades in and out with the lamps.
+/// Always and state lights are not scaled by the lamps.
+fn prop_light_intensity(power: f32, flicker: Option<f32>, night: bool, lamps_lit: f32, clock: f64) -> f32 {
+    let base = PROP_LIGHT * power * flicker.map_or(1.0, |phase| crate::props::flicker(clock, phase));
+    if night { base * lamps_lit } else { base }
+}
 /// A day in real seconds when the clock runs.
 const DAY: f32 = 24.0 * 60.0;
 const SKY_RADIUS: f32 = 450.0;
@@ -221,6 +245,8 @@ pub struct Outdoors {
     /// what the environment map was last drawn for
     env_for: Option<(Style, f32)>,
     pool: Vec<Entity>,
+    /// what each pool light shows, from the last pick (None: off)
+    drive: Vec<Option<Drive>>,
     last_pick: f32,
     set_up: bool,
     /// the volume of fog (at High quality), its density texture (baked from the weather) and
@@ -254,6 +280,7 @@ impl Default for Outdoors {
             env: None,
             env_for: None,
             pool: Vec::new(),
+            drive: Vec::new(),
             last_pick: f32::NEG_INFINITY,
             set_up: false,
             volume: None,
@@ -892,6 +919,8 @@ pub fn update(
     cams: Query<(Entity, &Transform), (With<crate::WorldCamera>, Without<DirectionalLight>, Without<SkyDome>, Without<PoolLight>)>,
     mut domes: Query<&mut Transform, (With<SkyDome>, Without<DirectionalLight>, Without<PoolLight>)>,
     mut pool: Query<(&mut PointLight, &mut Transform, &mut Visibility), (With<PoolLight>, Without<DirectionalLight>, Without<SkyDome>)>,
+    prop_cache: Option<Res<PropCache>>,
+    entities: Option<Res<WorldEntities>>,
     mut commands: Commands,
 ) {
     if !w.active() {
@@ -1066,32 +1095,44 @@ pub fn update(
             FogFalloff::from_visibility_squared(vis)
         },
     });
-    // ---- the nearest lamps (after dark) and fires (always), fires flickering
+    // ---- the nearest lamps (after dark), fires (always) and prop lights (while on), in blocks
     let now = real.elapsed_secs();
     let lamps_lit = smooth(0.25, 0.8, look.night.max(1.0 - smooth(-0.02, 0.12, look.sun.y)));
     let size = w.block_size();
     if now - out.last_pick > 0.4 {
         out.last_pick = now;
         let me = Vec3::from(w.body.pos);
-        let mut near: Vec<(f32, [i32; 3], LightKind)> = w
-            .lights
-            .iter()
-            .filter(|(_, k)| **k == LightKind::Fire || lamps_lit > 0.01)
-            .map(|(c, k)| ((IVec3::from(*c).as_vec3() + 0.5 - me).length_squared(), *c, *k))
-            .filter(|(d, _, _)| *d < 80.0 * 80.0)
-            .collect();
+        // (squared distance, place in blocks, colour, drive) for each light that could show. A
+        // block light is measured from its block's centre; a fire or a lamp is only placed higher.
+        let mut near: Vec<(f32, Vec3, Color, Drive)> = Vec::new();
+        for (c, k) in w.lights.iter().filter(|(_, k)| **k == LightKind::Fire || lamps_lit > 0.01) {
+            let fire = *k == LightKind::Fire;
+            let lift = if fire { 0.9 } else { 0.5 };
+            let centre = IVec3::from(*c).as_vec3() + 0.5;
+            let placed = centre + Vec3::Y * (lift - 0.5);
+            let (rgb, drive) = if fire { (FIRE_RGB, Drive::Fire) } else { (LAMP_RGB, Drive::Lamp) };
+            near.push((centre.distance_squared(me), placed, Color::srgb(rgb[0], rgb[1], rgb[2]), drive));
+        }
+        if let (Some(cache), Some(entities)) = (&prop_cache, &entities) {
+            for spot in light_spots(cache, entities, lamps_lit) {
+                let at = spot.at / size;
+                let [r, g, b] = spot.rgb;
+                let drive = Drive::Prop { power: spot.power, flicker: spot.flicker, night: spot.night };
+                near.push((at.distance_squared(me), at, Color::srgb(r, g, b), drive));
+            }
+        }
+        near.retain(|(d, _, _, _)| *d < 80.0 * 80.0);
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut drive = Vec::with_capacity(out.pool.len());
         for (i, e) in out.pool.iter().enumerate() {
+            let shown = near.get(i);
+            drive.push(shown.map(|n| n.3));
             let Ok((mut l, mut t, mut v)) = pool.get_mut(*e) else { continue };
-            match near.get(i) {
-                Some((_, c, kind)) => {
-                    let lift = if *kind == LightKind::Fire { 0.9 } else { 0.5 };
-                    t.translation = (IVec3::from(*c).as_vec3() + Vec3::new(0.5, lift, 0.5)) * size;
-                    l.color = match kind {
-                        LightKind::Fire => Color::srgb(1.0, 0.52, 0.18),
-                        LightKind::Lamp => Color::srgb(1.0, 0.78, 0.5),
-                    };
-                    l.range = if *kind == LightKind::Fire { 10.0 } else { 9.0 };
+            match shown {
+                Some((_, at, colour, d)) => {
+                    t.translation = *at * size;
+                    l.color = *colour;
+                    l.range = if *d == Drive::Fire { 10.0 } else { 9.0 };
                     if *v != Visibility::Inherited {
                         *v = Visibility::Inherited;
                     }
@@ -1104,20 +1145,24 @@ pub fn update(
                 }
             }
         }
+        out.drive = drive;
     }
-    // brightness every frame, so fires flicker
+    // brightness every frame, so fires and flickering prop lights flicker
+    let clock = real.elapsed_secs_f64();
     for (i, e) in out.pool.iter().enumerate() {
         let Ok((mut l, t, v)) = pool.get_mut(*e) else { continue };
         if *v == Visibility::Hidden {
             continue;
         }
-        let fire = l.color.to_srgba().blue < 0.3;
-        l.intensity = if fire {
-            let p = t.translation;
-            let f = 0.78 + 0.14 * (now * 9.0 + p.x * 3.1).sin() + 0.08 * (now * 23.0 + p.z * 1.7 + i as f32).sin();
-            32_000.0 * f
-        } else {
-            90_000.0 * lamps_lit
+        l.intensity = match out.drive.get(i).copied().flatten() {
+            Some(Drive::Fire) => {
+                let p = t.translation;
+                let f = 0.78 + 0.14 * (now * 9.0 + p.x * 3.1).sin() + 0.08 * (now * 23.0 + p.z * 1.7 + i as f32).sin();
+                32_000.0 * f
+            }
+            Some(Drive::Lamp) => 90_000.0 * lamps_lit,
+            Some(Drive::Prop { power, flicker, night }) => prop_light_intensity(power, flicker, night, lamps_lit, clock),
+            None => 0.0,
         };
     }
 }
@@ -1412,6 +1457,16 @@ pub fn relief_to_blocks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_night_prop_light_fades_with_the_lamps() {
+        let full = prop_light_intensity(1.0, None, true, 1.0, 0.0);
+        assert_eq!(full, PROP_LIGHT);
+        // half the lamps' level gives half the light
+        assert!((prop_light_intensity(1.0, None, true, 0.5, 0.0) - full * 0.5).abs() < 1e-3);
+        // an always or state light (night false) is not scaled by the lamps
+        assert_eq!(prop_light_intensity(1.0, None, false, 0.5, 0.0), full);
+    }
 
     #[test]
     fn the_day() {

@@ -9,8 +9,16 @@
 //! one quad per slice (greedy meshing), and faces that touch another filled voxel are left out.
 //! A prop whose mesh would have too many quads is refused. Static props are not merged per chunk
 //! yet, and colours come from a fixed fallback ramp until the palette file exists (vox-tol.4.14).
+//!
+//! The behaviours that look (`light` and `motion`, `docs/design/props.md`) are read here too. A
+//! prop's lights are handed to `outdoors` to join the nearest lamps, and its motions move the
+//! whole mesh each frame from the clock. Named parts are not moved on their own yet. Motion and
+//! flicker read each client's own clock (`Time<Real>`) with a per-entity phase, so different
+//! clients may show different points of the same cycle. This is looks only: collision, the
+//! server and the choice of lamps all use the resting place, so nothing depends on it.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::f32::consts::TAU;
 use std::time::Duration;
 
 use bevy::{
@@ -21,14 +29,19 @@ use bevy::{
     prelude::*,
     time::{Real, Time},
 };
-use vox_art::{VoxelGrid, prop::Collide};
+use vox_art::{
+    VoxelGrid,
+    prop::{Behaviour, Collide, MotionKind, PropDef, When},
+};
 use vox_core::body::Occupancy;
 use vox_core::entity::{Component, EntityId, PROP_YAWS, Prop};
 use vox_format::Hash;
 use vox_format::prop::PropBlob;
 
+use crate::client::WorldClient;
 use crate::entities::WorldEntities;
 use crate::files;
+use crate::outdoors::{FIRE_RGB, LAMP_RGB};
 
 /// One prop unit (5 cm, see `vox_core::entity::PROP_UNITS_PER_BLOCK`) in metres.
 const UNIT_M: f32 = 0.05;
@@ -93,6 +106,43 @@ pub struct PropInfo {
     pub height: u8,
     /// whether the prop blocks walking (its collide is not `none`)
     pub solid: bool,
+    /// the def's state names in order: a prop's `state` is an index into them
+    pub states: Vec<String>,
+    /// the lights its `light` behaviours give
+    pub lights: Vec<PropLight>,
+    /// the kinds of its `motion` behaviours
+    pub motions: Vec<MotionKind>,
+}
+
+/// A light a def's `light` behaviour gives: its socket's place on the prop, in metres before the
+/// prop's turn, with the colour (resolved to RGB when the def loads), power and `when` the def sets.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropLight {
+    pub at: Vec3,
+    pub rgb: [f32; 3],
+    pub power: f32,
+    pub when: When,
+}
+
+/// A light that is on, where it is in the world (metres), for `outdoors` to pick among the lamps.
+/// `flicker` is the phase of its prop's flicker, when the prop flickers; `night` is set for a
+/// light that is on after dark, which fades with the lamps.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropSpot {
+    pub at: Vec3,
+    pub rgb: [f32; 3],
+    pub power: f32,
+    pub flicker: Option<f32>,
+    pub night: bool,
+}
+
+/// The motions a prop's def gives it, and the resting transform they move about. Attached only
+/// to props with a motion other than flicker (which is light only).
+#[derive(Component)]
+struct PropMotion {
+    base: Transform,
+    kinds: Vec<MotionKind>,
+    phase: f32,
 }
 
 /// The cells of the props that block walking, from the props on screen. Only props whose
@@ -117,7 +167,8 @@ impl Plugin for PropPlugin {
             .init_resource::<PropCache>()
             .init_resource::<PropOccupancy>()
             .add_systems(Startup, setup_material)
-            .add_systems(Update, (fetch_props, build_props, show_props).chain().after(crate::client::receive));
+            .add_systems(Update, (fetch_props, build_props, show_props).chain().after(crate::client::receive))
+            .add_systems(Update, animate_props);
     }
 }
 
@@ -215,6 +266,9 @@ fn load(bytes: &[u8], hash: [u8; 16]) -> Result<(Mesh, PropInfo), String> {
         footprint: blob.def.place.footprint.clone(),
         height: blob.def.place.height,
         solid: blob.def.collide != Collide::None,
+        states: blob.def.states.clone(),
+        lights: socket_lights(&blob.def, voxel),
+        motions: blob.def.behaviours.iter().filter_map(|b| if let Behaviour::Motion(m) = b { Some(m.kind) } else { None }).collect(),
     };
     Ok((parts.into_mesh(), info))
 }
@@ -236,7 +290,7 @@ fn show_props(
     cache.tick += 1;
     let tick = cache.tick;
 
-    let mut wanted: BTreeMap<EntityId, (Prop, Handle<Mesh>)> = BTreeMap::new();
+    let mut wanted: BTreeMap<EntityId, (Prop, Handle<Mesh>, Vec<MotionKind>)> = BTreeMap::new();
     let mut cells = Occupancy::default();
     for (id, (_, c)) in &entities.map {
         let Component::Prop(p) = c else { continue };
@@ -245,36 +299,191 @@ fn show_props(
         if info.solid {
             cells.add_prop(p.at, p.yaw, &info.footprint, info.height);
         }
-        wanted.insert(*id, (p.clone(), mesh.clone()));
+        wanted.insert(*id, (p.clone(), mesh.clone(), moving(&info.motions)));
     }
     evict(&mut cache.entries, tick);
     occupancy.0 = cells;
 
     // what went or changed comes down; what is new goes up
     shown.0.retain(|id, (p, e)| {
-        let keep = wanted.get(id).is_some_and(|(w, _)| w == p);
+        let keep = wanted.get(id).is_some_and(|(w, _, _)| w == p);
         if !keep {
             commands.entity(*e).try_despawn();
         }
         keep
     });
-    for (id, (p, mesh)) in wanted {
+    for (id, (p, mesh, kinds)) in wanted {
         if shown.0.contains_key(&id) {
             continue;
         }
         let at = Vec3::new(p.at[0] as f32, p.at[1] as f32, p.at[2] as f32) * UNIT_M;
-        // yaw is in 15 degree steps, a full turn is PROP_YAWS of them
-        let turn = Quat::from_rotation_y(f32::from(p.yaw % PROP_YAWS) * std::f32::consts::TAU / f32::from(PROP_YAWS));
-        let e = commands
-            .spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(material.0.clone()),
-                Transform::from_translation(at).with_rotation(turn),
-                Visibility::default(),
-                Name::new(format!("prop {}", id.0)),
-            ))
-            .id();
+        let base = Transform::from_translation(at).with_rotation(turn_of(p.yaw));
+        let mut spawned = commands.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material.0.clone()),
+            base,
+            Visibility::default(),
+            Name::new(format!("prop {}", id.0)),
+        ));
+        if !kinds.is_empty() {
+            spawned.insert(PropMotion { base, kinds, phase: phase_of(id) });
+        }
+        let e = spawned.id();
         shown.0.insert(id, (p, e));
+    }
+}
+
+/// The turn a prop's yaw gives it. Yaw is in 15 degree steps, a full turn is `PROP_YAWS` of them.
+fn turn_of(yaw: u8) -> Quat {
+    Quat::from_rotation_y(f32::from(yaw % PROP_YAWS) * TAU / f32::from(PROP_YAWS))
+}
+
+/// A prop's motion phase, from its entity id: the same on every client, spread round the turn.
+fn phase_of(id: EntityId) -> f32 {
+    (f64::from(id.0) * 0.618_033_988_749_894_9).fract() as f32 * TAU
+}
+
+/// The motions that move the mesh (flicker only lights it, so it is left out).
+fn moving(kinds: &[MotionKind]) -> Vec<MotionKind> {
+    kinds.iter().copied().filter(|k| *k != MotionKind::Flicker).collect()
+}
+
+/// The place a prop's lights are, in metres, for each light on in the world now. `night` is
+/// outdoors' lamps level (0 by day, 1 after dark). Only props whose blobs are loaded count.
+pub fn light_spots(cache: &PropCache, entities: &WorldEntities, night: f32) -> Vec<PropSpot> {
+    let mut spots = Vec::new();
+    for (id, (_, c)) in &entities.map {
+        let Component::Prop(p) = c else { continue };
+        let Some(Entry::Ready { info, .. }) = cache.entries.get(&p.prop) else { continue };
+        if info.lights.is_empty() {
+            continue;
+        }
+        let state = info.states.get(usize::from(p.state)).map(String::as_str);
+        let place = Vec3::new(p.at[0] as f32, p.at[1] as f32, p.at[2] as f32) * UNIT_M;
+        let turn = turn_of(p.yaw);
+        let flicker = info.motions.contains(&MotionKind::Flicker).then(|| phase_of(*id));
+        for light in &info.lights {
+            if light_is_on(&light.when, state, night) {
+                let night = matches!(light.when, When::Night);
+                spots.push(PropSpot { at: place + turn * light.at, rgb: light.rgb, power: light.power, flicker, night });
+            }
+        }
+    }
+    spots
+}
+
+/// Moves each prop that has motions, from the clock: the motions of its behaviours, on top of
+/// its resting place. Sway leans it towards the wind, which is read from the world's air.
+fn animate_props(time: Res<Time<Real>>, world: Option<Res<WorldClient>>, mut props: Query<(&PropMotion, &mut Transform)>) {
+    let clock = time.elapsed_secs_f64();
+    let wind = world.and_then(|w| w.air()).map_or(Vec3::ZERO, |a| Vec3::new(a.wind[0], 0.0, a.wind[2]));
+    for (motion, mut tf) in &mut props {
+        // the wind in the prop's own frame, so a prop leans into it whatever way it faces
+        let local = motion.base.rotation.inverse() * wind;
+        let (mut offset, mut turn) = (Vec3::ZERO, Quat::IDENTITY);
+        for kind in &motion.kinds {
+            let (o, r) = motion_offset(*kind, clock, motion.phase, Vec2::new(local.x, local.z));
+            offset += o;
+            turn *= r;
+        }
+        tf.translation = motion.base.translation + offset;
+        tf.rotation = motion.base.rotation * turn;
+    }
+}
+
+/// Seconds for one full turn of a spinning prop.
+const SPIN_SECS: f64 = 8.0;
+/// Seconds for one full swing of a swinging prop.
+const SWING_SECS: f64 = 4.0;
+/// Widest swing, in radians (about 20 degrees either way).
+const SWING_RAD: f32 = 0.35;
+/// Seconds for one bob up and back.
+const BOB_SECS: f64 = 3.0;
+/// Highest a bobbing prop rises or sinks, in metres.
+const BOB_M: f32 = 0.05;
+/// Seconds for one sway.
+const SWAY_SECS: f64 = 5.0;
+/// Widest sway, in radians (about 7 degrees), reached in a wind of [`SWAY_FULL_WIND`].
+const SWAY_RAD: f32 = 0.12;
+/// Wind speed (m/s) at which a swaying prop leans its full amount. In still air it leans a fifth.
+const SWAY_FULL_WIND: f32 = 8.0;
+
+/// The angle of a motion `period` seconds long, `phase` ahead, at clock time `t`, in radians. The
+/// clock is reduced in f64 first, so a long session keeps its precision.
+fn cycle(t: f64, period: f64, phase: f32) -> f32 {
+    (t / period).rem_euclid(1.0) as f32 * TAU + phase
+}
+
+/// What one motion does to a prop at clock time `t`: a lift of its place, and a turn about it. A
+/// spin turns about the prop's own up; a swing about its x; a bob lifts it; a sway leans it along
+/// the wind (`wind` in the prop's own frame, x and z). A flicker does neither.
+pub fn motion_offset(kind: MotionKind, t: f64, phase: f32, wind: Vec2) -> (Vec3, Quat) {
+    match kind {
+        MotionKind::Spin => (Vec3::ZERO, Quat::from_rotation_y(cycle(t, SPIN_SECS, phase))),
+        MotionKind::Swing => (Vec3::ZERO, Quat::from_rotation_x(SWING_RAD * cycle(t, SWING_SECS, phase).sin())),
+        MotionKind::Bob => (Vec3::Y * (BOB_M * cycle(t, BOB_SECS, phase).sin()), Quat::IDENTITY),
+        MotionKind::Sway => {
+            let speed = wind.length();
+            // the axis across the wind, so the prop leans along it
+            let axis = if speed > 1e-3 { Vec3::new(-wind.y, 0.0, wind.x) / speed } else { Vec3::X };
+            let gust = 0.2 + 0.8 * (speed / SWAY_FULL_WIND).min(1.0);
+            (Vec3::ZERO, Quat::from_axis_angle(axis, SWAY_RAD * gust * cycle(t, SWAY_SECS, phase).sin()))
+        }
+        // flicker is light only: the mesh stays put (see `flicker`)
+        MotionKind::Flicker => (Vec3::ZERO, Quat::IDENTITY),
+    }
+}
+
+/// How bright a flickering light is at clock time `t`, as a share of its power: between 0.6 and 1.
+pub fn flicker(t: f64, phase: f32) -> f32 {
+    let p = f64::from(phase);
+    (0.8 + 0.12 * (t * 9.0 + p).sin() + 0.08 * (t * 23.0 + p * 1.7).sin()) as f32
+}
+
+/// Whether a light is on: always; after dark (`night` is outdoors' lamps level, 0 by day and 1
+/// after dark, lit above 0.01 as the lamps are); or while the prop is in the state its `when`
+/// names. `state` is the prop's current state's name, if it has one.
+pub fn light_is_on(when: &When, state: Option<&str>, night: f32) -> bool {
+    match when {
+        When::Always => true,
+        When::Night => night > 0.01,
+        When::State(name) => state == Some(name.as_str()),
+    }
+}
+
+/// The place of a socket's voxel centre on a prop, in metres before the prop's turn. It uses the
+/// grid `mesh_parts` draws on: x and z centred on the pivot's column, y up from the floor.
+fn socket_local(at: [u16; 3], pivot: [u16; 3], voxel: f32) -> Vec3 {
+    let d = |i: usize| f32::from(at[i]) - f32::from(pivot[i]);
+    Vec3::new(d(0) * voxel, (d(1) + 0.5) * voxel, d(2) * voxel)
+}
+
+/// The lights a def gives, each at its socket. A light naming no socket is left out (validation
+/// refuses such a def).
+fn socket_lights(def: &PropDef, voxel: f32) -> Vec<PropLight> {
+    def.behaviours
+        .iter()
+        .filter_map(|b| {
+            let Behaviour::Light(light) = b else { return None };
+            let socket = def.sockets.iter().find(|s| s.name == light.socket)?;
+            Some(PropLight {
+                at: socket_local(socket.at, def.pivot, voxel),
+                rgb: light_rgb(&light.colour),
+                power: light.power,
+                when: light.when.clone(),
+            })
+        })
+        .collect()
+}
+
+/// The RGB of a prop light's colour name: the lamp's for "warm", the fire's for "fire", and warm
+/// white for any other name (no other colour is in the lamp and fire palette). Called once when
+/// the def loads, so a frame never looks a name up.
+fn light_rgb(name: &str) -> [f32; 3] {
+    match name {
+        "warm" => LAMP_RGB,
+        "fire" => FIRE_RGB,
+        _ => [1.0, 0.95, 0.85],
     }
 }
 
@@ -528,5 +737,74 @@ mod tests {
         // x and z run from -half to +half about the place; y starts at the place (the floor)
         assert!(close(lo, [-0.05, 0.0, -0.05]), "lo {lo:?}");
         assert!(close(hi, [0.05, 0.1, 0.05]), "hi {hi:?}");
+    }
+
+    /// Whether two turns are the same turn (their dot product is 1 up to sign).
+    fn same_turn(a: Quat, b: Quat) -> bool {
+        a.dot(b).abs() > 1.0 - 1e-5
+    }
+
+    #[test]
+    fn spin_turns_once_about_y_per_period() {
+        let phase = 0.5;
+        let (_, start) = motion_offset(MotionKind::Spin, 0.0, phase, Vec2::ZERO);
+        assert!(same_turn(start, Quat::from_rotation_y(phase)));
+        let (_, quarter) = motion_offset(MotionKind::Spin, SPIN_SECS / 4.0, phase, Vec2::ZERO);
+        assert!(same_turn(quarter, Quat::from_rotation_y(phase + TAU / 4.0)));
+        let (_, again) = motion_offset(MotionKind::Spin, SPIN_SECS, phase, Vec2::ZERO);
+        assert!(same_turn(again, Quat::from_rotation_y(phase)));
+    }
+
+    #[test]
+    fn bob_stays_within_its_height() {
+        for step in 0..600 {
+            let (offset, turn) = motion_offset(MotionKind::Bob, f64::from(step) * 0.1, 1.0, Vec2::ZERO);
+            assert!(offset.y.abs() <= BOB_M + 1e-6, "offset {offset:?}");
+            assert_eq!((offset.x, offset.z), (0.0, 0.0));
+            assert_eq!(turn, Quat::IDENTITY);
+        }
+    }
+
+    #[test]
+    fn sway_leans_no_further_than_its_widest_swing_in_any_wind() {
+        for wind in [Vec2::ZERO, Vec2::new(3.0, 0.0), Vec2::new(0.0, -20.0)] {
+            for step in 0..500 {
+                let (_, turn) = motion_offset(MotionKind::Sway, f64::from(step) * 0.07, 0.3, wind);
+                let angle = 2.0 * turn.w.abs().min(1.0).acos();
+                assert!(angle <= SWAY_RAD + 1e-4, "wind {wind:?}: angle {angle}");
+            }
+        }
+    }
+
+    #[test]
+    fn flicker_stays_between_six_tenths_and_all_of_its_power() {
+        for step in 0..1000 {
+            let f = flicker(f64::from(step) * 0.013, 2.0);
+            assert!((0.6..=1.0).contains(&f), "flicker {f}");
+        }
+    }
+
+    #[test]
+    fn a_light_is_on_by_its_when() {
+        assert!(light_is_on(&When::Always, None, 0.0));
+        assert!(!light_is_on(&When::Night, None, 0.0));
+        assert!(light_is_on(&When::Night, None, 1.0));
+        assert!(light_is_on(&When::State("lit".to_string()), Some("lit"), 0.0));
+        assert!(!light_is_on(&When::State("lit".to_string()), Some("off"), 1.0));
+        assert!(!light_is_on(&When::State("lit".to_string()), None, 1.0));
+    }
+
+    #[test]
+    fn a_light_colour_name_resolves_to_its_rgb() {
+        assert_eq!(light_rgb("warm"), LAMP_RGB);
+        assert_eq!(light_rgb("fire"), FIRE_RGB);
+        // any other name is warm white
+        assert_eq!(light_rgb("cold"), [1.0, 0.95, 0.85]);
+        assert_eq!(light_rgb(""), [1.0, 0.95, 0.85]);
+    }
+
+    #[test]
+    fn a_socket_on_the_pivot_is_half_a_voxel_up() {
+        assert!(close(socket_local([4, 2, 4], [4, 2, 4], 0.1).to_array(), [0.0, 0.05, 0.0]));
     }
 }
