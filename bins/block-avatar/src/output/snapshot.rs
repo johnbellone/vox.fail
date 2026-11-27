@@ -3,6 +3,11 @@
 //!
 //!     block_avatar --snapshot out.png --model models/dog.glb --snapshot-set diner
 //!     block_avatar --snapshot out.png --snapshot-set diner --snapshot-fx confetti
+//!     block_avatar --snapshot out.png --model models/capybara.glb --snapshot-do "play:Hot spring" --snapshot-at 1.6
+//!
+//! `--snapshot-do` sends one control-page command once the character is ready (playing a clip,
+//! say), and `--snapshot-at` is the moment every clip is held at (0.5 s by default): a picture of
+//! a pose, for reviewing a character.
 //!
 //! Everything that moves on its own (idle life, voice reactions, blinks, weather) is held still
 //! so the same build makes the same picture. Every frame is exactly one simulation tick (see
@@ -28,6 +33,10 @@ pub struct Snapshot {
     shot_at: Option<u32>,
     /// an effect is playing: keep the clock running until the picture is taken
     moving: bool,
+    /// a command to send once the character is ready (`play:Victory`)
+    pub act: Option<String>,
+    /// the moment every clip is held at, s
+    pub at: f32,
 }
 
 /// How long to let things settle after the character is ready, and how long to wait for the
@@ -37,7 +46,7 @@ const SAVE: u32 = 30;
 
 impl Snapshot {
     pub fn new(out: PathBuf, set: Option<String>, fx: Option<String>) -> Self {
-        Snapshot { out, set, fx, frames: 0, shot_at: None, moving: false }
+        Snapshot { out, set, fx, frames: 0, shot_at: None, moving: false, act: None, at: 0.5 }
     }
 }
 
@@ -86,6 +95,11 @@ pub fn run(
             inject.0.push(format!("fx:{b}"));
             snap.moving = true;
         }
+        // a clip blends in over a moment: the clock runs (the pose held) until it has
+        if let Some(c) = snap.act.take() {
+            inject.0.push(c);
+            snap.moving = true;
+        }
     }
     // the loading card times itself out on the clock, which stops below
     for mut v in &mut cards {
@@ -98,7 +112,7 @@ pub fn run(
         }
         for mut p in &mut players {
             for (_, a) in p.playing_animations_mut() {
-                a.seek_to(0.5).pause();
+                a.seek_to(snap.at).pause();
             }
         }
     }

@@ -888,7 +888,9 @@ Sources: `source/vox/characters/<name>.vox`. Clip timing and dialogue: `data/cas
 Same rig, so all 124 shared clips play on them; each has its own clips after index 123 (F9-F12 in
 the app). Animals have a `Tail` joint that sways in every clip. The face kit sits on the snout, so
 lip sync works the same. Sources in `source/vox/characters/`; poses in `docs/avatar/animals-poses.png`
-(the capybara's, with its props and faces, in `docs/avatar/capybara-poses.png`).
+(the capybara's, with its props and faces, in `docs/avatar/capybara-poses.png`, and in the app itself
+in `docs/avatar/capybara-ingame.png`: `block_avatar --snapshot out.png --model models/capybara.glb
+--snapshot-do "play:Hot spring" --snapshot-at 1.6`).
 
 | File | Character | Own clips |
 |---|---|---|

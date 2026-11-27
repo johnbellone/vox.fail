@@ -22,6 +22,11 @@ pub(super) struct Args {
     /// --snapshot <png> [--snapshot-set <set>] [--snapshot-fx <burst>]: one picture, then quit
     /// (visual tests)
     pub(super) snapshot: Option<(String, Option<String>, Option<String>)>,
+    /// --snapshot-do <command> (a control-page command, such as `play:Victory`) and
+    /// --snapshot-at <seconds> (the moment of the clips to hold, 0.5 by default): a picture of a
+    /// pose, for reviewing a character
+    pub(super) snapshot_do: Option<String>,
+    pub(super) snapshot_at: Option<f32>,
     /// --watch http://relay:7779/<session> [--code ABC123]: watch someone's show
     pub(super) watch: Option<(String, String)>,
     /// --join http://relay:7779/<session> --code ABC123 [--name Sam]: be a show's guest
@@ -74,6 +79,8 @@ pub(super) fn parse_args() -> Option<Args> {
             || std::env::var_os("BLOCK_AVATAR_NO_BROWSER").is_some(),
         webcam_dump: get("--webcam-dump"),
         snapshot: get("--snapshot").map(|p| (p, get("--snapshot-set"), get("--snapshot-fx"))),
+        snapshot_do: get("--snapshot-do"),
+        snapshot_at: get("--snapshot-at").and_then(|t| t.parse().ok()).filter(|t: &f32| t.is_finite() && *t >= 0.0),
         watch: get("--watch").map(|u| (u, get("--code").unwrap_or_default())),
         join: get("--join").map(|u| (u, get("--code").unwrap_or_default(), get("--name").unwrap_or_default())),
         world: get("--world"),
