@@ -46,6 +46,34 @@ interface Gpu {
   requestAdapter: () => Promise<unknown>;
 }
 
+/**
+ * Why this browser can't run the client, or undefined when it can. The client draws with WebGPU
+ * only; without a GPU to give, it would stop silently at "Starting…". `ua` and `gpu` are
+ * parameters so the messages can be tested.
+ */
+export async function webgpuProblem(
+  ua: string = navigator.userAgent,
+  gpu: Gpu | undefined = (navigator as Navigator & { gpu?: Gpu }).gpu,
+): Promise<string | undefined> {
+  const firefox = /Firefox\//.test(ua);
+  const elsewhere = "play in Chrome or Edge, or use the desktop client";
+  if (!gpu) {
+    return firefox
+      ? `Vox draws with WebGPU, which isn't switched on in this Firefox. Turn on dom.webgpu.enabled in about:config and reload, or ${elsewhere}.`
+      : `Vox draws with WebGPU, which this browser doesn't offer. Update it, or ${elsewhere}.`;
+  }
+  let adapter: unknown = null;
+  try {
+    adapter = await gpu.requestAdapter();
+  } catch {
+    adapter = null;
+  }
+  if (adapter == null) {
+    return `This browser has WebGPU but couldn't get a graphics card for it (it may be blocked for this driver). Check that hardware acceleration is on, or ${elsewhere}.`;
+  }
+  return undefined;
+}
+
 /** Can this browser run the client well enough to show it unasked? Checked before downloading
  *  it: a browser may offer WebGPU yet have no GPU to give (the client would then stop). */
 export async function canShowLive(): Promise<boolean> {
