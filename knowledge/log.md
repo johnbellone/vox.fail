@@ -1,4 +1,28 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T03:35:47Z]: Linked `project/characters-and-content.md` to `project/prop-catalogue.md` (The proposed world props, which seed from the avatar props listed here.).
+* **Relate** [2026-11-27T03:35:47Z]: Linked `status/roadmap.md` to `status/props-phases-and-open-questions.md` (The proposed prop pipeline's phases and open questions.).
+* **Relate** [2026-11-27T03:35:47Z]: Linked `architecture/prop-definition.md` to `decisions/props-third-kind-of-thing.md` (Why props are neither blocks nor structures.).
+* **Relate** [2026-11-27T03:35:41Z]: Linked `architecture/prop-definition.md` to `decisions/props-closed-behaviours.md` (Why behaviours are a closed set.).
+* **Relate** [2026-11-27T03:35:41Z]: Linked `architecture/prop-authoring-lanes.md` to `decisions/props-hybrid-authoring.md` (Why there are two lanes.).
+* **Relate** [2026-11-27T03:35:41Z]: Linked `architecture/props-in-worlds.md` to `decisions/structure-entitlements.md` (Player-made props use the same owner and grants rule as structures.).
+* **Relate** [2026-11-27T03:35:41Z]: Linked `architecture/prop-pipeline-design.md` to `decisions/props-third-kind-of-thing.md` (Props beside blocks and structures.).
+* **Relate** [2026-11-27T03:35:41Z]: Linked `architecture/prop-pipeline-design.md` to `decisions/props-closed-behaviours.md` (Behaviours are a closed vocabulary, never code.).
+* **Relate** [2026-11-27T03:35:41Z]: Linked `architecture/prop-pipeline-design.md` to `decisions/props-hybrid-authoring.md` (Recipes and imported MagicaVoxel files, the owner's choice.).
+* **Relate** [2026-11-27T03:35:34Z]: Linked `architecture/prop-pipeline-design.md` to `status/props-phases-and-open-questions.md` (Build phases and the open questions.).
+* **Relate** [2026-11-27T03:35:34Z]: Linked `architecture/prop-pipeline-design.md` to `project/prop-catalogue.md` (Seventy proposed props and the twelve-prop first wave.).
+* **Relate** [2026-11-27T03:35:34Z]: Linked `architecture/prop-pipeline-design.md` to `architecture/props-in-worlds.md` (How worlds store, place, draw, collide with and use prop instances.).
+* **Relate** [2026-11-27T03:35:34Z]: Linked `architecture/prop-pipeline-design.md` to `architecture/prop-checks-and-review.md` (Budgets, structured checks, contact-sheet review and the style guide.).
+* **Relate** [2026-11-27T03:35:34Z]: Linked `architecture/prop-pipeline-design.md` to `architecture/prop-authoring-lanes.md` (Recipes, MagicaVoxel import and the touch-up loop.).
+* **Relate** [2026-11-27T03:35:34Z]: Linked `architecture/prop-pipeline-design.md` to `architecture/prop-definition.md` (What a prop holds and the closed set of behaviours.).
+* **Creation** [2026-11-27T03:35:24Z]: Documented concept `decisions/props-third-kind-of-thing.md` (Decision: Props Are a Third Kind of Thing, Beside Blocks and Structures).
+* **Creation** [2026-11-27T03:35:24Z]: Documented concept `decisions/props-closed-behaviours.md` (Decision: Prop Behaviours Are a Closed Vocabulary, Never Code).
+* **Creation** [2026-11-27T03:35:24Z]: Documented concept `decisions/props-hybrid-authoring.md` (Decision: Props Come from Recipes and Imported MagicaVoxel Files).
+* **Creation** [2026-11-27T03:35:07Z]: Documented concept `status/props-phases-and-open-questions.md` (Props: Phases and Open Questions); set stale_after 2026-12-26.
+* **Creation** [2026-11-27T03:35:07Z]: Documented concept `project/prop-catalogue.md` (Prop Catalogue: Seventy Props and the Twelve-Prop First Wave); set stale_after 2026-12-26.
+* **Creation** [2026-11-27T03:34:48Z]: Documented concept `architecture/props-in-worlds.md` (Props in Worlds: Entity, Placement, Drawing, Collision and Use); set stale_after 2026-12-26.
+* **Creation** [2026-11-27T03:34:48Z]: Documented concept `architecture/prop-checks-and-review.md` (Prop Checks, Contact-Sheet Review and the Style Guide); set stale_after 2026-12-26.
+* **Creation** [2026-11-27T03:34:30Z]: Documented concept `architecture/prop-authoring-lanes.md` (Prop Authoring: Recipes, MagicaVoxel Import and the Touch-up Loop); set stale_after 2026-12-26.
+* **Creation** [2026-11-27T03:34:30Z]: Documented concept `architecture/prop-definition.md` (Prop Definition: Fields, Scales and Behaviours); set stale_after 2026-12-26.
 * **Relate** [2026-11-27T02:46:21Z]: Linked `architecture/asset-pipeline.md` to `architecture/prop-pipeline-design.md` (Proposed replacement for the Python prop builders: recipes and .vox import in Rust.).
 * **Relate** [2026-11-27T02:46:21Z]: Linked `architecture/world-graph-and-art-design.md` to `architecture/prop-pipeline-design.md` (The prop scale made concrete: what a prop is, its pipeline and a first catalogue.).
 * **Creation** [2026-11-27T02:46:20Z]: Documented concept `architecture/prop-pipeline-design.md` (Design (proposed): Props and the Prop Pipeline); set stale_after 2026-12-26.

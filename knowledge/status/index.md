@@ -7,3 +7,4 @@
 * [Roadmap and Next Steps](roadmap.md) - The planned milestones from the project document, updated with what the restructure and follow-on commits already delivered.
 * [Documentation Drift: Where the Docs Disagree with the Code](documentation-drift.md) - A list of stale or contradictory statements in docs/PROJECT.md and the READMEs, so agents know which source to trust.
 * [Repository and Disk Hygiene Findings](repository-hygiene.md) - Untracked runtime files, a 141 GB worktree build directory, an unpushed branch, and other housekeeping items found during analysis.
+* [Props: Phases and Open Questions](props-phases-and-open-questions.md) - The six build phases for the prop pipeline and the questions still open; nothing is built yet.

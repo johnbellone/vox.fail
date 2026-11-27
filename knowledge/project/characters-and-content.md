@@ -3,7 +3,7 @@ type: Fact
 title: "Characters, Props, Sets and Content Licences"
 description: "The 38 original rigged characters, the props, sets and sounds, how they share one rig, and where every third-party asset comes from."
 tags: [assets, characters, content, licences]
-generated: { by: agent/mcp, at: "2026-11-26T15:49:37Z" }
+generated: { by: agent/mcp, at: "2026-11-27T03:35:47Z" }
 status: stable
 ---
 
@@ -38,3 +38,6 @@ See `convention/hard-constraints`: no real-person likenesses, no trademarked cha
 
 ## Open product question (from docs/PROJECT.md)
 Whether the lead's political-slogan cap suits a public store page and screenshots. It was kept off the app icon.
+
+# Related Concepts
+- [Prop Catalogue: Seventy Props and the Twelve-Prop First Wave](prop-catalogue.md): The proposed world props, which seed from the avatar props listed here.

@@ -3,7 +3,7 @@ type: Status
 title: Roadmap and Next Steps
 description: "The planned milestones from the project document, updated with what the restructure and follow-on commits already delivered."
 tags: [status, roadmap, planning]
-generated: { by: agent/mcp, at: "2026-11-26T17:38:54Z" }
+generated: { by: agent/mcp, at: "2026-11-27T03:35:47Z" }
 status: stable
 stale_after: 2026-12-26
 ---
@@ -38,3 +38,4 @@ Install beads and run `bd init`; open GitHub issues for user-facing items; keep 
 - [Design (proposed): Worlds at 60 km x 60 km](../architecture/world-scaling-design.md): planned scaling work
 - [Design (phase 1 built): The World Format](../architecture/world-format-design.md): next world-format phases
 - [Hard Constraints Set by the Owner](../convention/hard-constraints.md): rules for the backlog Capitol world
+- [Props: Phases and Open Questions](props-phases-and-open-questions.md): The proposed prop pipeline's phases and open questions.
