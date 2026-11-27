@@ -3,7 +3,7 @@
 //!
 //! `--directory-url` (with `VOX_WORLD_SECRET`), `--max-players`, `--max-watchers`,
 //! `--trust-moves`, `--voice-radius <blocks>`, `--directory-key <hex or file>` with `--guests`, `--no-snapshots`,
-//! `--oxen [<binary>]` (or `VOX_OXEN`), `--snapshot-every <seconds>`, and `--editors-all` (local play and tests
+//! `--oxen [<binary>]` (or `VOX_OXEN`), `--snapshot-every <seconds>`, `--props <folder>`, and `--editors-all` (local play and tests
 //! only, refused with a directory: every signed-in player may make advanced edits, with no question to the
 //! directory). Snapshots go next to the world's database (`<db>.snapshots/`) unless turned off or the world is in
 //! memory.
@@ -70,6 +70,10 @@ pub fn apply(cfg: &mut Config, args: &[String]) -> Result<(), String> {
     if let Some(n) = arg("--snapshot-every").and_then(|v| v.parse().ok()) {
         cfg.snapshot_every = Duration::from_secs(n);
     }
+    // the accepted props (a folder with catalogue.json; see props.rs)
+    if let Some(dir) = arg("--props") {
+        cfg.props = PathBuf::from(dir);
+    }
     Ok(())
 }
 
@@ -88,6 +92,9 @@ mod tests {
         assert_eq!(c.max_players, 8);
         assert!(c.trust_moves);
         assert_eq!(c.snapshot_every, Duration::from_secs(60));
+        assert_eq!(c.props, PathBuf::from("data/props"));
+        apply(&mut c, &args("x --props /srv/props")).unwrap();
+        assert_eq!(c.props, PathBuf::from("/srv/props"));
         apply(&mut c, &args("x --voice-radius 48")).unwrap();
         assert_eq!(c.voice_radius, 48.0);
         assert!(apply(&mut c, &args("x --voice-radius 0")).is_err());

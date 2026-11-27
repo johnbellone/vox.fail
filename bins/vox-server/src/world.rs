@@ -4,8 +4,9 @@
 #[allow(unused_imports)]
 use super::*;
 use crate::entities::{self, Entities};
+use crate::props;
 use vox_core::edit::{self, Ctx, EYES, PlotArea, REACH, Role};
-use vox_core::entity::{Axis, Component, Dest, EntityWhy, Portal, Settings, Spawn};
+use vox_core::entity::{Axis, Component, Dest, EntityWhy, Portal, Prop, Settings, Spawn, prop_cell};
 use vox_core::portal::Door;
 use vox_core::wire::EntityChange;
 
@@ -97,6 +98,7 @@ impl WorldState {
             seed.push(Component::Spawn(Spawn { at: spawn, yaw: 0.0 }));
             ents.seed(seed);
         }
+        let props = props::PropLibrary::load(&cfg.props);
         let climate = match meta("climate").and_then(|c| serde_json::from_str::<Climate>(&c).ok()) {
             Some(c) if !fresh => c.sane(),
             _ => Climate::from_settings(set.get("weather"), ground),
@@ -130,6 +132,7 @@ impl WorldState {
             reached: false,
             goals: None,
             entities: ents,
+            props,
             editors: None,
             editor_cache: HashMap::new(),
             portals: None,
@@ -981,6 +984,27 @@ impl WorldState {
         self.entities.map.get(&id).map(|(_, c)| c).ok_or(EntityWhy::Changed)
     }
 
+    /// The prop rules for an edit of `editing` (None for a new entity): whether the world accepts
+    /// a prop's hash, and whether its footprint is free. The footprint check leaves out the entity
+    /// being changed, so a prop may be turned or moved onto its own old cells.
+    fn prop_rules(&self, editing: Option<EntityId>) -> (impl Fn(&[u8; 16]) -> bool + '_, impl Fn(&Prop) -> bool + '_) {
+        let lib = &self.props;
+        let known = move |hash: &[u8; 16]| lib.known(hash);
+        let free = move |p: &Prop| {
+            let others = self
+                .entities
+                .map
+                .iter()
+                .filter(move |(id, _)| Some(**id) != editing)
+                .filter_map(|(_, (_, c))| match c {
+                    Component::Prop(q) => Some(q),
+                    _ => None,
+                });
+            props::free(lib, p, others, |c| self.world.get(c) != 0)
+        };
+        (known, free)
+    }
+
     /// The rules for an edit, in order: staleness, then `vox_core::edit`'s checks (rights,
     /// destinations, place, caps), then the world's own: the old place is in reach too (so a
     /// far entity cannot be dragged), and at most one Objective and one Settings.
@@ -997,18 +1021,20 @@ impl WorldState {
                     Some(id) => Some(self.held(*id, *expect)?),
                 };
                 let zone = entities::zone_key(component);
-                // Props are not wired into the server yet (vox-tol.4.9): refuse every prop.
-                let refuse_prop = |_: &vox_core::entity::Prop| false;
-                let refuse_hash = |_: &[u8; 16]| false;
+                let (known_prop, footprint_free) = self.prop_rules(*entity);
+                let props_in_plot = match component {
+                    Component::Prop(p) => props_in_plot(&plots, &self.entities, prop_cell(p.at)),
+                    _ => 0,
+                };
                 let ctx = Ctx {
                     role,
                     account,
                     at,
                     bounds: self.cfg.bounds,
                     plots: &plots,
-                    props_in_plot: 0,
-                    prop_footprint_free: &refuse_prop,
-                    known_prop: &refuse_hash,
+                    props_in_plot,
+                    prop_footprint_free: &footprint_free,
+                    known_prop: &known_prop,
                     zone_entities: self.entities.zone_count(zone),
                     moves_zone: old.is_some_and(|o| entities::zone_key(o) != zone),
                     plot_portals: plot_portals_at(&plots, component, &self.entities),
@@ -1031,9 +1057,7 @@ impl WorldState {
             }
             Edit::Remove { entity, expect } => {
                 let old = self.held(*entity, *expect)?;
-                // Props are not wired into the server yet (vox-tol.4.9): refuse every prop.
-                let refuse_prop = |_: &vox_core::entity::Prop| false;
-                let refuse_hash = |_: &[u8; 16]| false;
+                let (known_prop, footprint_free) = self.prop_rules(Some(*entity));
                 let ctx = Ctx {
                     role,
                     account,
@@ -1041,8 +1065,8 @@ impl WorldState {
                     bounds: self.cfg.bounds,
                     plots: &plots,
                     props_in_plot: 0,
-                    prop_footprint_free: &refuse_prop,
-                    known_prop: &refuse_hash,
+                    prop_footprint_free: &footprint_free,
+                    known_prop: &known_prop,
                     zone_entities: 0,
                     moves_zone: false,
                     plot_portals: 0,
@@ -1302,6 +1326,15 @@ fn cell_of(at: [f32; 3]) -> [i32; 3] {
 /// up by the running world (`refresh_from_entities`).
 fn is_objective_or_settings(c: &Component) -> bool {
     matches!(c, Component::Objective(_) | Component::Settings(_))
+}
+
+/// The props standing in the plot that `cell` is in (0 when `cell` is in no plot).
+fn props_in_plot(plots: &[PlotArea], ents: &Entities, cell: [i32; 3]) -> usize {
+    let Some(plot) = plots.iter().find(|p| p.holds(cell[0], cell[2])) else { return 0 };
+    ents.map
+        .values()
+        .filter(|(_, c)| matches!(c, Component::Prop(q) if { let k = prop_cell(q.at); plot.holds(k[0], k[2]) }))
+        .count()
 }
 
 /// The keyed portals (the directory's player portals) already in the plot a new component

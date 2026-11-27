@@ -20,6 +20,7 @@
 mod connection;
 mod entities;
 pub mod flags;
+mod props;
 mod snapshot;
 mod world;
 #[allow(unused_imports)]
@@ -131,6 +132,8 @@ pub struct Config {
     pub world_secret: Option<String>,
     pub report_every: Duration,
     pub rules_every: Duration,
+    /// the folder of accepted props: `catalogue.json` and each prop's `<hash>.voxp` (see props.rs)
+    pub props: PathBuf,
     /// every signed-in player is an editor (advanced edits), with no question to the directory.
     /// For local play and tests only: a live world asks the directory who may edit.
     pub editors_all: bool,
@@ -164,6 +167,7 @@ impl Config {
             report_every: Duration::from_secs(60),
             rules_every: Duration::from_secs(30),
             editors_all: false,
+            props: PathBuf::from("data/props"),
         }
     }
 }
@@ -479,6 +483,8 @@ struct WorldState {
     goals: Option<mpsc::Sender<Vec<u64>>>,
     /// the world's entities (doorways, spawn, objective, settings), written with the blocks
     entities: entities::Entities,
+    /// the props the world accepts, read when it opened (props.rs)
+    props: props::PropLibrary,
     /// where questions on advanced rights go (to the directory); None: no directory to ask
     editors: Option<mpsc::Sender<Asking>>,
     /// where player portal calls go (to the directory); None: no directory, so no player portals
