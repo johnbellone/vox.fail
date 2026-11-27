@@ -282,6 +282,15 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [props.md](docs/design/props.md): props (small authored objects with behaviours) as recipes or
   imported MagicaVoxel files, the checks and review pipeline, placing them in worlds, and a
   seventy-prop catalogue with a twelve-prop first wave.
+- [world-editor.md](docs/design/world-editor.md): the world editor as built (vox.fail/edit):
+  world entities (portals, spawn, objective, settings, props, graph nodes) edited live through
+  server-checked messages, Basic mode for plot builders and Advanced for a world's owner and
+  editors, the page and wasm bridge, undo, Build; its "As built" section lists what
+  implementation settled.
+- [world-editor-workshops.md](docs/design/world-editor-workshops.md): the editor's next step
+  (proposed): workshops (worlds you own for building), whole operations (fill, replace, paste)
+  checked by the server with undo, and saving as a level or a structure; public worlds change
+  through workshops and review.
 - [ground-relief.md](docs/design/ground-relief.md): natural ground with generated dips of a few
   centimetres (a function of the world's seed, drawn in the block shader), and puddles that
   fill them from ground water the weather keeps.

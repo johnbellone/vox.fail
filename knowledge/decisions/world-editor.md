@@ -3,7 +3,7 @@ type: Decision
 title: "Decision: A Live In-Browser World Editor Built on World Entities"
 description: "The world editor edits the running world live through server-checked entity messages (protocol 9), with basic mode for plot builders and advanced mode for a world's owner and named editors."
 tags: [decision, editor, entities, portals, props, wire, game-design]
-generated: { by: agent/mcp, at: "2026-11-27T20:39:09Z" }
+generated: { by: agent/mcp, at: "2026-11-27T21:09:20Z" }
 status: stable
 ---
 
@@ -29,3 +29,4 @@ status: stable
 - [Design (phase 1 built): The World Format](../architecture/world-format-design.md): entities are its phase 2
 - [Decision: Structures Have an Owner and Use, Copy and Edit Rights](structure-entitlements.md): the same rights model for props
 - [vox-client and the Web Front End](../architecture/vox-client-and-web.md): the page and the wasm client
+- [Design (proposed): The World Editor on the Web](../architecture/world-editor-design.md): The proposed next step: workshops, whole operations, saving as a level or structure.

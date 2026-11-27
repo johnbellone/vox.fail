@@ -1,6 +1,10 @@
 # Design: the world editor
 
-Status: **agreed** · 2026-11-27 · nothing here is built yet
+Status: **built** · 2026-11-27 · see *As built* at the end for what implementation settled
+
+Next: [world-editor-workshops.md](world-editor-workshops.md) (proposed): workshops, whole
+operations such as fill and paste, and saving as a level or structure; it also settles that
+the worlds the game ships change through a workshop and review rather than live editing.
 
 Related: [props.md](props.md) (what a prop is; phases 1 to 3 are part of this plan),
 [world-graph-and-art.md](world-graph-and-art.md) (recipes and graph nodes; its phase 1 and the

@@ -38,6 +38,21 @@ ABOUT = {"scene_all": "The original lead, no longer the main character: red cap,
          "capybara": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off.",
          "blue": "Vox's main character: an American pit bull terrier with a blue nose, a blue-grey coat, white blaze, chest and paws, rose ears and an orange collar."}
 
+# One character in several outfits: the page shows the family once, and clicking it offers the
+# outfits. The first is the one you get by clicking the family; every member keeps its own model.
+FAMILIES = {
+    "peanut": ("Peanut", [("peanut", "Classic"), ("roasted_army", "Army"), ("roasted_cook", "Fry cook"), ("roasted_garbage", "Garbage collector"),
+                          ("roasted_medic", "Medic"), ("roasted_miami", "Miami Travis"), ("roasted_riot", "Riot")]),
+    "agent": ("Agent", [("agent_buzz", "Buzz cut"), ("agent_bun", "Bun"), ("agent_shaved", "Shaved head")]),
+    "senator": ("Senator", [("senator", "Blue tie"), ("senator_glasses", "Glasses"), ("senator_plum", "Plum suit"), ("senator_bob", "Silver bob"),
+                            ("senator_tan", "Tan suit")]),
+    "representative": ("Representative", [("representative", "Burgundy blazer"), ("rep_beard", "Beard"), ("rep_cream", "Cream blazer"),
+                                          ("rep_open_collar", "Open collar"), ("rep_ginger", "Ponytail")]),
+    "riot": ("Riot officer", [("riot_a", "A"), ("riot_b", "B")]),
+    "rally": ("Rally-goer", [("rally_hat", "Bucket hat"), ("rally_sign", "Sign")]),
+}
+FAMILY_OF = {cid: (fid, fname, outfit, i) for fid, (fname, members) in FAMILIES.items() for i, (cid, outfit) in enumerate(members)}
+
 chars = []
 for p in sorted((ROOT / "assets/portraits").glob("*.png")):
     cid = p.stem
@@ -54,8 +69,17 @@ for p in sorted((ROOT / "assets/portraits").glob("*.png")):
         "portrait": f"portraits/{cid}.png",
         "about": ABOUT.get(cid) or (c or {}).get("note", ""),
     })
+    if cid in FAMILY_OF:
+        fid, fname, outfit, _ = FAMILY_OF[cid]
+        chars[-1].update(family=fid, family_name=fname, outfit=outfit)
+# a family sits in its first member's group (the roasted peanuts with the peanut)
+first = {c["family"]: c["group"] for c in chars if c.get("family") and FAMILY_OF[c["id"]][3] == 0}
+for c in chars:
+    if c.get("family"):
+        c["group"] = first[c["family"]]
 order = {"Main": -1, "Cast": 0, "Roast": 1, "Animals": 2}
-chars.sort(key=lambda c: (c["id"] != MAIN, order[c["group"]], c["name"]))
+# families stay together, in their own order, under the family's name
+chars.sort(key=lambda c: (c["id"] != MAIN, order[c["group"]], c.get("family_name", c["name"]), FAMILY_OF.get(c["id"], (0, 0, 0, 0))[3]))
 
 src = (ROOT / "bins/block-avatar/src/character/wardrobe.rs").read_text()
 body = src[src.index("pub const ITEMS"):]
