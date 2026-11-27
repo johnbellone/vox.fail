@@ -73,6 +73,7 @@ pub const REACH: f32 = 16.0;
 /// Eye height above the feet, in blocks.
 const EYES: f32 = 3.2;
 
+#[derive(Clone)]
 pub struct Config {
     /// SQLite file; `:memory:` keeps nothing
     pub db: PathBuf,
@@ -151,6 +152,8 @@ pub struct Status {
     pub players: Vec<String>,
     pub blocks: usize,
     pub seq: u64,
+    /// how many are watching without playing
+    pub watchers: usize,
 }
 
 impl Status {
@@ -250,6 +253,13 @@ impl Server {
             .route("/w/{port}/", get(status_page))
             .route("/w/{port}/ws", get(connect))
             .with_state(self.clone())
+    }
+
+    /// Take a player's (or watcher's) WebSocket, as `GET /ws` does. For a host that routes
+    /// connections to worlds itself (`vox-host`).
+    pub fn accept(&self, ws: WebSocketUpgrade) -> Response {
+        let server = self.clone();
+        ws.max_message_size(MAX_MESSAGE).on_upgrade(move |socket| run_connection(server, socket))
     }
 
     /// This world's pages under `prefix` (`/w/void`): `<prefix>/` its status and `<prefix>/ws`
