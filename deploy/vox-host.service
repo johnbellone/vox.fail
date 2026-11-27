@@ -2,7 +2,9 @@
 # files (/var/lib/vox/<id>.db), so stop the vox-world@ units first and start this instead. The
 # tunnel then sends all of ^/w/ to 127.0.0.1:7790; the old ports still work as aliases
 # (/w/7781/ws is the yard). The Void always runs; the other worlds start when someone comes
-# and stop after ten minutes with nobody there (--idle-stop 10).
+# and stop after ten minutes with nobody there (--idle-stop 10). With --instances it makes
+# raid parties' copies of the dungeons in data/levels/dungeons when the directory asks; the
+# directory is told where with --instances-at. Only ^/w/ goes through the tunnel: /api/ stays here.
 [Unit]
 Description=Vox worlds
 After=network-online.target vox-directory.service
@@ -12,7 +14,7 @@ User=vox
 WorkingDirectory=/opt/vox
 # VOX_WORLD_SECRET, the same as the directory's
 EnvironmentFile=/etc/vox/worlds.env
-ExecStart=/opt/vox/bin/vox-host --listen 127.0.0.1:7790 --data /var/lib/vox --directory-key /var/lib/vox/directory.key.pub --directory-url http://127.0.0.1:7700 --idle-stop 10 --keep void --world void@7780 --world yard@7781 --world islands@7782 --world sea@7783 --world orbit@7784
+ExecStart=/opt/vox/bin/vox-host --listen 127.0.0.1:7790 --data /var/lib/vox --directory-key /var/lib/vox/directory.key.pub --directory-url http://127.0.0.1:7700 --idle-stop 10 --keep void --instances --world void@7780 --world yard@7781 --world islands@7782 --world sea@7783 --world orbit@7784
 # hardening
 NoNewPrivileges=true
 ProtectSystem=strict

@@ -7,7 +7,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use vox_core::wire::{self, PROTOCOL, ToClient, ToServer};
-use vox_host::{Host, Spec};
+use vox_host::{Host, Instances, Options, Spec};
 use vox_server::Config;
 
 const LEVEL: &str = r#"{ "world": { "sky": "void" }, "boxes": [ { "block": "grass", "from": [-4, -1, -4], "to": [4, -1, 4] } ] }"#;
@@ -44,7 +44,7 @@ async fn welcomed_by(url: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn worlds_by_id_and_alias() {
-    let host = Host::start(vec![spec("void", Some("7780")), spec("yard", Some("7781"))], None).await.unwrap();
+    let host = Host::start(vec![spec("void", Some("7780")), spec("yard", Some("7781"))], Options::default()).await.unwrap();
     assert_eq!(host.ids(), ["void", "yard"]);
     let addr = serve(&host).await;
 
@@ -75,7 +75,7 @@ async fn names_must_be_unique_and_plain() {
         vec![spec("void", None), spec("yard", Some("void"))],
         vec![spec("../void", None)],
     ] {
-        assert!(Host::start(specs, None).await.is_err());
+        assert!(Host::start(specs, Options::default()).await.is_err());
     }
 }
 
@@ -94,7 +94,7 @@ async fn http_get(addr: &str, path: &str) -> String {
 async fn on_demand() {
     let mut void = spec("void", None);
     void.keep = true;
-    let host = Host::start(vec![void, spec("yard", Some("7781"))], Some(Duration::from_secs(1))).await.unwrap();
+    let host = Host::start(vec![void, spec("yard", Some("7781"))], Options { idle: Some(Duration::from_secs(1)), ..Default::default() }).await.unwrap();
     let addr = serve(&host).await;
     // the Void is kept; the yard waits until someone comes
     assert_eq!(host.running().await, ["void"]);
@@ -133,4 +133,63 @@ async fn on_demand() {
     // and comes back for the next visitor
     assert_eq!(welcomed_by(&format!("ws://{addr}/w/yard/ws")).await, "yard");
     host.shutdown().await;
+}
+
+/// A POST with a JSON body; the status and the body.
+async fn http_post(addr: &str, path: &str, secret: Option<&str>, body: serde_json::Value) -> (u16, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let body = body.to_string();
+    let auth = secret.map_or(String::new(), |s| format!("Authorization: Bearer {s}\r\n"));
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = format!("POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n{auth}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    let code = out.get(9..12).and_then(|c| c.parse().ok()).unwrap_or(0);
+    (code, out.split_once("\r\n\r\n").map(|(_, b)| b.to_string()).unwrap_or_default())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn instances_of_dungeons() {
+    let dir = std::env::temp_dir().join(format!("vox-host-dungeons-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("crypt.json"), LEVEL).unwrap();
+    let base = Config::new(":memory:", ["grass", "stone"].map(String::from).to_vec());
+    let instances = Instances { base, templates: dir.clone(), secret: "s3cret".into(), idle: Duration::from_secs(3), most: 2, players: 8 };
+    let host = Host::start(vec![spec("void", None)], Options { idle: None, instances: Some(instances) }).await.unwrap();
+    let addr = serve(&host).await;
+    let make = |id: &str, template: &str| serde_json::json!({ "id": id, "template": template, "minutes": 60 });
+
+    // only the directory may ask
+    assert_eq!(http_post(&addr, "/api/host/instance", None, make("crypt-a1", "crypt")).await.0, 401);
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("guess"), make("crypt-a1", "crypt")).await.0, 401);
+    // made once; asking again is fine and makes nothing more
+    let (code, body) = http_post(&addr, "/api/host/instance", Some("s3cret"), make("crypt-a1", "crypt")).await;
+    assert_eq!(code, 200, "{body}");
+    assert!(body.contains(r#""made":true"#));
+    assert!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("crypt-a1", "crypt")).await.1.contains(r#""made":false"#));
+    // not a world's name, not a dungeon that isn't there, not a bad name, not past the limit
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("void", "crypt")).await.0, 409);
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("tomb-1", "tomb")).await.0, 404);
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("../x", "crypt")).await.0, 400);
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("crypt-b2", "crypt")).await.0, 200);
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("crypt-c3", "crypt")).await.0, 503);
+
+    // in, under its own name
+    assert_eq!(welcomed_by(&format!("ws://{addr}/w/crypt-a1/ws")).await, "crypt-a1");
+    // empty for a while: thrown away, and never started again
+    let mut gone = false;
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if !host.ids().contains(&"crypt-a1".to_string()) {
+            gone = true;
+            break;
+        }
+    }
+    assert!(gone, "an empty instance should go");
+    assert!(connect_async(format!("ws://{addr}/w/crypt-a1/ws")).await.is_err());
+    // the kept world stays
+    assert_eq!(host.running().await, ["void"]);
+    host.shutdown().await;
+    let _ = std::fs::remove_dir_all(dir);
 }

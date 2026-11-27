@@ -144,6 +144,16 @@ impl Directory {
         self.0.worlds.iter().find(|w| w.id == id).ok_or_else(|| bad("there's no such world"))
     }
 
+    /// A world of this directory, or one of its instances: who may report and ask for tickets.
+    fn known_world(&self, id: &str) -> Res<()> {
+        if self.0.worlds.iter().any(|w| w.id == id) {
+            return Ok(());
+        }
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        let found = db.query_row("SELECT 1 FROM instances WHERE id = ?1", params![id], |_| Ok(())).optional().map_err(oops)?;
+        found.ok_or_else(|| bad("there's no such world"))
+    }
+
     /// The world secret checks out.
     pub(crate) fn from_world(&self, h: &HeaderMap) -> Res<()> {
         let Some(secret) = &self.0.world_secret else { return Err(no(StatusCode::NOT_FOUND, "not here")) };
@@ -665,7 +675,7 @@ pub struct Presence {
 
 pub(crate) async fn report(State(d): State<Directory>, h: HeaderMap, Json(r): Json<Report>) -> Res<Json<Value>> {
     d.from_world(&h)?;
-    d.world(&r.world)?;
+    d.known_world(&r.world)?;
     let t = now() as i64;
     let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
@@ -782,7 +792,7 @@ fn raids(db: &Connection, world: &str, wname: &str, here: &[u64]) -> Res<usize> 
 /// opened (in the level format, `world/src/portals.rs`).
 pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world): Path<String>) -> Res<Json<Value>> {
     d.from_world(&h)?;
-    d.world(&world)?;
+    d.known_world(&world)?;
     let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let mut groups: HashMap<i64, Vec<i64>> = HashMap::new();
     let mut st = db.prepare("SELECT id, owner, x0, z0, x1, z1, grp FROM plots WHERE world = ?1").map_err(oops)?;
@@ -856,16 +866,25 @@ pub fn way(url: &str) -> Option<String> {
 /// to, its address and the ticket.
 pub(crate) async fn travel(State(d): State<Directory>, h: HeaderMap, Json(t): Json<Trip>) -> Res<Json<Value>> {
     d.from_world(&h)?;
-    d.world(&t.world)?;
+    d.known_world(&t.world)?;
     if !t.arrive.iter().all(|v| v.is_finite()) {
         return Err(bad("nowhere to arrive"));
     }
-    let to = d
-        .0
-        .worlds
-        .iter()
-        .find(|w| w.id == t.to || (way(&t.to).is_some() && way(&t.to) == way(&w.url)))
-        .ok_or_else(|| no(StatusCode::NOT_FOUND, "that portal leads to no world of this directory"))?;
+    let (to_id, to_url) = match t.to.strip_prefix(DUNGEON) {
+        Some(template) => {
+            let id = instance_for(&d, t.account, template).await?;
+            (id.clone(), format!("/w/{id}/ws"))
+        }
+        None => {
+            let w = d
+                .0
+                .worlds
+                .iter()
+                .find(|w| w.id == t.to || (way(&t.to).is_some() && way(&t.to) == way(&w.url)))
+                .ok_or_else(|| no(StatusCode::NOT_FOUND, "that portal leads to no world of this directory"))?;
+            (w.id.clone(), w.url.clone())
+        }
+    };
     let name: String = {
         let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
         db.query_row("SELECT name FROM accounts WHERE id = ?1", params![t.account as i64], |r| r.get(0))
@@ -879,9 +898,86 @@ pub(crate) async fn travel(State(d): State<Directory>, h: HeaderMap, Json(t): Js
     getrandom::fill(&mut nonce).map_err(oops)?;
     let ticket = vox_core::auth::Ticket {
         claims: vox_core::auth::Claims { account: t.account, name, character, issued: now, expires: now + vox_core::auth::TICKET_LIFETIME },
-        world: to.id.clone(),
+        world: to_id.clone(),
         arrive: t.arrive,
         nonce: u64::from_le_bytes(nonce),
     };
-    Ok(Json(json!({ "world": to.id, "url": to.url, "ticket": vox_core::auth::sign_ticket(&ticket, &d.0.key) })))
+    Ok(Json(json!({ "world": to_id, "url": to_url, "ticket": vox_core::auth::sign_ticket(&ticket, &d.0.key) })))
+}
+
+// ---- instances
+
+/// A portal whose url is `dungeon:<name>` leads to the party's own copy of that dungeon.
+pub const DUNGEON: &str = "dungeon:";
+/// How long an instance lasts, s: as long as a raid.
+pub const INSTANCE_LENGTH: u64 = RAID_LENGTH;
+/// New instances a party may have made in an hour (so it can't roll copies, or fill the host).
+pub const INSTANCES_PER_HOUR: i64 = 3;
+
+/// The instance of dungeon `template` for `account`'s party: the one it has (made again on the
+/// host if the host has let it go), or a new one, if the party may have another.
+async fn instance_for(d: &Directory, account: u64, template: &str) -> Res<String> {
+    if template.is_empty() || template.len() > 32 || !template.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_') {
+        return Err(bad("no such dungeon"));
+    }
+    let Some(host) = d.0.instance_host.clone() else { return Err(no(StatusCode::NOT_FOUND, "there are no dungeons here")) };
+    let Some(secret) = d.0.world_secret.clone() else { return Err(no(StatusCode::NOT_FOUND, "there are no dungeons here")) };
+    let t = now() as i64;
+    let (id, ends, new) = {
+        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        let party: i64 = db
+            .query_row(
+                "SELECT c.id FROM crews c JOIN crew_members m ON m.crew = c.id WHERE m.account = ?1 AND c.kind = 'party' ORDER BY m.joined DESC LIMIT 1",
+                params![account as i64],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(oops)?
+            .ok_or_else(|| no(StatusCode::FORBIDDEN, "dungeons are for raid parties: go with yours"))?;
+        let have: Option<(String, i64)> = db
+            .query_row(
+                "SELECT id, ends FROM instances WHERE party = ?1 AND template = ?2 AND ends > ?3 ORDER BY created DESC LIMIT 1",
+                params![party, template, t],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(oops)?;
+        match have {
+            Some((id, ends)) => (id, ends, None),
+            None => {
+                let made: i64 = db
+                    .query_row("SELECT count(*) FROM instances WHERE party = ?1 AND created > ?2", params![party, t - 3600], |r| r.get(0))
+                    .map_err(oops)?;
+                if made >= INSTANCES_PER_HOUR {
+                    return Err(no(StatusCode::TOO_MANY_REQUESTS, "your party has opened enough dungeons for now: try again later"));
+                }
+                let mut b = [0u8; 6];
+                getrandom::fill(&mut b).map_err(oops)?;
+                let id = format!("{template}-{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
+                (id, t + INSTANCE_LENGTH as i64, Some(party))
+            }
+        }
+    };
+    // ask the host for it (it says so if it has it already), then remember a new one
+    let minutes = ((ends - t).max(60) / 60) as u32;
+    let r = d
+        .0
+        .http
+        .post(format!("{host}/api/host/instance"))
+        .bearer_auth(&secret)
+        .json(&json!({ "id": id, "template": template, "minutes": minutes }))
+        .send()
+        .await
+        .map_err(|_| no(StatusCode::SERVICE_UNAVAILABLE, "the dungeons can't be reached just now"))?;
+    match r.status().as_u16() {
+        200 => {}
+        404 => return Err(no(StatusCode::NOT_FOUND, "no such dungeon")),
+        _ => return Err(no(StatusCode::SERVICE_UNAVAILABLE, "that dungeon can't be opened just now")),
+    }
+    if let Some(party) = new {
+        let db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute("INSERT INTO instances (id, template, party, created, ends) VALUES (?1, ?2, ?3, ?4, ?5)", params![id, template, party, t, ends])
+            .map_err(oops)?;
+    }
+    Ok(id)
 }

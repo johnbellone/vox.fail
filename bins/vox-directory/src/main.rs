@@ -1,7 +1,9 @@
 //! Run the directory: `vox-directory [--listen 127.0.0.1:7700] [--db directory.db]
 //! [--key directory.key] [--web web] [--assets assets] [--data data]
 //! [--world "The Void=:7780"]... [--download "Windows=https://…"]... [--secure] [--behind-proxy]
-//! [--public-url https://vox.fail] [--steam]`.
+//! [--public-url https://vox.fail] [--steam] [--instances-at http://127.0.0.1:7790]`. With
+//! `--instances-at`, portals to `dungeon:<name>` lead to raid parties' instances, made by that
+//! `vox-host --instances`.
 //!
 //! On vox.fail (see deploy/): `--secure --behind-proxy --public-url https://vox.fail --steam
 //! --world "The Void=/w/7780/ws"`.
@@ -76,6 +78,7 @@ async fn main() {
         },
         world_secret: env("VOX_WORLD_SECRET"),
         report_every: 50,
+        instance_host: arg("--instances-at"),
     };
     let offered = cfg.social.offered();
     let dir = Directory::open(cfg).unwrap_or_else(|e| panic!("{e}"));

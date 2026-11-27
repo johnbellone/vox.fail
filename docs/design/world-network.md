@@ -1,6 +1,6 @@
 # Design: a network of worlds, and instances
 
-Status: **proposed** · 2026-11-26 · phase 2 (tickets and server-driven travel) built; the rest not yet
+Status: **proposed** · 2026-11-26 · phases 1 to 3 built, and the first part of 4 (instances, not yet raid objectives); the rest not yet
 
 Related: [world-scaling.md](world-scaling.md) (one world up to 60 km: regions, generated terrain,
 streaming), [world-format.md](world-format.md) (region blobs, content-addressed snapshots),
@@ -162,11 +162,18 @@ store). Because region blobs are content-addressed,
 starting a copy costs nothing: the instance starts from the same manifest and writes new blobs
 only for what its party changes.
 
-**Entrances.** A portal can lead to a template instead of a world:
+**Entrances.** A portal can lead to a template instead of a world, by its url:
 
 ```json
-{"name": "crypt", "at": [40, 0, 12], "axis": "x", "size": [4, 6], "template": "crypt"}
+{"name": "crypt", "at": [40, 0, 12], "axis": "x", "size": [4, 6], "level": "dungeons/crypt", "url": "dungeon:crypt", "arrive": [0, 0, 9]}
 ```
+
+Built so far: templates are level files (`data/levels/dungeons/<name>.json`, given to
+`vox-host --instances`), not yet frozen snapshots; an instance lives in memory. Ids are
+`<template>-<12 hex>` (`~` isn't allowed in a path segment here). The host throws an instance
+away after five minutes empty or at its end; the directory's next ticket for the party asks the
+host again, which makes a fresh copy if the old one is gone, so leaving for five minutes is a
+reset (still counted against nothing: open question below).
 
 **Making one.** When a party member goes through, the directory:
 

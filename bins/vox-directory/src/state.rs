@@ -75,6 +75,10 @@ impl Directory {
                  done INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS crew_members (
                  crew INTEGER NOT NULL, account INTEGER NOT NULL, joined INTEGER NOT NULL, PRIMARY KEY (crew, account));
+             CREATE TABLE IF NOT EXISTS instances (
+                 id TEXT PRIMARY KEY, template TEXT NOT NULL, party INTEGER NOT NULL, created INTEGER NOT NULL,
+                 ends INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS instances_party ON instances (party, template);
              CREATE TABLE IF NOT EXISTS crew_invites (
                  crew INTEGER NOT NULL, account INTEGER NOT NULL, by INTEGER NOT NULL, at INTEGER NOT NULL,
                  PRIMARY KEY (crew, account));",
@@ -97,6 +101,7 @@ impl Directory {
                 http: social::http(),
                 world_secret: cfg.world_secret.filter(|s| !s.trim().is_empty()),
                 report_every: cfg.report_every,
+                instance_host: cfg.instance_host.map(|h| h.trim_end_matches('/').to_string()),
                 tries: Mutex::new(HashMap::new()),
                 hashing: tokio::sync::Semaphore::new(HASHING_AT_ONCE),
                 dummy: Argon2::default()

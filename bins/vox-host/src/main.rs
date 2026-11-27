@@ -9,6 +9,13 @@
 //! start with the host and never stop, such as the Void. Without `--idle-stop` every world
 //! starts with the host.
 //!
+//! `--instances <folder>`: make private copies of dungeons for raid parties when the directory
+//! asks (`POST /api/host/instance`, with `VOX_WORLD_SECRET`; keep `/api/` off the public
+//! address). A dungeon's level is `<folder>/<name>.json`, `data/levels/dungeons` by default
+//! (`--instances` alone). An instance keeps nothing on disk and is gone once it has been empty
+//! for `--instance-idle <minutes>` (5) or its time is up. At most `--instances-most` (50) at
+//! once, `--instance-players` (8, a party) in each.
+//!
 //! Each `--world` is one world: `<id>` is its name (for the directory too) and its path,
 //! `/w/<id>/ws`; it is kept in `<data>/<id>.db`, with snapshots in `<data>/<id>.db.snapshots/`,
 //! the same files `vox-server --db /var/lib/vox/<id>.db` uses, so worlds move over as they are.
@@ -23,7 +30,7 @@
 
 use std::path::{Path, PathBuf};
 
-use vox_host::{Host, Spec};
+use vox_host::{Host, Instances, Options, Spec};
 
 #[tokio::main]
 async fn main() {
@@ -68,7 +75,24 @@ async fn main() {
     if let Some(k) = keep.iter().find(|k| !worlds.iter().any(|w| parse_world(w).is_ok_and(|(id, ..)| &id == *k))) {
         panic!("--keep {k}: there's no --world {k}");
     }
-    let host = Host::start(specs, idle).await.unwrap_or_else(|e| panic!("vox-host: {e}"));
+    let instances = args.iter().position(|a| a == "--instances").map(|i| {
+        let dir = args.get(i + 1).filter(|v| !v.starts_with("--")).map_or_else(|| game.join("levels/dungeons"), PathBuf::from);
+        let secret = std::env::var("VOX_WORLD_SECRET").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| panic!("--instances needs VOX_WORLD_SECRET (the directory's)"));
+        let mut base = vox_server::Config::new(":memory:", palette.clone());
+        base.block_size = vox_core::block_size(&blocks);
+        vox_server::flags::apply(&mut base, &args).unwrap_or_else(|e| panic!("{e}"));
+        let minutes = |k: &str, d: f64| arg(k).map_or(d, |v| v.parse().ok().filter(|m: &f64| m.is_finite() && *m >= 1.0).unwrap_or_else(|| panic!("{k} takes minutes, at least 1")));
+        let count = |k: &str, d: usize| arg(k).map_or(d, |v| v.parse().ok().filter(|n| *n > 0).unwrap_or_else(|| panic!("{k} takes a number")));
+        Instances {
+            base,
+            templates: dir,
+            secret,
+            idle: std::time::Duration::from_secs_f64(minutes("--instance-idle", 5.0) * 60.0),
+            most: count("--instances-most", 50),
+            players: count("--instance-players", 8),
+        }
+    });
+    let host = Host::start(specs, Options { idle, instances }).await.unwrap_or_else(|e| panic!("vox-host: {e}"));
     let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
     eprintln!("vox-host: {} on {listen} (ws://{listen}/w/<id>/ws), saved in {}", host.ids().join(", "), data_dir.display());
     if let Some(idle) = idle {

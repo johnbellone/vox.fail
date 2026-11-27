@@ -67,7 +67,10 @@ Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port
 Adding a world is then a `--world <id>` in the unit, not a new unit and tunnel rule. With
 `--idle-stop 10`, a world starts when the first player (or watcher) comes and is saved and
 stopped after ten minutes with nobody there; `--keep void` keeps the Void always running. A
-world's status page (`/w/<id>/`) says `"running": false` while it's stopped, without starting it. Design:
+world's status page (`/w/<id>/`) says `"running": false` while it's stopped, without starting it.
+With `--instances` (and the directory's `--instances-at http://127.0.0.1:7790`) it also makes raid
+parties' copies of the dungeons in `data/levels/dungeons`. The directory asks for them at
+`/api/host/instance` with the world secret; keep the tunnel rule at `^/w/` so that stays private. Design:
 `docs/design/world-network.md`.
 
 ## In the Cloudflare dashboard (vox.fail)

@@ -47,7 +47,7 @@ Two products share one Cargo workspace:
 | `crates/avatar-voice/` | `avatar-voice` | Block Avatar's voice analysis, pure Rust: lip sync (`lipsync`), pitch and formants (`voice`), laugh and sing detection (`detect`), WAV files (`wav`, one hardened reader). Its tests run on real recordings in `testdata/real`. |
 | `bins/vox-client/` | `vox-client` | The player client: a thin Bevy app (`lib.rs`) around `vox-world`. Builds natively and to wasm32. Also the FPS counter, the portal sweep and watch mode (the front page's live view). |
 | `bins/vox-server/` | `vox-server` | One world: a single thread owns the blocks, players and edit order; WebSocket on `/ws` for players and watchers; SQLite persistence, with `vox-format` snapshots beside it (`<db>.snapshots/`) and restore (`snapshot`). |
-| `bins/vox-host/` | `vox-host` | Many worlds in one process on one port, each a `vox-server` world routed by path (`/w/<id>/ws`, plus an alias such as its old port); `GET /` lists them. With `--idle-stop <minutes>` worlds start on their first connection and stop when unused (`--keep <id>` always runs). Takes the same world flags (`vox_server::flags`). |
+| `bins/vox-host/` | `vox-host` | Many worlds in one process on one port, each a `vox-server` world routed by path (`/w/<id>/ws`, plus an alias such as its old port); `GET /` lists them. With `--idle-stop <minutes>` worlds start on their first connection and stop when unused (`--keep <id>` always runs). With `--instances` it makes raid parties' copies of dungeons (`data/levels/dungeons/*.json`) when the directory asks (`POST /api/host/instance`, world secret), thrown away when empty or done. Takes the same world flags (`vox_server::flags`). |
 | `bins/vox-directory/` | `vox-directory` | Accounts (Steam, Discord, name and password), characters, authority and world currencies, plots, portals, raids, friends and groups, structures and their entitlements (`structures`), token signing; serves the site and the game's files. |
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
@@ -117,7 +117,9 @@ ignores `*.db`).
   The client then reconnects (`WorldClient::travel`) and says hello with the ticket; the world
   there admits each ticket once and starts the player at its arrival point. Without a directory
   (local play) the answer has no ticket. If the way can't be reached the client returns to the
-  old world.
+  old world. A portal with `"url": "dungeon:<name>"` leads to the traveller's raid party's own
+  instance of that dungeon: the directory (`--instances-at`) has the host make one if the party
+  hasn't one open (at most three new ones an hour), and gives tickets for it only to the party.
 - **Worlds -> directory:** each world reports who is present once a minute (authority, raids,
   plots) over localhost with `VOX_WORLD_SECRET`. Those endpoints (`/api/world/*`) must not be
   exposed publicly; the tunnel config refuses them.
