@@ -83,7 +83,8 @@ jobs:
           path: ${{ runner.temp }}/sheet/
           if-no-files-found: ignore
       - name: Comment
-        if: always()
+        # not on a cancelled run (a newer push supersedes it), nor when setup failed before the lookup
+        if: ${{ !cancelled() && steps.avatar.outcome == 'success' }}
         run: |
           marker='<!-- avatar-review-bot -->'
           id='${{ steps.avatar.outputs.id }}'

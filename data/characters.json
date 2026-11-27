@@ -209,12 +209,28 @@
    "about": "Overworked Hill staffer: rolled sleeves, loose off-centre tie, red lanyard and ID badge, chinos, cowlick."
   },
   {
+   "id": "brain",
+   "name": "The Brain",
+   "group": "Cast",
+   "model": "models/brain.glb",
+   "portrait": "portraits/brain.png",
+   "about": "The Brain, from the comic From the Brain of Michael Collins: Michael's brain in a jar, pink with round glasses, on a professor in a tweed jacket and bow tie. Computer scientist, dungeon master, lore expert; fact-checks everything."
+  },
+  {
    "id": "vice_president",
    "name": "Vice President",
    "group": "Cast",
    "model": "models/vice_president.glb",
    "portrait": "portraits/vice_president.png",
    "about": "Fictional vice president: black suit, white collar, gold lapel pin, silver side-swept short hair. Not based on any real vice president."
+  },
+  {
+   "id": "capybara",
+   "name": "Yuzu",
+   "group": "Cast",
+   "model": "models/capybara.glb",
+   "portrait": "portraits/capybara.png",
+   "about": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off."
   },
   {
    "id": "roasted_army",
@@ -303,14 +319,6 @@
    "model": "models/rhino.glb",
    "portrait": "portraits/rhino.png",
    "about": "Rhino in a navy suit, white shirt, red tie and flag pin; big ivory horn, wrinkled grey hide."
-  },
-  {
-   "id": "capybara",
-   "name": "Yuzu",
-   "group": "Animals",
-   "model": "models/capybara.glb",
-   "portrait": "portraits/capybara.png",
-   "about": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off."
   }
  ]
 }

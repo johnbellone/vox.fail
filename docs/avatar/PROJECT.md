@@ -83,7 +83,7 @@ There are about 45 user-facing features in eight areas. Almost all of them can b
 
 | Feature | What it does | Trigger | Code |
 | --- | --- | --- | --- |
-| 39 characters | Blue (the main character), the lead, 25 cast, 5 animals, peanut, 6 roasted peanuts | **Tab**, `model:` | `main.rs`, `startup.rs` |
+| 40 characters | Blue (the main character), the lead, 25 cast, 5 animals, peanut, 6 roasted peanuts, the Brain | **Tab**, `model:` | `main.rs`, `startup.rs` |
 | Backgrounds | Green, magenta, studio, transparent | **B**, `bg` | `main.rs` |
 | Framing | Head and shoulders, waist up, full body; plus raid-wide and punch-in shots | **V**, `frame` | `camera.rs` (`update_camera`) |
 | Retro sprite mode | Palette-snapped pixel art with outline | **Y**, `retro:N` | `main.rs`, `assets/shaders/` |

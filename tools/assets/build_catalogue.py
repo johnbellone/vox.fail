@@ -14,10 +14,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 cast = {c["id"]: c for c in json.loads((ROOT / "data/cast_manifest.json").read_text())["characters"]}
-GROUPS = {"blue": "Main", "cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals", "capybara": "Animals"}
+GROUPS = {"blue": "Main", "cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals", "capybara": "Cast", "brain": "Cast"}
 NAMES = {"blue": "Blue", "scene_all": "Lead", "peanut": "Peanut", "roasted_miami": "Miami Travis",
          "roasted_army": "Army peanut", "roasted_cook": "Fry cook peanut", "roasted_garbage": "Garbage collector peanut",
-         "roasted_medic": "Medic peanut", "roasted_riot": "Riot peanut", "capybara": "Yuzu"}
+         "roasted_medic": "Medic peanut", "roasted_riot": "Riot peanut", "capybara": "Yuzu", "brain": "The Brain"}
 
 # Vox's main character comes first, and is who a new player starts as
 MAIN = "blue"
@@ -34,6 +34,7 @@ ABOUT = {"scene_all": "The original lead, no longer the main character: red cap,
          "roasted_medic": "Roasted peanut as a medic: teal scrubs, white vest with a green first-aid cross front and back, stethoscope, headband, blue gloves.",
          "roasted_miami": "Roasted peanut as a 1980s Miami detective: pastel teal jacket with pushed-up sleeves over a pink tee, white pants, loafers without socks, aviator shades.",
          "roasted_riot": "Roasted peanut as a riot officer: black helmet with a clear visor and neck guard, chest and back plates, shoulder and knee pads; clear shield, baton, radio.",
+         "brain": "The Brain, from the comic From the Brain of Michael Collins: Michael's brain in a jar, pink with round glasses, on a professor in a tweed jacket and bow tie. Computer scientist, dungeon master, lore expert; fact-checks everything.",
          "capybara": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off.",
          "blue": "Vox's main character: an American pit bull terrier with a blue nose, a blue-grey coat, white blaze, chest and paws, rose ears and an orange collar."}
 

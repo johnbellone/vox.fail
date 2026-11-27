@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the animal avatars (Blue the pit bull, peanut, dog, cat, rhino, donkey, capybara) on the shared block rig.
+"""Build the animal avatars (Blue the pit bull, peanut, dog, cat, rhino, donkey, capybara, and the Brain) on the shared block rig.
 
 Starts from the lead's prop-free rig (assets/models/variants/character_rigged.glb) so every character
 keeps the same node tree, the 100 body clips, the 24 face clips and the swappable face parts. Each
@@ -538,6 +538,81 @@ def capybara():
                 note="Original capybara: warm brown barrel body, big blunt dark muzzle, small round ears; sometimes a yuzu on its head.")
 
 
+def brain():
+    """The Brain, from the comic From the Brain of Michael Collins (the requester's own): Michael's
+    brain in a jar, pink with round glasses, fact-checking everything. Here the jar is the head of a
+    professor in a tweed jacket and bow tie: computer scientist, dungeon master and the foremost
+    expert on tabletop wargame lore. Props: a pointer for lectures, a d20, a painted miniature."""
+    tweed, fleck, patch, shirt, tie = (128, 92, 60), (100, 72, 46), (84, 56, 38), WHITE, (196, 40, 52)
+    glove, slacks, shoe = (244, 238, 226), (84, 88, 98), (92, 60, 40)
+    pink, fold, frame = (240, 150, 176), (204, 104, 140), (28, 28, 34)
+    glass, fluid = (214, 236, 244, 70), (170, 228, 200, 96)
+    metal, bolt = (150, 156, 164), (70, 74, 82)
+
+    def torso(t):
+        t.paint(lambda x, y, z: True, tweed)
+        t.paint(lambda x, y, z: (x * 5 + y * 3 + z * 7) % 9 == 0, fleck)              # tweed flecks
+        t.paint(lambda x, y, z: z == 3 and -2 <= x <= 1 and y >= 4, shirt)             # shirt in the open jacket
+        t.paint(lambda x, y, z: z == 3 and x in (-3, 2) and y >= 6, fleck)             # lapels
+        t.box(-2, 2, 9, 10, 3, 5, tie).box(-1, 1, 9, 10, 4, 5, (150, 24, 36))           # bow tie
+        t.paint(lambda x, y, z: y <= 1, slacks)                                        # trousers at the waist
+
+    def arm(side, ua, la):
+        ua.paint(lambda x, y, z: True, tweed)
+        la.paint(lambda x, y, z: True, tweed)
+        ua.paint(lambda x, y, z: z == -2 and y <= -3, patch)                           # elbow patches
+        la.paint(lambda x, y, z: z == -2 and y >= -1, patch)
+        la.paint(lambda x, y, z: y <= -4, glove)
+
+    def leg(side, ul, ll):
+        ul.paint(lambda x, y, z: True, slacks)
+        ll.paint(lambda x, y, z: True, slacks)
+        ll.paint(lambda x, y, z: y <= -5, shoe)
+
+    p = standard_body(tweed, torso, arm, leg, glove)
+    # the jar: glass walls (green with fluid up to the shoulders of the brain), a bolted lid, a base ring
+    h = Vox().box(-7, 7, -1, 11, -6, 8, glass).cut(-6, 6, -1, 11, -5, 7)
+    h.paint(lambda x, y, z: y <= 8, fluid)
+    # no pane over the face (it would wash the brain out): a glint and the rim keep it reading as glass
+    h.cut(-6, 6, -1, 11, 7, 8).box(-5, -3, 2, 9, 7, 8, (236, 248, 252, 120))
+    h.box(-7, 7, -2, -1, -6, 8, metal)
+    h.box(-8, 8, 11, 13, -7, 9, metal).bevel(-8, 8, 11, 13, -7, 9, "top")
+    for x in (-6, 5):
+        h.box(x, x + 1, 11, 12, 9, 10, bolt)
+    # the brain: front flat at the face plane (z = 6) so the face kit sits on it
+    b = Vox().box(-6, 6, -1, 10, -5, 6, pink).bevel(-6, 6, -1, 10, -5, 6)
+    b.cut(-1, 1, 7, 10, -5, 4)                                                       # the two halves
+    b.paint(lambda x, y, z: not (z == 5 and -5 <= x <= 4 and -1 <= y <= 8) and ((x * 3 + y * 5) % 4 == 0 or (z * 3 + y * 2) % 5 == 0), fold)
+    b.paint(lambda x, y, z: z == 5 and 4 <= y <= 5 and (-4 <= x <= -2 or 1 <= x <= 3), WHITE)   # white lenses, as drawn
+    h.v.update(b.v)
+    for x0 in (-5, 0):                                                               # round glasses round the eyes
+        for x in range(x0, x0 + 5):
+            for y in range(3, 7):
+                if x in (x0, x0 + 4) or y in (3, 6):
+                    if not ((x in (x0, x0 + 4)) and (y in (3, 6))):
+                        h.v[(x, y, 6)] = frame
+    h.v[(-6, 5, 6)] = frame
+    h.v[(5, 5, 6)] = frame
+    p["Head"] = h
+
+    die = ball(3.0, (204, 40, 52), cy=3.0)
+    for k in [(0, 3, 2), (-3, 3, 0), (1, 5, 1), (0, 3, -3), (2, 1, 1), (-1, 5, -2)]:
+        if k in die.v:
+            die.v[k] = WHITE
+    mini = Vox().box(-2, 2, 0, 1, -2, 2, (30, 30, 34)).bevel(-2, 2, 0, 1, -2, 2)     # round base
+    mini.box(-1, 1, 1, 3, -1, 1, (66, 84, 128)).box(-2, 2, 3, 5, -1, 1, (66, 84, 128))
+    mini.box(-2, -1, 4, 5, -1, 1, (212, 172, 64)).box(1, 2, 4, 5, -1, 1, (212, 172, 64))   # gold pauldrons
+    mini.box(-1, 1, 5, 6, -1, 1, (176, 180, 188)).box(2, 3, 1, 7, 0, 1, (176, 180, 188))   # helm and a sword
+    props = [
+        dict(name="pointer", parent="LowerArm_R", at=GRIP, rot=(0, 0, 0), off=(0.5, 0, 0.5),
+             vox=Vox().box(0, 1, -14, 1, 0, 1, (150, 100, 56)).box(0, 1, -15, -14, 0, 1, WHITE)),
+        dict(name="d20", parent="LowerArm_R", at=GRIP, rot=(0, 0, 0), off=(0.5, 0, 0.5), vox=die),
+        dict(name="mini", parent="LowerArm_L", at=GRIP, rot=(90, 0, 0), off=(0.5, 0, 0.5), vox=mini),
+    ]
+    return dict(name="brain", label="The Brain", parts=p, props=props, mouth=(0, 0.0, 0.0), tail_at=None, tail_sway=None,
+                note="The Brain from the comic From the Brain of Michael Collins: a pink brain with round glasses in a jar, on a professor in tweed with a bow tie.")
+
+
 # ----------------------------------------------------------------------------------------------
 # Own clips
 # ----------------------------------------------------------------------------------------------
@@ -703,6 +778,53 @@ def clips_for(name):
                     "_hip": (0, 0.02 * jerk - 0.02 * d, 0)}
         C.append(("Nod off", 2.4, nod, lambda t: face("eyes_squint" if t < 0.9 else ("eyes_shut" if t < 1.6 else "eyes_wide"), "brows_normal" if t < 1.6 else "brows_raised",
                                                       "mouth_flat" if t < 1.6 else ("mouth_o" if t < 2.0 else "mouth_flat"))))
+    elif name == "brain":
+        def actually(t):
+            k = env(t, 0.0, 2.0, 0.25)
+            wag = osc(t, 0.4, 10) * env(t, 0.4, 1.7, 0.1)
+            return {"UpperArm_R": (-140 * k, 0, -6 - 10 * k), "LowerArm_R": (-14 - 20 * k + wag, 0, 0), "Head": (-6 * k, 0, 8 * k), "Hips": (-3 * k, 0, 0)}
+        C.append(("Well, actually", 2.0, actually, lambda t: face("eyes_open" if t < 1.6 else "eyes_squint", "brows_raised",
+                                                                  ("mouth_open" if (t % 0.24) < 0.12 else "mouth_smirk") if 0.3 < t < 1.6 else "mouth_smirk"), lambda t: {"pointer"}))
+
+        def roll(t):
+            if t < 0.9:
+                k = min(1.0, t / 0.25)
+                s = osc(t, 0.15, 12) * k
+                ua, la = -50 * k, -14 - 70 * k + s
+            else:
+                u = min(1.0, (t - 0.9) / 0.2)
+                back = 1.0 - min(1.0, max(0.0, (t - 1.3) / 0.5))
+                ua, la = (-50 - 40 * u) * back, (-84 + 70 * u) * back - 14 * (1 - back)
+            look = env(t, 1.0, 1.8, 0.2)
+            return {"UpperArm_R": (ua, 0, -6 + 18 * min(1.0, t / 0.25) * (1.0 if t < 1.3 else max(0.0, 1 - (t - 1.3) / 0.5))), "LowerArm_R": (la, 0, 0),
+                    "Head": (16 * look, 0, 0), "Hips": (8 * look, 0, 0)}
+        C.append(("Roll for initiative", 1.8, roll, lambda t: face("eyes_squint" if t < 0.9 else ("eyes_wide" if t < 1.2 else "eyes_open"),
+                                                                     "brows_angry" if t < 0.9 else "brows_raised",
+                                                                     "mouth_grit" if t < 0.9 else ("mouth_o" if t < 1.2 else "mouth_grin")), lambda t: {"d20"} if t < 1.0 else set()))
+
+        def lore(t):
+            k = env(t, 0.0, 2.4, 0.3)
+            g = env(t, 0.4, 2.1, 0.15)
+            return {"UpperArm_L": (-70 * k, 0, 6 - 20 * k), "LowerArm_L": (-14 - 60 * k, 0, 0), "Head": (-4 * k, 0, -6 * k),
+                    "UpperArm_R": (-30 * k + osc(t, 0.5, 14) * g, 0, -6 - 20 * k), "LowerArm_R": (-14 - 50 * k, 0, 0)}
+        C.append(("Lore dump", 2.4, lore, lambda t: face("eyes_open", "brows_raised",
+                                                        ("mouth_open" if (t % 0.2) < 0.1 else "mouth_o") if 0.4 < t < 2.1 else "mouth_grin"), lambda t: {"mini"}))
+
+        def think(t):
+            k = env(t, 0.0, 1.5, 0.25)
+            e = env(t, 1.35, 2.4, 0.15)
+            return {"UpperArm_R": (-40 * k - 150 * e, 0, -6 + 30 * k - 4 * e), "LowerArm_R": (-14 - 120 * k, 0, 0),
+                    "UpperArm_L": (-20 * k, 0, 6 - 10 * k), "LowerArm_L": (-14 - 80 * k, 0, 0),
+                    "Head": (-10 * k - 6 * e, 0, 6 * k), "_hip": (0, 0.06 * env(t, 1.35, 1.75, 0.1), 0)}
+        C.append(("Big think", 2.4, think, lambda t: face("eyes_up" if t < 1.4 else "eyes_wide", "brows_worried" if t < 1.4 else "brows_raised",
+                                                         "mouth_pout" if t < 1.4 else "mouth_grin")))
+
+        def check(t):
+            k = env(t, 0.0, 2.0, 0.25)
+            g = env(t, 0.3, 1.7, 0.1)
+            return {"UpperArm_R": (-70 * k, 0, -6 + 10 * k), "LowerArm_R": (-14 - 60 * k, 0, osc(t, 0.3, 18) * g),
+                    "Head": (4 * k, osc(t, 0.35, 14) * g, 0), "Hips": (2 * k, 0, 0)}
+        C.append(("Fact check", 2.0, check, lambda t: face("eyes_squint", "brows_angry", "mouth_frown" if (t % 0.7) < 0.5 else "mouth_wavy")))
     elif name == "peanut":
         def tip(t):
             k = env(t, 0.05, 1.15, 0.25)
@@ -964,9 +1086,9 @@ def main():
     j0, bin0 = load_glb(TEMPLATE)
     iv = j0["bufferViews"][j0["images"][0]["bufferView"]]
     pal_img = Image.open(io.BytesIO(bin0[iv.get("byteOffset", 0):iv.get("byteOffset", 0) + iv["byteLength"]]))
-    want = sys.argv[1:] or ["blue", "dog", "cat", "rhino", "donkey", "capybara"]
+    want = sys.argv[1:] or ["blue", "dog", "cat", "rhino", "donkey", "capybara", "brain"]
     report = []
-    for fn in (blue, dog, cat, rhino, donkey, capybara):   # the peanut is built by build_roasted.py
+    for fn in (blue, dog, cat, rhino, donkey, capybara, brain):   # the peanut is built by build_roasted.py
         spec = fn()
         if spec["name"] not in want:
             continue

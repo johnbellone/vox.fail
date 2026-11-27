@@ -34,7 +34,7 @@ browser, or download the desktop client.
    `apps/site/public/pkg`; needs the wasm32 target and wasm-bindgen-cli, see the script), then
    `bun install && (cd apps/site && bun run build)`. The directory serves `apps/site/dist`.
 4. Open `http://<server>:7700/`: **Sign in with Steam** or **Sign in with Discord** (when the
-   directory has them, below), or **New account** with a name and password; pick who you are (39 characters, Blue first) and what
+   directory has them, below), or **New account** with a name and password; pick who you are (40 characters, Blue first) and what
    you wear (a hat, something on your face, something in your hand, seen on a turntable),
    **Save character**, then **Enter the Void**. The browser needs WebGPU (current Chrome,
    Edge, Safari and Firefox have it).
