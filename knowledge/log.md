@@ -1,4 +1,6 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T20:58:00Z]: Linked `architecture/world-editor-design.md` to `decisions/world-editor-scope.md` (The owner's answers to the design's open questions.).
+* **Creation** [2026-11-27T20:58:00Z]: Documented concept `decisions/world-editor-scope.md` (Decision: The World Editor's Scope (Public Worlds, Workshops, Visits, Touch, Props)). — Owner took the recommendations on the world editor's open questions (2026-11-27)
 * **Relate** [2026-11-27T20:35:56Z]: Linked `architecture/world-editor-design.md` to `architecture/world-format-design.md` (Snapshots, live restore and levels as files that the editor builds on.).
 * **Relate** [2026-11-27T20:35:56Z]: Linked `architecture/world-editor-design.md` to `decisions/structure-entitlements.md` (Workshop rights follow the structure rights model; the editor saves selections as structures.).
 * **Creation** [2026-11-27T20:35:56Z]: Documented concept `architecture/world-editor-design.md` (Design (proposed): The World Editor on the Web). — Design for a web world/level editor, asked for 2026-11-27

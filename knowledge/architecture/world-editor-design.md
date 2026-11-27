@@ -3,7 +3,7 @@ type: Design
 title: "Design (proposed): The World Editor on the Web"
 description: "An editor at vox.fail/edit: workshops (persistent worlds you own for building), an edit mode in the same client, whole operations checked by the server with undo, live world settings, and saving as a level or structure."
 tags: [design, proposed, editor, web, levels, structures, workshops]
-generated: { by: agent/mcp, at: "2026-11-27T20:35:56Z" }
+generated: { by: agent/mcp, at: "2026-11-27T20:58:00Z" }
 status: draft
 ---
 
@@ -30,3 +30,4 @@ Related: `architecture/world-format-design`, `decisions/structure-entitlements`,
 # Related Concepts
 - [Decision: Structures Have an Owner and Use, Copy and Edit Rights](../decisions/structure-entitlements.md): Workshop rights follow the structure rights model; the editor saves selections as structures.
 - [Design (phase 1 built): The World Format](world-format-design.md): Snapshots, live restore and levels as files that the editor builds on.
+- [Decision: The World Editor's Scope (Public Worlds, Workshops, Visits, Touch, Props)](../decisions/world-editor-scope.md): The owner's answers to the design's open questions.

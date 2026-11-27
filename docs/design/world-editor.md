@@ -1,6 +1,6 @@
 # Design: the world editor on the web
 
-Status: **proposed** · 2026-11-27 · nothing here is built yet
+Status: **proposed, questions settled** · 2026-11-27 · nothing here is built yet (see *Decisions*)
 
 Related: [world-format.md](world-format.md) (snapshots, levels as files, structures and their
 rights), [world-network.md](world-network.md) (worlds by id, the host, instances),
@@ -257,11 +257,21 @@ Each step ends with a command that passes or fails.
    snapshot while the workshop runs.
 7. **Together**: presence and outlines.
 
-## Open questions
+## Decisions (2026-11-27)
 
-- Who may edit the public worlds, and how changes to them are reviewed?
-- How many workshops an account gets, how large, whether they cost Authority, and whether
-  their storage counts against the account (nothing counts storage today).
-- Should a workshop be visitable by link (read-only) for sharing work in progress?
-- Touch editing on tablets?
-- Do props (when built) get their own tool here, or their own page?
+The owner took the recommendations on the questions this design left open:
+
+- **Public worlds aren't edited in place.** Anyone with the right copies one into a workshop,
+  works there, and exports a level; changes to the worlds the game ships go through review as
+  a pull request against `data/levels/` (and the builders in `tools/assets/` where a level is
+  generated). Replacing a live public world from a workshop, by staff, after a snapshot, can
+  come later.
+- **Workshops: three an account**, at the default world size (512 × 128 × 512 blocks), free (no
+  Authority) to begin with. Their history is the usual week of snapshots. Storage isn't
+  counted against accounts until it has been measured on real workshops.
+- **Visit links: yes, later.** An owner can make an unlisted, read-only link to a workshop, and
+  revoke it; it comes after the seven steps above.
+- **No touch editing in the first version.** The editor is for desktop browsers with a mouse
+  and keyboard; on a touch device the page says so and offers play instead.
+- **Props get a tool in the editor** (a Props tab beside the blocks palette) once props exist,
+  not a page of their own.
