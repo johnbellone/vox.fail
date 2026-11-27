@@ -1,4 +1,11 @@
 ## 2026-11-27
+* **Update** [2026-11-27T20:45:40Z]: Updated concept `technologies/rust-workspace.md`. — New crates vox-art, vox-graph and bin vox-props.
+* **Update** [2026-11-27T20:45:40Z]: Updated concept `architecture/asset-pipeline.md`. — vox-props builds data/props from source/props.
+* **Update** [2026-11-27T20:45:40Z]: Updated concept `architecture/vox-client-and-web.md`. — The /edit page, the wasm editor_command bridge and game/editor.ts.
+* **Update** [2026-11-27T20:45:05Z]: Updated concept `architecture/vox-world.md`. — editor/ module, entities and props on the client.
+* **Update** [2026-11-27T20:45:05Z]: Updated concept `architecture/vox-server.md`. — Entities store and log, props library, editor edits and rights, builds and Unbuild, drop_unsupported, closed atlas edges, --editors-all.
+* **Update** [2026-11-27T20:44:34Z]: Updated concept `architecture/vox-core.md`. — Entity components, edit rules (check_put/check_remove, prop support) and prop footprints from the world editor.
+* **Update** [2026-11-27T20:44:17Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 9: entity messages (Put, Remove, Build, Unbuild, Entities, EntityRefused, EntityDone).
 * **Update** [2026-11-27T20:39:09Z]: Updated concept `decisions/world-editor.md`. — Implementation decisions (beads vox-tol.1-6): server-owned owners, seed cap, server-side Unbuild, atlas edges, prop rules, seed catalogue, editors-all.
 * **Creation** [2026-11-27T16:13:10Z]: Documented concept `decisions/world-editor.md` (Decision: A Live In-Browser World Editor Built on World Entities). — World editor design agreed and stress-tested (docs/design/world-editor.md, beads vox-tol).
 * **Update** [2026-11-27T14:07:57Z]: Updated concept `architecture/ground-relief-design.md`. — Phases 1-4 built: relief, wet ground, puddles, rings, ice; protocol 8
