@@ -108,7 +108,7 @@ cargo run --release
 The first build takes a while (it compiles Bevy); after that it starts in seconds. On Linux,
 install the audio and input headers first: `sudo apt install libasound2-dev libudev-dev`.
 
-All 38 characters are in `assets/models/`. Press **Tab** to cycle them, or start with one:
+All 39 characters are in `assets/models/`. Press **Tab** to cycle them, or start with one:
 `cargo run --release -- --model president.glb`.
 
 ## Controls
@@ -416,9 +416,9 @@ Deck, a chat bot or OBS's Advanced Scene Switcher can call.
 
 | Chat types | Does |
 |---|---|
-| `!hat cowboy` | cowboy, crown, party, tophat, propeller, chef, viking, pirate, halo, cone, wizard, hardhat, santa, grad, beanie |
+| `!hat cowboy` | cowboy, crown, party, tophat, propeller, chef, viking, pirate, halo, cone, wizard, hardhat, santa, grad, beanie, yuzu |
 | `!glasses shades` | shades, nerd, moustache, clown (nose) |
-| `!hold coffee` | coffee, burger, soda, donut, phone, mic, book, sign, bell, broom, gavel, flashlight |
+| `!hold coffee` | coffee, burger, soda, donut, phone, mic, book, sign, bell, broom, watermelon, gavel, flashlight |
 | `!wear crown` | any of the above, whatever slot it goes in |
 | `!hat off` | takes it off (`!glasses off`, `!hold off`) |
 
@@ -887,7 +887,8 @@ Sources: `source/vox/characters/<name>.vox`. Clip timing and dialogue: `data/cas
 
 Same rig, so all 124 shared clips play on them; each has its own clips after index 123 (F9-F12 in
 the app). Animals have a `Tail` joint that sways in every clip. The face kit sits on the snout, so
-lip sync works the same. Sources in `source/vox/characters/`; poses in `docs/avatar/animals-poses.png`.
+lip sync works the same. Sources in `source/vox/characters/`; poses in `docs/avatar/animals-poses.png`
+(the capybara's, with its props and faces, in `docs/avatar/capybara-poses.png`).
 
 | File | Character | Own clips |
 |---|---|---|
@@ -896,6 +897,7 @@ lip sync works the same. Sources in `source/vox/characters/`; poses in `docs/ava
 | `rhino.glb` | Rhino in a navy suit, white shirt, red tie and flag pin; horn on the snout tip | Charge, Horn toss, Stomp, Snort |
 | `donkey.glb` | Donkey in a blue blazer, open-collar shirt and jeans; tall ears, dark mane | Hee-haw, Back kick, Stubborn, Munch |
 | `peanut.glb` | Original peanut character: raw two-lobed shell, stick limbs, orange ball cap | Tip cap, Backflip, Wobble, Startled |
+| `capybara.glb` | Original capybara: warm brown barrel body, big blunt muzzle with a dark nose pad, small round ears, no tail; its own props are a yuzu, a towel and a slice of watermelon, shown only in the clips that use them | Chill, Hot spring (towel), Yuzu balance (yuzu), Melon snack (watermelon), Nod off (control page) |
 
 ### Roasted Peanut series (`assets/models/roasted_*.glb`)
 
@@ -961,9 +963,10 @@ Origin is the grip point for hand-held items and the base centre for set pieces.
 - **Roasted peanut props (`roasted/`, origin at the grip):** badge, bandage, basket, baton, bell,
   binoculars, broom, can, clipboard, donut, flag, handset, medkit, patty, radio, salt, shield,
   spatula, trashbag, walkie
-- **Wardrobe (`wardrobe/`, hats: origin at the bottom centre; face pieces: on the face):** beanie,
-  chef, clown_nose, cone, cowboy, crown, grad_cap, halo, hard_hat, moustache, nerd_glasses, party,
-  pirate, propeller, santa, shades, top_hat, viking, wizard
+- **Wardrobe (`wardrobe/`, hats: origin at the bottom centre; face pieces: on the face; things to
+  hold: origin at the grip):** beanie, chef, clown_nose, cone, cowboy, crown, grad_cap, halo,
+  hard_hat, moustache, nerd_glasses, party, pirate, propeller, santa, shades, top_hat, viking,
+  watermelon (to hold), wizard, yuzu
 
 ### Stage sets (`assets/sets/`, sources in `source/vox/sets/`)
 
