@@ -5,6 +5,8 @@ import { describe, expect, test } from "bun:test";
 import type { Change, Component, Prop } from "../../game/editor";
 import type { Dest, Event, Portal } from "../../game/editor";
 import { isCommand } from "../../game/editor";
+import type { Node } from "../../game/editor";
+import { newNodeFormOf, nodeFormOf, nodeOf, recipeProblem } from "./state";
 import type { Item } from "../../api/types";
 import {
   applyChanges,
@@ -708,5 +710,52 @@ describe("props", () => {
     expect(propOf({ ...ok, text: "a".repeat(141) }, placed, true).ok).toBe(false);
     expect(propOf({ ...ok, text: "a".repeat(140) }, placed, true).ok).toBe(true);
     expect(propOf({ ...ok, text: "tab\there" }, placed, true).ok).toBe(false);
+  });
+});
+
+describe("node forms", () => {
+  const node: Node = { kind: "house", detail: 1, at: [4, 0, -8], size: [8, 6, 10], parent: null, recipe: null, seed: 42 };
+
+  test("a node form reads back as the same node", () => {
+    expect(nodeOf(nodeFormOf(node), null)).toEqual({ ok: true, value: node });
+    expect(nodeOf(nodeFormOf({ ...node, parent: 7 }), 7)).toEqual({ ok: true, value: { ...node, parent: 7 } });
+  });
+
+  test("a form refuses a bad kind, detail, position, size or seed", () => {
+    const f = nodeFormOf(node);
+    expect(nodeOf({ ...f, kind: "House" }, null).ok).toBe(false);
+    expect(nodeOf({ ...f, kind: "" }, null).ok).toBe(false);
+    expect(nodeOf({ ...f, detail: "5" }, null).ok).toBe(false);
+    expect(nodeOf({ ...f, at: ["1.5", "0", "0"] }, null).ok).toBe(false);
+    expect(nodeOf({ ...f, size: ["0", "6", "10"] }, null).ok).toBe(false);
+    expect(nodeOf({ ...f, size: ["65", "6", "10"] }, null).ok).toBe(false);
+    expect(nodeOf({ ...f, seed: "9007199254740992" }, null).ok).toBe(false);
+  });
+
+  test("a blank recipe is no recipe, and a recipe is checked on the page", () => {
+    const f = nodeFormOf(node);
+    expect(nodeOf({ ...f, recipe: "  " }, null)).toEqual({ ok: true, value: { ...node, recipe: null } });
+    expect(recipeProblem("{}")).toBeNull();
+    expect(recipeProblem('{"version":1,"scale":"prop","seed":3,"size":[4,4,4],"ops":[]}')).toBeNull();
+    expect(recipeProblem("[1]")).not.toBeNull();
+    expect(recipeProblem("{")).not.toBeNull();
+    expect(recipeProblem('{"scale":"huge"}')).not.toBeNull();
+    expect(recipeProblem('{"size":[4,4]}')).not.toBeNull();
+    expect(recipeProblem('{"a":"x\u0007"}')).not.toBeNull();
+    expect(recipeProblem("x".repeat(16 * 1024 + 1))).not.toBeNull();
+  });
+
+  test("a new node starts at the marked spot, unrefined, with no recipe and a random seed", () => {
+    const f = newNodeFormOf({ at: [3.7, 0, -2.2], axis: "X", size: [4, 8] });
+    expect(f.at).toEqual(["3", "0", "-3"]);
+    expect(f.detail).toBe("0");
+    expect(f.recipe).toBe("");
+    const seed = Number(f.seed);
+    expect(Number.isInteger(seed) && seed >= 0 && seed < 2 ** 31).toBe(true);
+    expect(newNodeFormOf(undefined).at).toEqual(["0", "0", "0"]);
+  });
+
+  test("a node's label is its kind", () => {
+    expect(labelOf({ entity: 1, seq: 1, component: { Node: node } })).toBe("house (node)");
   });
 });

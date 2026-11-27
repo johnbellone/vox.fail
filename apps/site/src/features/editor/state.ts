@@ -12,6 +12,7 @@ import type {
   Component,
   Dest,
   Event,
+  Node,
   Objective,
   Portal,
   Prop,
@@ -68,6 +69,7 @@ export function labelOf(row: Row, catalogue: readonly PropEntry[] = []): string 
   const c = row.component;
   if ("Portal" in c) return `Portal "${c.Portal.name}"`;
   if ("Prop" in c) return `Prop "${propNameOf(c.Prop.prop, catalogue)}"`;
+  if ("Node" in c) return `${c.Node.kind} (node)`;
   if ("Objective" in c) return `Objective "${c.Objective.name}"`;
   if ("Spawn" in c) return "Spawn";
   return "Settings";
@@ -75,7 +77,7 @@ export function labelOf(row: Row, catalogue: readonly PropEntry[] = []): string 
 
 /** Sorts rows by kind, then by entity id, so the list keeps its order between batches. */
 export function sortedRows(entities: Entities): Row[] {
-  const order = ["Portal", "Prop", "Objective", "Spawn", "Settings"];
+  const order = ["Portal", "Prop", "Objective", "Spawn", "Settings", "Node"];
   return [...entities.rows.values()].sort(
     (a, b) => order.indexOf(kindOf(a.component)) - order.indexOf(kindOf(b.component)) || a.entity - b.entity,
   );
@@ -837,4 +839,119 @@ export function propOf(form: PropForm, base: Prop, advanced: boolean): Built<Pro
     ok: true,
     value: { ...base, variant, state, channel, text: text === "" ? null : text },
   };
+}
+
+// ---- Graph nodes: the form that sets one, and the form that adds one ------------------------
+// A node is an Advanced entity: its kind, how far it is refined, its footprint, its recipe (JSON)
+// and its seed. The form turns its text into a node only when each number is a whole number in
+// range and the recipe is JSON of the shape the vox-art recipes read (checked here when present;
+// the server checks all of it and its refusal is shown as it comes).
+
+/** The most characters a node's kind may have (`MAX_KIND` in vox-core). */
+export const MAX_NODE_KIND = 32;
+/** The most bytes a node's recipe may have (`MAX_RECIPE` in vox-core). */
+export const MAX_NODE_RECIPE = 16 * 1024;
+/** The largest node seed: the largest whole number a JavaScript number holds exactly. */
+const MAX_NODE_SEED = 2 ** 53 - 1;
+/** How far a node may be refined, 0 (intent) to this (dressing) (`MAX_DETAIL` in vox-core). */
+const MAX_NODE_DETAIL = 4;
+/** The most blocks a node's side may be (`MAX_NODE_SIDE` in vox-core). */
+const MAX_NODE_SIDE = 64;
+/** The scales a recipe may name (`vox-art::recipe::RecipeScale`, snake_case). */
+const RECIPE_SCALES = ["fine", "prop", "world"];
+
+/** A node's form: its kind, detail, footprint (blocks), recipe text and seed, as the fields show them. */
+export interface NodeForm {
+  kind: string;
+  detail: string;
+  at: [string, string, string];
+  size: [string, string, string];
+  recipe: string;
+  seed: string;
+}
+
+/** The form for a node, as it stands. */
+export function nodeFormOf(n: Node): NodeForm {
+  return {
+    kind: n.kind,
+    detail: String(n.detail),
+    at: textOf(n.at),
+    size: textOf(n.size),
+    recipe: n.recipe ?? "",
+    seed: String(n.seed),
+  };
+}
+
+/** The form for a new node: its footprint starts at the marked spot (rounded down to whole blocks)
+ *  or at the origin, it is 8 blocks on a side, is not refined, has no recipe and gets a random seed. */
+export function newNodeFormOf(spot: Spot | undefined): NodeForm {
+  const at: Vec3 = spot ? [Math.floor(spot.at[0]), Math.floor(spot.at[1]), Math.floor(spot.at[2])] : [0, 0, 0];
+  return {
+    kind: "",
+    detail: "0",
+    at: textOf(at),
+    size: ["8", "8", "8"],
+    recipe: "",
+    seed: String(Math.floor(Math.random() * 2 ** 31)),
+  };
+}
+
+/** A whole number of blocks from three text fields (a position: any whole number in the i32 range). */
+function blocksOf(v: readonly string[], what: string): Built<Vec3> {
+  const at = vecOf(v, what);
+  if (!at.ok) return at;
+  const ok = at.value.every((n) => Number.isInteger(n) && n >= -(2 ** 31) && n <= 2 ** 31 - 1);
+  return ok ? at : fail(`${what} needs whole numbers of blocks.`);
+}
+
+/** A recipe's problem as a sentence, or null when the page's checks pass. The page checks that it is
+ *  JSON of at most MAX_NODE_RECIPE bytes with no control character but a line break or tab, and the
+ *  fields the vox-art recipes read when they are present (version, scale, seed, size). */
+export function recipeProblem(text: string): string | null {
+  if (new TextEncoder().encode(text).length > MAX_NODE_RECIPE) return `The recipe is at most ${MAX_NODE_RECIPE} bytes.`;
+  if (/\p{Cc}/u.test(text.replace(/[\n\t]/g, ""))) {
+    return "The recipe cannot have control characters, other than line breaks and tabs.";
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return "The recipe is not valid JSON.";
+  }
+  if (!isJsonObj(json)) return "The recipe must be a JSON object.";
+  const whole = (v: unknown, max: number): boolean => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
+  if ("version" in json && !whole(json.version, 65535)) return "The recipe's version is a whole number.";
+  if ("scale" in json && !(isStr(json.scale) && RECIPE_SCALES.includes(json.scale))) {
+    return 'The recipe\'s scale is "fine", "prop" or "world".';
+  }
+  if ("seed" in json && !whole(json.seed, MAX_NODE_SEED)) return "The recipe's seed is a whole number.";
+  if ("size" in json && !(Array.isArray(json.size) && json.size.length === 3 && json.size.every((s) => whole(s, 65535)))) {
+    return "The recipe's size is three whole numbers.";
+  }
+  return null;
+}
+
+/** A node from its form. `parent` is the node it sits in, which the form does not change; a blank
+ *  recipe is no recipe. */
+export function nodeOf(f: NodeForm, parent: number | null): Built<Node> {
+  const kind = f.kind.trim();
+  if (!/^[a-z0-9_]+$/.test(kind)) return fail("The kind is a name of lower-case letters, digits and underscores.");
+  if (kind.length > MAX_NODE_KIND) return fail(`The kind is at most ${MAX_NODE_KIND} characters.`);
+  const detail = codeOf(f.detail, MAX_NODE_DETAIL);
+  if (detail === null) return fail(`The detail is a whole number from 0 to ${MAX_NODE_DETAIL}.`);
+  const at = blocksOf(f.at, "Position");
+  if (!at.ok) return at;
+  const sides = f.size.map((s) => codeOf(s, MAX_NODE_SIDE));
+  if (!sides.every((s) => s !== null && s >= 1)) {
+    return fail(`The size is three whole numbers of blocks, 1 to ${MAX_NODE_SIDE} each.`);
+  }
+  const [sx, sy, sz] = sides as [number, number, number];
+  const seed = codeOf(f.seed, MAX_NODE_SEED);
+  if (seed === null) return fail(`The seed is a whole number from 0 to ${MAX_NODE_SEED}.`);
+  const recipe = f.recipe.trim() === "" ? null : f.recipe;
+  if (recipe !== null) {
+    const problem = recipeProblem(recipe);
+    if (problem) return fail(problem);
+  }
+  return { ok: true, value: { kind, detail, at: at.value, size: [sx, sy, sz], parent, recipe, seed } };
 }

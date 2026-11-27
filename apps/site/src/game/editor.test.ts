@@ -213,11 +213,44 @@ describe("event guards", () => {
     const portal = (samples.commands.find((c) => (c as { type: string }).type === "create") as {
       component: Component;
     }).component;
-    const unknown = { entity: 1, seq: 1, component: { Node: { kind: "door" } } };
+    const unknown = { entity: 1, seq: 1, component: { Door: { kind: "door" } } };
     const kept = { entity: 2, seq: 2, component: portal };
     const batch = { type: "entities", changes: [unknown, kept] };
     expect(isEvent(batch)).toBe(true);
     expect(readEvent(batch)).toEqual({ type: "entities", changes: [kept] });
+  });
+
+  test("a node change is read; a node out of range is filtered out", () => {
+    const node = {
+      kind: "house",
+      detail: 2,
+      at: [-4, 0, 12] as [number, number, number],
+      size: [8, 6, 10] as [number, number, number],
+      parent: 3,
+      recipe: "{\"version\":1}\n",
+      seed: 9007199254740991,
+    };
+    const batch = { type: "entities", changes: [{ entity: 5, seq: 2, component: { Node: { ...node, extra: 1 } } }] };
+    expect(readEvent(batch)).toEqual({ type: "entities", changes: [{ entity: 5, seq: 2, component: { Node: node } }] });
+    const bad = [
+      { entity: 6, seq: 1, component: { Node: { ...node, kind: "House" } } },
+      { entity: 7, seq: 1, component: { Node: { ...node, size: [0, 6, 10] } } },
+      { entity: 8, seq: 1, component: { Node: { ...node, seed: 9007199254740992 } } },
+      { entity: 9, seq: 1, component: { Node: { ...node, recipe: "a\u0007b" } } },
+    ];
+    expect(readEvent({ type: "entities", changes: bad })).toEqual({ type: "entities", changes: [] });
+  });
+
+  test("a node command is checked field by field", () => {
+    const node = { kind: "tower", detail: 0, at: [0, 0, 0], size: [4, 4, 12], parent: null, recipe: null, seed: 7 };
+    expect(isCommand({ type: "create", component: { Node: node } })).toBe(true);
+    expect(isCommand({ type: "create", component: { Node: { ...node, recipe: "{}" } } })).toBe(true);
+    expect(isCommand({ type: "create", component: { Node: { ...node, detail: 5 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Node: { ...node, at: [0.5, 0, 0] } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Node: { ...node, size: [65, 4, 4] } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Node: { ...node, seed: -1 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Node: { ...node, extra: 1 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Node: { kind: "tower" } } })).toBe(false);
   });
 
   test("a Prop change is read, and an owner that is not a safe integer is read as null", () => {

@@ -1,9 +1,10 @@
-// The right column: a selected portal or prop gets its form; any other entity shows its raw data
-// for now (its forms come in a later bead).
+// The right column: a selected portal or prop gets its form, and a node its form in Advanced; any
+// other entity shows its raw data.
 
 import { Code, Stack, Text } from "@mantine/core";
 import type { Item, WorldEntry } from "../../api/types";
 import type { Command } from "../../game/editor";
+import { NodeInspector } from "./NodeInspector";
 import { PortalInspector } from "./PortalInspector";
 import { PropInspector } from "./PropInspector";
 import { type Edits, labelOf, type PropEntry, propNameOf, type Row } from "./state";
@@ -51,6 +52,17 @@ export function Inspector({ row, catalogue, advanced, worlds, items, itemsError,
           prop={row.component.Prop}
           name={propNameOf(row.component.Prop.prop, catalogue)}
           advanced={advanced}
+          edits={edits}
+          submit={submit}
+          retry={retry}
+          forget={forget}
+        />
+      ) : row && "Node" in row.component && advanced ? (
+        <NodeInspector
+          key={row.entity}
+          entity={row.entity}
+          seq={row.seq}
+          node={row.component.Node}
           edits={edits}
           submit={submit}
           retry={retry}

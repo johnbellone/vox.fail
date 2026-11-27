@@ -15,6 +15,7 @@ import { EditorHeader, type Mode } from "./EditorHeader";
 import { EntityList } from "./EntityList";
 import { Inspector } from "./Inspector";
 import { chooseProp, useCatalogue } from "./PropCatalogue";
+import { NewNode } from "./NewNode";
 import { NewPortal } from "./NewPortal";
 import { PlaceProp } from "./PlaceProp";
 import { ObjectivePanel, SpawnPanel } from "./SpawnObjective";
@@ -84,6 +85,9 @@ export function EditorPage() {
   // the advanced panel opened by a button (World settings, Add spawn, Add objective) with nothing
   // selected; a selected Spawn, Objective or Settings entity shows its own panel instead
   const [panelOpen, setPanelOpen] = useState<PanelKind>();
+  // the Add node form, opened by its button with nothing selected (Advanced only)
+  const [nodeOpen, setNodeOpen] = useState(false);
+  const closeNode = useCallback(() => setNodeOpen(false), []);
   // the worlds to lead to, and the player's keys to pair with (both for the portal forms)
   const worldList = useApi<Worlds>("/api/worlds");
   const inventory = useApi<Inventory>("/api/inventory");
@@ -107,6 +111,7 @@ export function EditorPage() {
           setSpot(undefined);
           setPropSpot(undefined);
           setPanelOpen(undefined);
+          setNodeOpen(false);
           setPalette(e.palette);
           setBlock(undefined);
           setProp(undefined);
@@ -125,7 +130,10 @@ export function EditorPage() {
         case "selected":
           setSelected(e.entity);
           // selecting an entity shows its own panel, in place of a panel opened by a button
-          if (e.entity !== null) setPanelOpen(undefined);
+          if (e.entity !== null) {
+            setPanelOpen(undefined);
+            setNodeOpen(false);
+          }
           break;
         case "refused":
           // a refusal of an open portal edit is shown by its form; any other goes in the banner
@@ -291,11 +299,21 @@ export function EditorPage() {
   // a selected row is the one edited (a world may have several spawns); a button edits the first
   const panelRow = <K extends PanelKind>(kind: K): RowOf<K> | undefined =>
     selectedRow !== undefined && kind in selectedRow.component ? (selectedRow as RowOf<K>) : rowOfKind(entities, kind);
+  // the Add node form shows when a button opened it and nothing is selected
+  const showNode = isAdvanced && nodeOpen && selectedKind === undefined;
   const spawnRow = panelRow("Spawn");
   const objectiveRow = panelRow("Objective");
   const settingsRow = panelRow("Settings");
   // a button opens its panel with nothing selected
+  // the Add node form opens with nothing selected, in place of a button's panel
+  const openNode = () => {
+    setPanelOpen(undefined);
+    setNodeOpen(true);
+    setSelected(null);
+    send({ type: "select", entity: null });
+  };
   const openPanel = (kind: PanelKind) => {
+    setNodeOpen(false);
     setPanelOpen(kind);
     setSelected(null);
     send({ type: "select", entity: null });
@@ -432,6 +450,17 @@ export function EditorPage() {
               />
             )}
           </Stack>
+        ) : showNode ? (
+          <Stack gap="xs" p="sm" w={{ base: "100%", md: 280 }} style={{ flexShrink: 0 }}>
+            <NewNode
+              spot={spot?.spot}
+              edits={edits}
+              submit={submit}
+              retry={retry}
+              forget={forget}
+              onClose={closeNode}
+            />
+          </Stack>
         ) : (
           <Inspector
             row={selectedRow}
@@ -462,6 +491,9 @@ export function EditorPage() {
               Add spawn
             </Button>
           )}
+          <Button size="xs" variant="default" onClick={openNode}>
+            Add node
+          </Button>
         </Group>
       )}
       <EntityList rows={rows} catalogue={catalogue.entries ?? []} selected={selected} onError={setNotice} />

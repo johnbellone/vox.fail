@@ -87,13 +87,28 @@ export interface Prop {
   owner: number | null;
 }
 
+/** A graph node (`vox-core::entity::Node`): what it is (`kind`, a snake_case name), how far it has
+ *  been refined (`detail`, 0 to 4), its footprint (`at`, the minimum corner, blocks; `size`, blocks,
+ *  each side 1 to 64), the node it sits in (`parent`), its recipe (JSON text, or null until it has
+ *  one) and its seed (a safe integer, so the page holds it exactly). */
+export interface Node {
+  kind: string;
+  detail: number;
+  at: [number, number, number];
+  size: [number, number, number];
+  parent: number | null;
+  recipe: string | null;
+  seed: number;
+}
+
 /** One entity's data (`vox-core::entity::Component`, externally tagged). */
 export type Component =
   | { Portal: Portal }
   | { Spawn: Spawn }
   | { Objective: Objective }
   | { Settings: Settings }
-  | { Prop: Prop };
+  | { Prop: Prop }
+  | { Node: Node };
 
 /** What the page asks the editor to do (`vox-world::editor::bridge::Command`). */
 export type Command =
@@ -239,6 +254,39 @@ function isProp(v: unknown): v is Prop {
   );
 }
 
+const NODE_KEYS = ["kind", "detail", "at", "size", "parent", "recipe", "seed"] as const;
+/** A node's kind: a snake_case word of at most 32 characters (`MAX_KIND`, and the word check). */
+const isKindWord = (v: unknown): v is string => isStr(v) && /^[a-z0-9_]+$/.test(v) && v.length <= 32;
+/** A node's footprint: three whole sides, each 1 to 64 blocks (`MAX_NODE_SIDE`). */
+const isNodeSize = (v: unknown): v is [number, number, number] =>
+  Array.isArray(v) && v.length === 3 && v.every((s) => Number.isInteger(s) && s >= 1 && s <= 64);
+/** A node's recipe: at most 16 KiB of UTF-8 (`MAX_RECIPE`), with no control character but a line
+ *  break or a tab (`vox-core::entity` validate). */
+const isNodeRecipe = (v: unknown): v is string =>
+  isStr(v) &&
+  new TextEncoder().encode(v).length <= 16 * 1024 &&
+  !/\p{Cc}/u.test(v.replace(/[\n\t]/g, ""));
+
+/** A node's fields, each checked as the bridge does. The keys are already there. A safe integer
+ *  seed is at most 2^53 - 1, the largest `MAX_NODE_SEED`. */
+function nodeFieldsOk(v: Obj): v is Obj & Node {
+  return (
+    isKindWord(v.kind) &&
+    isU8(v.detail) &&
+    v.detail <= 4 &&
+    isIntVec3(v.at) &&
+    isNodeSize(v.size) &&
+    isOpt(v.parent, isU32) &&
+    isOpt(v.recipe, isNodeRecipe) &&
+    isU64(v.seed)
+  );
+}
+
+/** A node as a command carries it: exactly its fields, in range. */
+function isNode(v: unknown): v is Node {
+  return exact(v, NODE_KEYS) && nodeFieldsOk(v);
+}
+
 /** A component as a command carries it: exactly one of the five kinds, exactly its fields. */
 export function isComponent(v: unknown): v is Component {
   const t = tagged(v);
@@ -255,6 +303,8 @@ export function isComponent(v: unknown): v is Component {
       return exact(body, ["json"]) && isStr(body.json);
     case "Prop":
       return isProp(body);
+    case "Node":
+      return isNode(body);
     default:
       return false;
   }
@@ -263,7 +313,7 @@ export function isComponent(v: unknown): v is Component {
 /** The tags a destination may have, in the order an event is read: the first present wins. */
 const DEST_TAGS = ["Here", "World", "Pair", "Dungeon", "Url"] as const;
 /** The tags a component may have, in the order an event is read: the first present wins. */
-const COMPONENT_TAGS = ["Portal", "Spawn", "Objective", "Settings", "Prop"] as const;
+const COMPONENT_TAGS = ["Portal", "Spawn", "Objective", "Settings", "Prop", "Node"] as const;
 
 /** Reads a destination from an event: the first known tag in `DEST_TAGS`, with only its known
  *  fields, or null when there is no known tag or that tag's body is malformed. */
@@ -323,7 +373,18 @@ export function readComponent(v: unknown): Component | null {
       return has(body, ["json"]) && isStr(body.json) ? { Settings: { json: body.json } } : null;
     case "Prop":
       return readProp(body);
+    case "Node": {
+      const node = readNode(body);
+      return node ? { Node: node } : null;
+    }
   }
+}
+
+/** Reads a node from an event, or null when a field is missing or out of range. Its fields are
+ *  kept as the bridge sent them (the parent is the server's, the page only shows it). */
+function readNode(v: unknown): Node | null {
+  if (!has(v, NODE_KEYS) || !nodeFieldsOk(v)) return null;
+  return { kind: v.kind, detail: v.detail, at: v.at, size: v.size, parent: v.parent, recipe: v.recipe, seed: v.seed };
 }
 
 /** Reads a prop from an event, or null when a field is missing or out of range. An owner that is
