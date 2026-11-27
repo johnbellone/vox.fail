@@ -12,10 +12,10 @@
 * [vox-server: One Persistent World](vox-server.md) - A single-world game server: WebSocket in, one thread owns the blocks and the edit order, SQLite for persistence, optional directory reporting.
 * [vox-directory: Accounts, Characters, Economy and Web Pages](vox-directory.md) - The account service and website: sign-in, characters, signed tokens, the world list, the economy and social API, and the static pages.
 * [vox-client and the Web Front End](vox-client-and-web.md) - The player client (desktop and WebAssembly) and the plain HTML/JS pages that the directory serves around it.
-* [World Wire Protocol (PROTOCOL = 7)](wire-protocol.md) - The message set between a world server and its players, how it is encoded, and what each protocol version added.
+* [World Wire Protocol (PROTOCOL = 8)](wire-protocol.md) - The message set between a world server and its players, how it is encoded, and what each protocol version added.
 * [Identity, Sessions and Signed Launch Tokens](identity-and-tokens.md) - How people sign in, how the directory proves who they are to world servers without a call-back, and what secrets exist.
 * [Authority, World Currencies, Feats, Plots, Portals and Raids](economy-and-social.md) - The player economy and social graph in the directory: the shared Authority currency, what it buys, world coins, the ledger, friends, groups and raid parties.
-* [Weather Simulation](weather-simulation.md) - A small server-side atmosphere model whose keyframes drive haze, fog, clouds, rain and wind in every client.
+* [Weather Simulation](weather-simulation.md) - A small server-side atmosphere model whose keyframes drive haze, fog, clouds, rain, wind and the water standing on the ground in every client.
 * [Worlds, Levels and Blocks](worlds-catalogue.md) - The level file format, the block palette, the three shipped worlds and how portals connect them.
 * [Asset Pipeline: MagicaVoxel to glTF](asset-pipeline.md) - How characters, props, sets, levels and textures are authored and generated, and which script rebuilds what.
 * [Deployment: vox.fail on Cloudflare Tunnel, and Windows Packaging](deployment.md) - How vox.fail is hosted (one Linux box, systemd, Cloudflare Tunnel with no open ports) and how Block Avatar is packaged for Windows.
@@ -29,4 +29,4 @@
 * [Prop Authoring: Recipes, MagicaVoxel Import and the Touch-up Loop](prop-authoring-lanes.md) - The two lanes into one prop library: Rust recipes with prop-shaped operations, and hand-made .vox files imported with palette snapping and reserved-colour tags.
 * [Prop Checks, Contact-Sheet Review and the Style Guide](prop-checks-and-review.md) - The budgets and structured checks a prop must pass, the rendered contact sheet a reviewer sees, and the style rules given to authors.
 * [Props in Worlds: Entity, Placement, Drawing, Collision and Use](props-in-worlds.md) - How a world stores, validates, draws, collides with and lets players use prop instances, and how dungeons use them.
-* [Design (proposed): Ground Relief and Puddles](ground-relief-design.md) - Natural ground gets generated dips of a few centimetres (a seeded integer function drawn per pixel in the block shader), and rain pools in them from ground water kept by the weather simulation.
+* [Design (phases 1-4 built): Ground Relief and Puddles](ground-relief-design.md) - Natural ground has generated dips of a few centimetres (a seeded integer function drawn per pixel in the block shader), and rain pools in them from ground water kept by the weather simulation; geometric dips (phase 5) are not built.

@@ -1,10 +1,10 @@
 ---
 type: Design
-title: "Design (proposed): Ground Relief and Puddles"
-description: "Natural ground gets generated dips of a few centimetres (a seeded integer function drawn per pixel in the block shader), and rain pools in them from ground water kept by the weather simulation."
+title: "Design (phases 1-4 built): Ground Relief and Puddles"
+description: "Natural ground has generated dips of a few centimetres (a seeded integer function drawn per pixel in the block shader), and rain pools in them from ground water kept by the weather simulation; geometric dips (phase 5) are not built."
 tags: [design, proposed, terrain, generation, weather, rendering, shaders]
-generated: { by: agent/mcp, at: "2026-11-27T13:28:19Z" }
-status: draft
+generated: { by: agent/mcp, at: "2026-11-27T14:07:57Z" }
+status: stable
 ---
 
 # Design (proposed): Ground Relief and Puddles

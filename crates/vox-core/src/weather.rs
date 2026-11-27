@@ -18,6 +18,9 @@
 //!    warming the air by its latent heat; cloud in dry air evaporates and cools it. Cloud water
 //!    turns into rain (Kessler's scheme: autoconversion and accretion); rain evaporates as it
 //!    falls through dry air and what reaches the ground is the rain rate.
+//! 6. **Ground water.** Rain reaching the ground fills the dips in it (puddles, drawn over the
+//!    ground's relief: `docs/design/ground-relief.md`) and warm, dry, windy air dries them.
+//!    It runs at a game's pace, not nature's: steady rain fills them in minutes, not hours.
 //!
 //! The grid repeats across x and z, so the weather has no edge (like the world's fog), and it
 //! is deterministic: the same climate, start and steps give the same weather. A world server
@@ -169,6 +172,33 @@ pub fn visibility(lwc: f32, rh: f32) -> f32 {
     (1.0 / (1.0 / fog + 1.0 / haze)).clamp(5.0, 60_000.0)
 }
 
+/// Rain this heavy (mm/h) fills the ground's dips in [`FILL_SECS`] (game time: real puddles take
+/// hours, which no one would see).
+const FILL_RAIN: f32 = 2.0;
+const FILL_SECS: f32 = 240.0;
+/// Full puddles dry in about this long on a mild (15 °C), half-dry, still day.
+const DRY_SECS: f32 = 900.0;
+
+/// How fast puddles dry (a share of full, a second) in air this warm (°C), this damp (0-1) and
+/// this windy (m/s). Frozen ones barely do.
+fn drying(t: f32, rh: f32, wind: f32) -> f32 {
+    if t < 0.0 {
+        return 0.05 / DRY_SECS;
+    }
+    let warm = 0.4 + 0.04 * t.min(40.0);
+    let dry = ((1.0 - rh) / 0.5).clamp(0.05, 2.0);
+    warm * dry * (1.0 + 0.05 * wind.min(40.0)) / DRY_SECS
+}
+
+/// How full the dips are when a world starts, from how wet its climate keeps the ground (0-1):
+/// none below half, up to 0.7 for soaked ground (rain, fog, the sea).
+fn start_puddles(wetness: f32) -> f32 {
+    if !wetness.is_finite() {
+        return 0.0;
+    }
+    ((wetness - 0.5) * 1.4).clamp(0.0, 0.7)
+}
+
 /// The air at one place.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 pub struct Air {
@@ -184,6 +214,9 @@ pub struct Air {
     pub cloud: f32,
     /// rain reaching the ground here, mm/h
     pub rain: f32,
+    /// how full the ground's dips are here, 0 (dry) to 1 (brimming)
+    #[serde(default)]
+    pub puddles: f32,
     /// m
     pub visibility: f32,
     /// hPa
@@ -214,6 +247,8 @@ pub struct Weather {
     pub w: Vec<f32>,
     /// rain reaching the ground per column, mm/h
     pub rain: Vec<f32>,
+    /// how full the ground's dips are per column, 0-1 (puddles)
+    pub ground: Vec<f32>,
     seed: u32,
 }
 
@@ -268,6 +303,8 @@ impl Weather {
             v: vec![0.0; len],
             w: vec![0.0; len],
             rain: vec![0.0; n[0] * n[2]],
+            // a world whose climate keeps its ground soaked starts with water in its dips
+            ground: vec![start_puddles(climate.wetness); n[0] * n[2]],
             seed,
         };
         let wind = climate.wind();
@@ -349,10 +386,11 @@ impl Weather {
         let pr = self.pressure(j);
         let rh = (q / saturation(t, pr)).clamp(0.0, 1.0);
         let lwc = qc * RHO * 1000.0;
-        let col = {
+        let column = {
             let (i, k) = (x.round().rem_euclid(self.nx as f32) as usize, z.round().rem_euclid(self.nz as f32) as usize);
-            self.rain[k * self.nx + i]
+            k * self.nx + i
         };
+        let col = self.rain.get(column).copied().unwrap_or(0.0);
         Air {
             temperature: t,
             humidity: rh,
@@ -360,6 +398,7 @@ impl Weather {
             wind: [self.sample_field(&self.u, x, y, z), self.sample_field(&self.w, x, y, z), self.sample_field(&self.v, x, y, z)],
             cloud: lwc,
             rain: col,
+            puddles: self.ground.get(column).copied().unwrap_or(0.0),
             visibility: visibility(lwc, rh),
             pressure: pr,
         }
@@ -397,7 +436,25 @@ impl Weather {
         self.buoyancy(dt);
         self.project(24);
         self.moisture(dt);
+        self.puddles(dt);
         self.time += dt as f64;
+    }
+
+    /// Rain fills the ground's dips; warm, dry, windy air empties them (step 6).
+    fn puddles(&mut self, dt: f32) {
+        let pr = self.pressure(0);
+        for k in 0..self.nz {
+            for i in 0..self.nx {
+                let c = self.idx(i, 0, k);
+                let (t, q) = (self.t[c], self.q[c]);
+                let rh = (q / saturation(t, pr)).clamp(0.0, 1.0);
+                let wind = self.u[c].hypot(self.v[c]);
+                let col = k * self.nx + i;
+                let fill = self.rain[col].max(0.0) / FILL_RAIN / FILL_SECS;
+                let g = self.ground[col] + (fill - drying(t, rh, wind)) * dt;
+                self.ground[col] = if g.is_finite() { g.clamp(0.0, 1.0) } else { 0.0 };
+            }
+        }
     }
 
     fn force(&mut self, dt: f32) {
@@ -669,6 +726,7 @@ impl Weather {
             seed: self.seed,
             fields,
             rain: self.rain.iter().map(|r| q8(r.sqrt(), 0.0, 20.0)).collect(),
+            ground: self.ground.iter().map(|g| q8(*g, 0.0, 1.0)).collect(),
         }
     }
 
@@ -678,7 +736,7 @@ impl Weather {
         let bad = || "a weather keyframe of the wrong size".to_string();
         let len = n[0].checked_mul(n[1]).and_then(|v| v.checked_mul(n[2])).ok_or_else(bad)?;
         let rain = n[0].checked_mul(n[2]).ok_or_else(bad)?;
-        if len == 0 || len > 1 << 20 || k.fields.len() != len * 7 || k.rain.len() != rain {
+        if len == 0 || len > 1 << 20 || k.fields.len() != len * 7 || k.rain.len() != rain || k.ground.len() != rain {
             return Err(bad());
         }
         let mut w = Weather::with_grid(k.climate.sane(), k.seed, n, k.cell, k.origin);
@@ -694,6 +752,7 @@ impl Weather {
             w.w[c] = d(f[6], -60.0, 60.0);
         }
         w.rain = k.rain.iter().map(|r| d(*r, 0.0, 20.0).powi(2)).collect();
+        w.ground = k.ground.iter().map(|g| d(*g, 0.0, 1.0)).collect();
         w.time = k.time;
         w.sun = k.sun;
         Ok(w)
@@ -712,6 +771,8 @@ pub struct Keyframe {
     pub seed: u32,
     pub fields: Vec<u16>,
     pub rain: Vec<u16>,
+    /// how full the ground's dips are per column, 0-1 (protocol 8)
+    pub ground: Vec<u16>,
 }
 
 #[cfg(test)]
@@ -851,9 +912,64 @@ mod tests {
         let mut bad = k.clone();
         bad.fields.pop();
         assert!(Weather::from_keyframe(&bad).is_err());
+        let mut bad = k.clone();
+        bad.ground.pop();
+        assert!(Weather::from_keyframe(&bad).is_err(), "the ground water must cover every column");
+        // the ground water travels too
+        let mut wet = w.clone();
+        wet.ground.iter_mut().enumerate().for_each(|(i, g)| *g = (i % 7) as f32 / 6.0);
+        let back = Weather::from_keyframe(&wet.keyframe()).unwrap();
+        for (a, b) in wet.ground.iter().zip(&back.ground) {
+            assert!((a - b).abs() < 1e-4);
+        }
         // a full-size keyframe is a reasonable message
         let full = Weather::new(Climate::default(), 1).keyframe();
         assert!(crate::wire::encode(&full).len() < 240_000);
+    }
+
+    #[test]
+    fn rain_fills_the_puddles_and_dry_air_empties_them() {
+        // steady rain of 2 mm/h everywhere, held there, under rain's own damp air: full in
+        // about four minutes
+        let mut w = small(Climate::preset("rain", 0.0).unwrap());
+        for _ in 0..120 {
+            w.rain.iter_mut().for_each(|r| *r = FILL_RAIN);
+            w.puddles(2.0);
+        }
+        let full = w.ground.iter().sum::<f32>() / w.ground.len() as f32;
+        assert!(full > 0.9, "after four minutes of rain: {full}");
+        assert!(w.air([0.0, 1.0, 0.0]).puddles > 0.9);
+        // then the rain stops, the sky clears, and the clear day dries them within the hour
+        let mut dry = small(Climate::preset("clear", 0.0).unwrap());
+        dry.ground = w.ground.clone();
+        let mut w = dry;
+        let mut t = 0.0;
+        while w.ground.iter().any(|g| *g > 0.0) && t < 3600.0 {
+            w.rain.iter_mut().for_each(|r| *r = 0.0);
+            w.puddles(2.0);
+            t += 2.0;
+        }
+        assert!(w.ground.iter().all(|g| *g == 0.0), "still wet after an hour");
+        assert!(t > 120.0, "dried too fast: {t} s");
+        // and the stepping keeps it in range whatever happens
+        w.rain.iter_mut().for_each(|r| *r = f32::NAN);
+        w.puddles(2.0);
+        assert!(w.ground.iter().all(|g| (0.0..=1.0).contains(g)));
+    }
+
+    #[test]
+    fn soaked_climates_start_with_puddles() {
+        assert_eq!(small(Climate::preset("clear", 0.0).unwrap()).ground[0], 0.0);
+        let rain = small(Climate::preset("rain", 0.0).unwrap()).ground[0];
+        assert!((0.6..=0.7).contains(&rain), "{rain}");
+        assert_eq!(start_puddles(f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn frozen_puddles_barely_dry() {
+        assert!(drying(-5.0, 0.3, 5.0) < drying(5.0, 0.9, 0.0));
+        assert!(drying(25.0, 0.3, 8.0) > drying(10.0, 0.3, 0.0), "warm, dry wind dries faster");
+        assert!(drying(15.0, 1.0, 0.0) < drying(15.0, 0.5, 0.0), "saturated air dries slowly");
     }
 
     #[test]

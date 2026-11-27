@@ -150,6 +150,7 @@ pub fn json(w: &WorldClient) -> serde_json::Value {
             "wind": a.wind,
             "cloud": a.cloud,
             "rain": a.rain,
+            "puddles": a.puddles,
             "visibility": a.visibility,
             "line": weather_line(&a),
         })),

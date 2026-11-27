@@ -1,4 +1,8 @@
 ## 2026-11-27
+* **Update** [2026-11-27T14:07:57Z]: Updated concept `architecture/ground-relief-design.md`. — Phases 1-4 built: relief, wet ground, puddles, rings, ice; protocol 8
+* **Relate** [2026-11-27T14:07:57Z]: Linked `architecture/weather-simulation.md` to `architecture/ground-relief-design.md` (Ground water per column fills the puddles drawn in the generated relief.).
+* **Update** [2026-11-27T14:07:57Z]: Updated concept `architecture/weather-simulation.md`. — Ground water per column (puddles), in keyframes from protocol 8; the fog bake and the client's step moved off the main thread
+* **Update** [2026-11-27T14:07:43Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 8: weather keyframes carry the ground's water (puddles)
 * **Relate** [2026-11-27T13:28:19Z]: Linked `architecture/weather-simulation.md` to `architecture/ground-relief-design.md` (Proposed: ground water per column, filling puddles in the generated relief.).
 * **Relate** [2026-11-27T13:28:19Z]: Linked `architecture/ground-relief-design.md` to `architecture/world-scaling-design.md` (Relief is part of the generated terrain and follows its integer-only rules.).
 * **Relate** [2026-11-27T13:28:19Z]: Linked `architecture/ground-relief-design.md` to `architecture/weather-simulation.md` (Ground water that fills the puddles is a new field of the weather simulation.).

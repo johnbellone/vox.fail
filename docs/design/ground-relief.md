@@ -1,6 +1,6 @@
 # Design: ground relief and puddles
 
-Status: **phases 1-2 built** (2026-11-27): the relief function, block and world settings, and dry relief in the block shader; puddles (phases 3-4) not yet
+Status: **phases 1-4 built** (2026-11-27): the relief function, block and world settings, dry relief, ground water in the weather (protocol 8), wet ground, puddles, rain rings and ice. Phase 5 (geometric dips) is not built. What was built differs from the plan below in a few places: see *As built*.
 
 Related: [world-scaling.md](world-scaling.md) (generated terrain, fixed-point rules),
 [world-network.md](world-network.md) (the atlas: tiles that must agree at their edges),
@@ -112,6 +112,26 @@ This sets one water level for every dip in view, not a fill per basin. Because t
 are where the swales put them, puddles still form in the hollows, grow out from the middle,
 join, and shrink back from the edges as they dry. Below 0 °C the puddles freeze: no rings,
 paler and smoother. Snow filling the dips first is a later step.
+
+### As built (phases 3-4)
+
+- **Fill, not millimetres.** `Weather::ground` is how full the dips are, 0-1 per column. It runs
+  at a game's pace: rain of 2 mm/h fills them in about four minutes (`FILL_RAIN`, `FILL_SECS`),
+  and full puddles dry in about fifteen on a mild, half-dry day (`DRY_SECS`, faster warm, dry
+  and windy, barely at all below 0 °C). Real puddles take hours, which no one would see.
+- **Soak per block, not per area.** Each top tile's soak rides in the tile data's alpha, and
+  the shader stands `fill × (1 − soak)` of water in that block's dips. The weather needs no
+  knowledge of the blocks, and grass beside a cobbled path drinks while the path pools.
+- **A wet start.** A world starts with water in its dips from its climate's `wetness` (none
+  below 0.5, up to 0.7 when soaked), so the sea and a rainy world don't begin bone dry.
+- **The waterline** sits at `(1 − standing) × 0.35` of the deepest dip: most of a hollow is
+  shallow, so brimming dips cover every hollow and half-full ones their middles.
+- **Wet** is `fill × 5 + rain / 1.5 × 0.6`, capped at 1. Tops darken (porous ones most) and
+  lose up to two thirds of their roughness. Puddles are dark and nearly mirror-smooth, with
+  rings from drops falling in half-block cells (more and sooner in heavier rain); ice is pale
+  and smooth, with no rings.
+- **Known gaps:** the shader can't tell a floor under a roof from open ground, so covered floors
+  get wet too (it needs to know what is above each column); only tops get wet, not walls.
 
 ## Costs
 
