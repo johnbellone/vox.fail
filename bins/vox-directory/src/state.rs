@@ -38,6 +38,7 @@ impl Directory {
                  world TEXT, ref INTEGER, detail TEXT NOT NULL, acquired INTEGER NOT NULL);
              CREATE INDEX IF NOT EXISTS items_account ON items (account);
              CREATE TABLE IF NOT EXISTS world_owners (world TEXT PRIMARY KEY, account INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS world_editors (world TEXT NOT NULL, account INTEGER NOT NULL, PRIMARY KEY (world, account));
              CREATE TABLE IF NOT EXISTS world_state (
                  world TEXT PRIMARY KEY, spawn TEXT NOT NULL, level TEXT NOT NULL, reported INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS whereabouts (
@@ -53,7 +54,7 @@ impl Directory {
              CREATE TABLE IF NOT EXISTS portals (
                  id INTEGER PRIMARY KEY, world TEXT NOT NULL, owner INTEGER NOT NULL, plot INTEGER NOT NULL,
                  x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, axis TEXT NOT NULL, dest TEXT NOT NULL,
-                 created INTEGER NOT NULL);
+                 dest_key INTEGER, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS structures (
                  id INTEGER PRIMARY KEY, name TEXT NOT NULL, owner INTEGER NOT NULL, public TEXT,
                  version TEXT NOT NULL, derived_from INTEGER, created INTEGER NOT NULL, updated INTEGER NOT NULL);
@@ -83,9 +84,30 @@ impl Directory {
              CREATE INDEX IF NOT EXISTS instance_opens_party ON instance_opens (party, at);
              CREATE TABLE IF NOT EXISTS crew_invites (
                  crew INTEGER NOT NULL, account INTEGER NOT NULL, by INTEGER NOT NULL, at INTEGER NOT NULL,
-                 PRIMARY KEY (crew, account));",
+                 PRIMARY KEY (crew, account));
+             CREATE TABLE IF NOT EXISTS portal_requests (
+                 idem TEXT PRIMARY KEY, world TEXT NOT NULL, account INTEGER NOT NULL, portal INTEGER NOT NULL,
+                 created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
+        // databases made before pairing lack `dest_key`: add it once
+        let has_key: i64 = db
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('portals') WHERE name = 'dest_key'", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if has_key == 0 {
+            db.execute_batch("ALTER TABLE portals ADD COLUMN dest_key INTEGER").map_err(|e| e.to_string())?;
+        }
+        // and databases made before the doorway's size and turn lack those: old rows keep NULL, which
+        // the rules show as the defaults (4 by 6, facing 0)
+        for (column, kind) in [("size_w", "REAL"), ("size_h", "REAL"), ("yaw", "REAL")] {
+            let has: i64 = db
+                .query_row("SELECT COUNT(*) FROM pragma_table_info('portals') WHERE name = ?1", params![column], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            if has == 0 {
+                db.execute_batch(&format!("ALTER TABLE portals ADD COLUMN {column} {kind}")).map_err(|e| e.to_string())?;
+            }
+        }
         let catalogue = Catalogue::load(&cfg.data);
         if catalogue.characters.is_empty() {
             return Err(format!("no characters in {}/characters.json (tools/assets/build_catalogue.py makes it)", cfg.data.display()));
@@ -140,6 +162,13 @@ impl Directory {
         Ok(format!("{name} has {} authority", game::balance(&db, id, game::AUTH)))
     }
 
+    /// Moves a portal's creation back by `secs`, so a test can see the refund window close.
+    pub fn backdate_portal(&self, key: i64, secs: u64) -> Result<(), String> {
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute("UPDATE portals SET created = created - ?1 WHERE id = ?2", params![secs as i64, key]).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub(super) fn world_ids(&self) -> String {
         self.0.worlds.iter().map(|w| w.id.as_str()).collect::<Vec<_>>().join(", ")
     }
@@ -190,6 +219,13 @@ impl Directory {
             .route("/api/world/report", post(game::report))
             .route("/api/world/travel", post(game::travel))
             .route("/api/world/objective", post(game::objective))
+            .route("/api/world/portal", post(game::world_portal))
+            .route("/api/world/portal/refund", post(game::refund_portal))
+            .route("/api/world/portal/link", post(game::link_portal))
+            .route("/api/world/portal/update", post(game::update_portal))
+            .route("/api/world/portal/remove", post(game::remove_portal))
+            .route("/api/worlds/editors", post(editors::change).get(editors::list))
+            .route("/api/world/{id}/editor", get(editors::check))
             .route("/api/world/{id}/rules", get(game::rules))
             .route("/auth/steam", get(social::steam_start))
             .route("/auth/steam/return", get(social::steam_return))
@@ -198,6 +234,7 @@ impl Directory {
             .route_service("/", ServeFile::new(web.join("index.html")))
             .route_service("/create", ServeFile::new(web.join("create.html")))
             .route_service("/play", ServeFile::new(web.join("play.html")))
+            .route_service("/edit", ServeFile::new(web.join("edit.html")))
             .route_service("/inventory", ServeFile::new(web.join("inventory.html")))
             .route_service("/friends", ServeFile::new(web.join("friends.html")))
             .route_service("/help", ServeFile::new(web.join("help.html")))

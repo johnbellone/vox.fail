@@ -180,6 +180,8 @@ pub enum Why {
     TooFast,
     /// inside someone's plot (claimed at the directory) that you can't build in
     Claimed,
+    /// a placed prop stands there (new variants go at the end: the wire numbers them)
+    Blocked,
 }
 
 impl std::fmt::Display for Why {
@@ -191,6 +193,7 @@ impl std::fmt::Display for Why {
             Why::TooFar => "that's out of reach",
             Why::TooFast => "slow down",
             Why::Claimed => "that's someone's plot",
+            Why::Blocked => "something is in the way",
         })
     }
 }

@@ -217,9 +217,14 @@ fn parse_parties(v: &serde_json::Value) -> Vec<Vec<u64>> {
         .collect()
 }
 
-/// Talking to the directory: rules every `rules_every`, a report every `report_every`. A
-/// directory that's down is tried again next time; the world goes on meanwhile.
-pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world, report_every, rules_every): (String, String, String, Duration, Duration)) {
+/// Talking to the directory: rules every `rules_every`, a report every `report_every`, and the
+/// rules at once when `rules_now` is woken (the directory's portals changed). A directory that's
+/// down is tried again next time; the world goes on meanwhile.
+pub(super) async fn directory_link(
+    tx: mpsc::Sender<Event>,
+    (url, secret, world, report_every, rules_every): (String, String, String, Duration, Duration),
+    rules_now: Arc<Notify>,
+) {
     let http = match reqwest::Client::builder().timeout(Duration::from_secs(10)).build() {
         Ok(h) => h,
         Err(e) => return eprintln!("no link to the directory: {e}"),
@@ -230,6 +235,7 @@ pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world,
     loop {
         if Instant::now() >= next_rules {
             next_rules = Instant::now() + rules_every;
+            let started = Instant::now();
             let got = http.get(format!("{url}/api/world/{world}/rules")).bearer_auth(&secret).send().await;
             match got {
                 Ok(r) if r.status().is_success() => {
@@ -237,7 +243,7 @@ pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world,
                         let plots = v["plots"].as_array().map(|a| a.iter().filter_map(Plot::from_json).collect()).unwrap_or_default();
                         let portals = v["portals"].as_array().cloned().unwrap_or_default();
                         let parties = parse_parties(&v["parties"]);
-                        if tx.send(Event::Rules(plots, portals, parties)).await.is_err() {
+                        if tx.send(Event::Rules(plots, portals, parties, started)).await.is_err() {
                             return;
                         }
                         said = false;
@@ -265,7 +271,11 @@ pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world,
             }
         }
         let wake = next_rules.min(next_report);
-        tokio::time::sleep(wake.saturating_duration_since(Instant::now()).max(Duration::from_millis(20))).await;
+        let nap = tokio::time::sleep(wake.saturating_duration_since(Instant::now()).max(Duration::from_millis(20)));
+        tokio::select! {
+            _ = nap => {}
+            _ = rules_now.notified() => next_rules = Instant::now(),
+        }
     }
 }
 
@@ -316,6 +326,36 @@ pub(super) async fn ticket_office(tx: mpsc::Sender<Event>, mut trips: mpsc::Rece
             let ticket = answer.as_ref().and_then(|a| a["ticket"].as_str()).map(String::from);
             let to = answer.as_ref().and_then(|a| a["url"].as_str()).map_or(trip.to, String::from);
             let _ = tx.send(Event::Ticket { conn: trip.conn, url: to, ticket, arrive: trip.arrive }).await;
+        });
+    }
+}
+
+/// Asking the directory whether an account may make advanced edits here. Each question runs on
+/// its own task, so one slow answer holds nobody else up. Any failure (no answer in five
+/// seconds, an error, a non-200) is `None`, which the world refuses the edit for: advanced
+/// rights fail closed.
+pub(super) async fn editor_office(tx: mpsc::Sender<Event>, mut asks: mpsc::Receiver<Asking>, url: String, secret: String, world: String) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(5)).build() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("no link to the directory for editors: {e}"),
+    };
+    while let Some(ask) = asks.recv().await {
+        let (http, tx, url, secret, world) = (http.clone(), tx.clone(), url.clone(), secret.clone(), world.clone());
+        tokio::spawn(async move {
+            // the account is a number the world holds, not text from a player
+            let got = http.get(format!("{url}/api/world/{world}/editor?account={}", ask.account)).bearer_auth(&secret).send().await;
+            let editor = match got {
+                Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok().and_then(|v| v["editor"].as_bool()),
+                Ok(r) => {
+                    eprintln!("the directory gave no editor answer ({})", r.status());
+                    None
+                }
+                Err(e) => {
+                    eprintln!("can't reach the directory for an editor check: {e}");
+                    None
+                }
+            };
+            let _ = tx.send(Event::Editor { conn: ask.conn, account: ask.account, editor }).await;
         });
     }
 }

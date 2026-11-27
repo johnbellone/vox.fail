@@ -1,6 +1,10 @@
 //! Moving a box (a player) through the blocks: it can't pass through solid blocks, and when
-//! walking it steps up onto a block one high.
+//! walking it steps up onto a block one high. Props add their own cells beside the blocks
+//! ([`Occupancy`], [`with_props`]); the caller passes the combined test to [`Body::travel`].
 
+use std::collections::BTreeSet;
+
+use crate::entity::{PROP_YAWS, prop_cell};
 use crate::world::Cell;
 
 const EPS: f32 = 1e-3;
@@ -124,10 +128,100 @@ impl Body {
     }
 }
 
+/// The cells props block, beside the blocks. Built from the props in a zone, so the server and
+/// the client (prediction) derive the same set from the same instances.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Occupancy {
+    cells: BTreeSet<Cell>,
+}
+
+impl Occupancy {
+    pub fn contains(&self, c: Cell) -> bool {
+        self.cells.contains(&c)
+    }
+
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// Blocks the cells of a prop at `at` (5 cm units), turned by `yaw` (15 degree steps).
+    pub fn add_prop(&mut self, at: [i32; 3], yaw: u8, footprint: &[[i16; 2]], height: u8) {
+        self.cells.extend(prop_footprint_cells(at, yaw, footprint, height));
+    }
+}
+
+/// The cells one prop blocks: its footprint (0.5 m cells, relative to the pivot's floor cell
+/// [`prop_cell`] of `at`), turned by `yaw` to the nearest quarter turn, and `height` blocks up
+/// from the floor. A quarter turn maps the cell (x, z) to (z, -x), the same turn as a rotation
+/// of +90 degrees about +y. Cells that would overflow are left out (positions come from the
+/// network).
+pub fn prop_footprint_cells(at: [i32; 3], yaw: u8, footprint: &[[i16; 2]], height: u8) -> Vec<Cell> {
+    let floor = prop_cell(at);
+    // round to the nearest quarter turn (6 steps of 15 degrees); a half turn rounds up
+    let turns = (((yaw % PROP_YAWS) as i32 + 3) / 6) % 4;
+    let mut out = Vec::with_capacity(footprint.len() * height as usize);
+    for &[dx, dz] in footprint {
+        let (mut x, mut z) = (i32::from(dx), i32::from(dz));
+        for _ in 0..turns {
+            (x, z) = (z, -x);
+        }
+        let (Some(cx), Some(cz)) = (floor[0].checked_add(x), floor[2].checked_add(z)) else { continue };
+        for k in 0..i32::from(height) {
+            let Some(cy) = floor[1].checked_add(k) else { break };
+            out.push([cx, cy, cz]);
+        }
+    }
+    out
+}
+
+/// `blocks` with the props' cells added: a test for what a body is stopped by.
+pub fn with_props<'a>(blocks: impl Fn(Cell) -> bool + 'a, props: &'a Occupancy) -> impl Fn(Cell) -> bool + 'a {
+    move |c| blocks(c) || props.contains(c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::world::{Bounds, World};
+
+    #[test]
+    fn prop_cells_turn_with_yaw() {
+        let fp = [[0, 0], [1, 0]];
+        let cells = |yaw| {
+            let mut o = Occupancy::default();
+            o.add_prop([0, 0, 0], yaw, &fp, 2);
+            o
+        };
+        let flat = cells(0);
+        assert_eq!(flat.len(), 4);
+        for c in [[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0]] {
+            assert!(flat.contains(c), "{c:?}");
+        }
+        // 6 steps of 15 degrees is a quarter turn: the cell at (1, 0) moves to (0, -1)
+        let quarter = cells(6);
+        assert_eq!(quarter.len(), 4);
+        for c in [[0, 0, 0], [0, 1, 0], [0, 0, -1], [0, 1, -1]] {
+            assert!(quarter.contains(c), "{c:?}");
+        }
+        assert!(!quarter.contains([1, 0, 0]));
+    }
+
+    #[test]
+    fn body_stops_against_a_prop_cell() {
+        let mut props = Occupancy::default();
+        // a prop whose footprint is the cell at [1, 0, 0]: at 5 cm units, x = 10 is block 1
+        props.add_prop([10, 0, 0], 0, &[[0, 0]], 2);
+        let none = |_: Cell| false;
+        let solid = with_props(none, &props);
+        let mut b = Body { pos: [0.5, 0.0, 0.5], half: 0.3, height: 3.6 };
+        let c = b.travel(&solid, [3.0, 0.0, 0.0], 0.0);
+        assert!(c.hit[0], "{c:?}");
+        assert!(b.pos[0] > 0.65 && b.pos[0] < 0.7, "{:?}", b.pos);
+    }
 
     fn world() -> World {
         let mut w = World::new(Bounds::default(), 4);

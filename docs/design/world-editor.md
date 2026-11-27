@@ -1,277 +1,473 @@
-# Design: the world editor on the web
+# Design: the world editor
 
-Status: **proposed, questions settled** · 2026-11-27 · nothing here is built yet (see *Decisions*)
+Status: **built** · 2026-11-27 · see *As built* at the end for what implementation settled
 
-Related: [world-format.md](world-format.md) (snapshots, levels as files, structures and their
-rights), [world-network.md](world-network.md) (worlds by id, the host, instances),
-[controls-and-hud.md](controls-and-hud.md) (input actions, menus), [props.md](props.md)
-(placing props), [ground-relief.md](ground-relief.md) and
-[bevy-ecosystem.md](bevy-ecosystem.md) (bevy_egui and gizmos for an editor build).
+Next: [world-editor-workshops.md](world-editor-workshops.md) (proposed): workshops, whole
+operations such as fill and paste, and saving as a level or structure; it also settles that
+the worlds the game ships change through a workshop and review rather than live editing.
+
+Related: [props.md](props.md) (what a prop is; phases 1 to 3 are part of this plan),
+[world-graph-and-art.md](world-graph-and-art.md) (recipes and graph nodes; its phase 1 and the
+node part of phase 3 are part of this plan), [world-format.md](world-format.md) (entities, its
+phase 2, is the backbone here), [world-network.md](world-network.md) (portal destinations,
+dungeons, atlas edges), [controls-and-hud.md](controls-and-hud.md) (actions, the quick wheel).
 
 ## Summary
 
-An editor at **vox.fail/edit**: open a world you may edit in the browser and build it with
-tools a player doesn't have (boxes, fills, replace, copy and paste, an eyedropper), set the
-world's own settings in side panels (sky, time, weather, water, relief, spawn, portals,
-cameras, hotbar), undo and go back through its history, and keep the result as a world, save
-it as a level, or save part of it as a structure.
+An editor in the browser at `/edit?world=<id>`: the real game (the wasm `vox-client`) in the
+middle of the page, Mantine panels around it, and tools to place, move, turn and connect
+portals, props and graph nodes **in the live world**. Every change goes to the running world
+server, which checks it and sends it to everyone there, as block edits already work.
 
-It is not a separate program. The canvas in the middle is the same WebAssembly client as on
-the play page, in an **edit mode**; edits go over the same WebSocket to the same world server,
-which checks every one with the same rules. The panels around it are React on the site. What a
-builder does in the editor is a world edit like any other, so it is saved, snapshotted,
-restorable and shared the way worlds already are.
+Two modes on one page:
 
-## Who it is for
+- **Basic**, for players: blocks, portals and props in **their own plots**. Pair two of their
+  portals, or point one at a world.
+- **Advanced**, for a world's **owner and the editors they name**: the world's settings
+  (sky, time, weather, hotbar, relief, water), spawn, objective, any portal destination
+  (`dungeon:<name>`, atlas edges, another world), prop states, variants and channels, and the
+  **graph node inspector** (add a node, write its recipe, preview it, build it).
 
-- **Builders** making their own worlds: today they can only place one block at a time, by
-  hand, within reach.
-- **Level authors** for the worlds that ship with the game: today that is JSON written by hand
-  or a Python builder (`tools/assets/build_*.py`), then delete the world's database to see it.
-- **Structure makers**: today the directory can store and share structures
-  (`/api/structures`), but nothing in the game makes one from what you built.
+Decisions (2026-11-27, with the owner):
 
-## What we have (checked in code)
+1. **Everything is live.** No drafts. An edit goes to the running world; world-wide undo is the
+   snapshot restore that already exists; the editor also undoes the author's own edits.
+2. **Every editable thing is a world entity** (world-format phase 2): portal, spawn, objective,
+   world settings, prop, graph node. One model, one pair of wire messages, one store.
+3. **Advanced mode is for the world's owner and named editors** (a new per-world grant).
+4. **Basic portals pair**: a player links two of their own portals (either way, across worlds or
+   within one), or points one at a world's spawn as today. Same Authority cost and plot cap.
+5. **The page is React panels plus a bridge** into the wasm client; Bevy draws the picking,
+   ghosts and gizmos.
+6. **Props (props.md phases 1 to 3) and graph nodes (vox-art phase 1, vox-graph nodes and
+   expansion) are built in this plan**, not waited for.
+7. **Portal destinations stay on this host's worlds**; the editor never accepts an arbitrary
+   `wss://` address.
 
-- **Edits** are one block at a time: `ToServer::Edit {id, cell, block}`. The server checks the
-  palette and bounds (`vox-core::world`), reach (`REACH`, 16 blocks from the eyes), a rate
-  (`edit_rate`, 20 a second, as a token bucket) and plots (`Why::Claimed`), then logs each in
-  `edits(seq, at, player, x, y, z, old, new)`. Old values are kept, but rows carry no
-  operation id (only the player's name), and rows older than the oldest kept snapshot are
-  deleted at each snapshot, so the log alone can't group or undo an operation.
-- **History**: snapshots every five minutes, kept a week, with restore to a snapshot or any
-  moment (`--restore <id|latest>`, `--restore-at <unix time>`), from the command line, with the
-  world closed. There is no restore while a world runs.
-- **Commands**: the client already takes `world:` commands as text (`place`, `remove`, `goto`,
-  `look`, `fly`, `camera`, `time`, `weather`, ...) in `client/commands.rs`, and reports its
-  state as JSON. Block Avatar's control page drives it this way.
-- **The browser client** is started by the play page (`apps/site/src/features/play`) through
-  its one export, `start(config)`, and reports back through `window.vox_status`, `vox_ready`
-  and `vox_error`. Nothing else crosses between page and client.
-- **World settings** (sky, time, weather, water, relief, portals, cameras, hotbar) are the
-  level's JSON object, stored in the world and sent in the welcome. Two things are added at
-  send time (`settings_now`): the portals players opened at the directory (they change while
-  the world runs, with the directory's rules) and `voice_radius`. The weather is kept apart
-  (as the world's climate), and any player can change it (`ToServer::Climate`, limited by the
-  edit rate). Clients read settings once, on arrival.
-- **Levels** are JSON boxes of blocks: solid, `hollow` or `round`, and single blocks
-  (`vox-core::level`). A world's blocks come from its level only the first time it starts.
-- **Hosting**: `vox-host` runs a fixed list of worlds (given when it starts) on one port,
-  starting each on its first visitor and stopping it when idle. The only worlds it makes at
-  run time are dungeon instances (`POST /api/host/instance`): in memory, without snapshots,
-  from `data/levels/dungeons/`, and thrown away when empty. The directory knows the worlds
-  (`/api/worlds`: its configured worlds, atlas tiles and instances) and tells each world its
-  rules every 30 seconds (`/api/world/{id}/rules`: plots, portals, parties; nothing about who
-  may edit).
-- **Chunks** go to a player only while they join; after that, changes arrive as `Edits`.
-- **Structures**: owned, versioned, with use, copy and edit grants (`vox-core::entitle`,
-  `/api/structures/*`). Placing one in a world is not built.
-- **Worlds** are 512 × 128 × 512 blocks by default (`Bounds::default`).
+## Where things are today
 
-## Design
+| Area | Today | What the editor needs |
+| --- | --- | --- |
+| Level files | `data/levels/*.json`: `boxes`, `blocks`, and a `world` object (sky, time, weather, `portals`, `objective`, `hotbar`) read by `vox_core::level` | Seed only: a world's live state is its entities |
+| Portals | In the level's `world.portals`; players' plot portals in the directory's `portals` table (`/api/feats/portal`: 30 Authority, 2 a plot, axis `z`, to a world's spawn), fetched by the world from `/api/world/{id}/rules` every 30 s and merged by `settings_now()` | Live: placed, moved and paired while players watch |
+| How clients learn of portals | Once, in `Welcome.settings` (JSON) | A message when one changes |
+| Props | None in worlds (props.md is a proposal) | Placed, moved, removed live |
+| Graph nodes | None (world-graph-and-art.md is a proposal) | Added, edited, built live |
+| Who edits | Blocks: plots (owner and a shared group) via `Why::Claimed`; `world_owners` (set by an operator) issues currencies | Plot builders for basic; owner and editors for advanced |
+| Page to client | One way: JS calls `start(config)`; the client calls `vox_status`, `vox_ready`, `vox_error` | Commands in, events out |
+| Entities on disk | `vox-format` zones hold blocks only | Entities in zones, so snapshots carry them |
 
-### 1. Where you edit: workshops
+## The backbone: world entities
 
-A **workshop** is a world you own, made for building, kept with its snapshots. This is new
-work on both sides, not a reuse of instances (which live in memory and are thrown away):
+### Types
 
-- **The host** gains a way to add a persistent world while it runs, with its own database and
-  snapshot folder, started on its first visitor and stopped when idle like the others, and
-  still there after the host restarts (it keeps a list of its workshops on disk).
-- **The directory** keeps workshops in its database, so `/api/worlds` and the world's rules
-  know them; it asks the host to make one with the world secret, as it does for instances.
+In `vox-core` (new module `vox_core::entity`), plain serde types, **no Bevy**. They are in
+`vox-core`, not `vox-format`, because the wire protocol (`vox_core::wire`) carries them and
+`vox-core` can't depend on `vox-format`; `vox-format` stores them (zone blobs) and the server
+keeps them in SQLite. world-format.md had proposed `bevy_reflect` types in `vox-format`; plain
+serde with explicit stable names and versions gives the same guarantees and keeps the server
+free of Bevy.
 
-- `POST /api/workshops {name, from}` makes one. `from` is blank ground, a level the game ships
-  (`data/levels/<name>.json`, dungeons in `data/levels/dungeons/` too), one of your workshops'
-  snapshots, or a structure you may copy. Each needs its own way to seed a world.
-- `GET /api/workshops` lists yours, and those shared with you. `POST /api/workshops/grant`
-  shares one, `POST /api/workshops/delete` removes it.
-- Rights follow structures (`vox-core::entitle`): the **owner**, plus accounts granted
-  **edit** (build and change settings) or **visit** (walk round, no edits). Workshops are
-  private by default.
-- Limits, set by the directory: a few workshops an account (three to start) at the default
-  world size.
+```rust
+pub struct EntityId(pub u32);          // unique in its world; the server allocates
 
-Editing the public worlds (the Void, the sea) is out of scope at first. A level the game ships
-is edited by opening it as a workshop, then exporting it back (section 6).
+pub enum Component {                   // closed set; each variant has a stable name and a version
+    Portal(Portal),                    // "vox::Portal" v1
+    Spawn(Spawn),                      // "vox::Spawn" v1
+    Objective(Objective),              // "vox::Objective" v1
+    Settings(Settings),                // "vox::Settings" v1: sky, time, weather, hotbar, relief, water, floor, cameras, edges
+    Prop(Prop),                        // "vox::Prop" v1 (props.md)
+    Node(Node),                        // "vox::Node" v1 (vox-graph)
+}
 
-### 2. Edit mode in the client
+pub struct Portal {
+    pub name: String,                  // at most 32 chars, control characters stripped
+    pub at: [f32; 3], pub axis: Axis, pub size: [f32; 2], pub yaw: f32,
+    pub level: String,                 // the echo it shows
+    pub to: Dest,
+    /// a player's portal: its row id in the directory's `portals` table, which holds the owner,
+    /// the plot and what was paid; None for the world's own portals
+    pub key: Option<i64>,
+}
 
-A new `editor` module in `vox-world`, so it works on the desktop and in the browser alike. It
-is on only in a world whose rules say this account may edit it.
-
-- **Camera**: free flight (the client already has `fly`), no fall damage, and no reach limit
-  on what you point at.
-- **Selection**: a box from two corners, dragged with the mouse or typed in, drawn as an
-  outline with its size in blocks. Shift widens it, and it snaps to blocks.
-- **A ghost** of what a tool will do, before you commit it.
-- **Tools**: place and break (as now); **box** (solid, `hollow` or `round`, the shapes a level
-  file has, so exports stay readable; also walls only, which exports as four boxes); **replace** (one block for another
-  inside the selection); **copy, cut and paste**, with rotate and mirror; **eyedropper**; and
-  a **flood fill** across a face, bounded by the selection.
-- **Readouts**: the pointed-at cell and block, the selection's corners and size.
-- Keyboard and mouse first. Controller editing is later.
-
-### 3. Edit operations on the server
-
-One new client message carries a whole operation, so a 40 × 1 × 40 floor is one message, one
-check and one step in the history, not 1,600 edits at 20 a second:
-
-```text
-ToServer::Op { id: u32, op: EditOp }
-EditOp = Fill    { lo: Cell, hi: Cell, block: u16, shape: Solid | Hollow | Walls | Round(f32) }
-       | Replace { lo: Cell, hi: Cell, from: u16, to: u16 }
-       | Paste   { at: Cell, turn: u8, mirror: bool, blob: Vec<u8> }   // a structure blob
-ToServer::Undo { op: u32 }    ToServer::Redo { op: u32 }
+pub enum Dest {
+    Here { arrive: [f32; 3] },         // somewhere else in this world
+    World { world: String },           // a world's spawn (today's plot portals)
+    Pair { key: i64 },                 // a player's other portal, by its directory key
+    Dungeon { name: String },          // "dungeon:<name>"
+    Url { url: String, arrive: [f32; 3] },      // ":7781" or "/w/<id>/ws" only (see Security)
+}
 ```
 
-- **Expanded by `vox-core`** (a new `edit` module), so the client's prediction and the server
-  agree, with checked arithmetic (it runs in wasm). Paste blobs are decoded with the same caps
-  as any untrusted blob.
-- **Who may edit** reaches the world with its rules: the directory's rules gain an `editors`
-  list (accounts), and the world's rules event carries it. Rules refresh every 30 seconds, so a
-  new editor waits up to that long and a removed one keeps editing as long; the owner can
-  ask for a refresh when sharing. Only signed-in players can be editors: guests never are, so
-  a world without sign-in has no ops at all.
-- **Checked by the server**: the caller is an editor, the box is inside the world, a paste
-  blob is at most 1 MB (well under the WebSocket's frame limit) and decodes with the usual
-  caps, and the size is capped after expansion: at most 262,144 cells (64³) an operation, and a
-  token bucket like the edit rate's, counted in cells (about 2 million a minute, a burst of
-  one big op). Plots still hold: an op touching a cell in someone else's plot is refused
-  whole. Ops replace the per-player edit rate and reach in a world you may edit; play keeps
-  them.
-- **Refusals** get new `Why` values (too big, too fast, not an editor), added after the
-  existing ones so older values keep their numbers.
-- **Applied as one batch**, and stored as an op: a new `ops(id, account, at, lo, hi, kind)`
-  table, with the op's before and after kept compactly (per chunk, run-length coded, like
-  the blocks themselves) rather than as one edit row per cell; a 64³ fill would otherwise be a
-  quarter of a million rows written on the world's one thread.
-- **Sent out**: small ops go to players as `Edits`; one that changes more than a few thousand
-  cells sends the changed chunks instead. Clients take chunks only while joining today, so
-  taking one mid-visit, and settling it against the editor's own prediction, is new work.
-- **Undo and redo**, of your own ops only, with your rights checked again at the time:
-  undoing puts back an op's old value in each cell that still holds its new value (cells
-  someone changed since are left, and the editor says how many); redo is the same the other
-  way. Ops can be undone as long as their world keeps them: a week, with the snapshots.
-- These messages are added after the existing ones, as every new message is, and they change
-  the protocol: **protocol 9**.
+`vox_core::portal::Door` stays the geometry (what the client draws and the server checks);
+`Door::from(&Portal, resolved_arrive)` replaces parsing JSON settings. The level JSON's
+`world.portals` becomes portal entities when a world is seeded, and `settings_now()` and the
+JSON merge go away.
 
-### 4. World settings, live
+### On the wire (protocol 9)
 
-Settings stop being welcome-only:
+Added last, so older variants keep their first byte (the `old_variants_keep_their_first_byte`
+test grows):
 
-- `ToServer::Settings(json)`, allowed only for editors. The server checks it key by key (known
-  keys, finite numbers, sizes, portals that lead to worlds you own or public ones) and stores
-  only the world's own keys: the portals opened at the directory and `voice_radius` are added
-  when sending, as now, and stripped if a client sends them back, so they never become part of
-  the world. Weather in a settings message goes the existing climate way (one path, the same
-  as `ToServer::Climate`). The server then sends `ToClient::Settings(json)` to everyone there.
-- Clients apply new settings in place: sky, time, weather, water, relief, cameras, hotbar and
-  portals. Today they read them once, on arrival.
-- **Spawn, portals and cameras** are placed in the world with a gizmo and fine-tuned in the
-  panel. [bevy-ecosystem.md](bevy-ecosystem.md) suggests transform-gizmo-bevy for editor
-  builds, but it has no Bevy 0.20 release; until it does, a small gizmo of our own (move along
-  an axis, turn about y, snapped to blocks) is enough.
+```rust
+ToServer::Put { id: u32, entity: Option<EntityId>, expect: Option<u64>, component: Component }  // entity None: make one
+ToServer::Remove { id: u32, entity: EntityId, expect: Option<u64> }
+ToServer::Build { id: u32, node: EntityId }                                // expand a node into blocks
+ToClient::Entities(Vec<EntityChange>)  // on join (all of them, after Ready) and to everyone on change
+ToClient::EntityRefused { id: u32, why: EntityWhy }
 
-### 5. The page
+pub struct EntityChange { pub seq: u64, pub entity: EntityId, pub component: Option<Component> } // None: removed
+```
 
-`/edit` on the site (React and Mantine, like the other pages), with the client's canvas in the
-middle:
+`id` is the sender's own number, echoed back, as with `Edit`. Changes share the world's edit
+sequence (`seq`), so blocks and entities are seen in one order.
 
-| Where | What |
-| --- | --- |
-| Top bar | The workshop's name, who else is in it, **Save as…** (level, structure), **History** |
-| Left | Tools, and the blocks as a palette with their icons, searchable |
-| Right | **Selection** (corners, size, block counts) and **World** tabs: Sky and time, Weather, Water, Relief, Spawn, Portals, Cameras, Hotbar |
-| History drawer | Your recent ops (undo or redo any of them), and snapshots to restore |
-| `/edit` with no workshop open | Your workshops and those shared with you, and **New workshop** |
+- **Concurrency**: `expect` is the `seq` of the last change the sender saw for that entity; when
+  it no longer matches, the server refuses with `Changed`. The inspector and undo both send it,
+  so two editors never silently overwrite each other ("changed by Ann, reload").
+- **Joining**: entities go out after `Ready` in batches of at most 512 a message, nearest zone
+  first, and no message over 64 KB (checked on both sides, as chunks are). The client meshes
+  props within the per-frame budget. Streaming by view radius is world-scaling phase 3; every
+  entity row has its zone, so that changes what is sent, not the format.
+- **Settings live**: a changed `Settings` entity is applied by clients while running (sky,
+  time, clouds, water, hotbar), and the server updates its weather climate from it.
+- **Versions**: the server turns away any other protocol (`world.rs`, `join` and `watch`), so
+  client and server ship together. `Welcome.settings` stays, filled from the `Settings`
+  entity, because the client sets up the sky before the first `Entities` arrive.
 
-**The bridge** between the page and the client is new, beside the play page's `start` and
-`vox_*` callbacks:
+### Rules (`vox-core`)
 
-- The client gains a second export, `command(text)`, taking the same `world:` commands as the
-  control page,
-  plus new `edit:` ones (`edit:tool:box`, `edit:select:x:y:z:x:y:z`, `edit:block:stone`,
-  `edit:undo`, ...). Panels drive the editor through it.
-- The client calls `window.vox_event(json)` when something the panels show changes: the
-  selection, the pointed-at cell, the history, the settings, who is editing.
-- Keyboard focus stays clear: the canvas has it while you build, and panels take it while you
-  type in them. Esc returns to the canvas.
+The checks are pure functions in `vox-core` (new module `vox_core::edit`, over
+`vox_core::entity`'s types), so the client predicts with the same rules and the server enforces
+them.
 
-Panels are web pages rather than in-game menus because they are mostly forms, lists and text,
-which the web does better and more accessibly; the pixel HUD stays for play. The desktop gets
-the same edit mode with keyboard shortcuts first, and a bevy_egui shell in an editor build
-later.
+`vox-server` gains two dependencies, `vox-art` and `vox-graph` (no Bevy, no threads), to check
+prop blobs and expand nodes for `Build`; the rule that servers stay free of Bevy holds.
 
-### 6. Keeping what you made
+`EntityWhy`: `NotYours` (not your plot, not an editor), `Outside`, `TooFar`, `TooMany` (a cap),
+`TooBig` (a string, a recipe), `Blocked` (footprint not free, no standing room), `BadDest`,
+`NoSuchProp`, `CantAfford`, `TooFast`, `Changed` (someone changed it since: `expect` didn't
+match), `Unavailable` (the directory didn't answer in 5 s).
 
-- **As a world**: a workshop is a world. Its snapshots appear in the History drawer and can be
-  restored there. Today a restore needs the world closed and the command line, so this needs
-  a restore the server can do while running (everyone in the workshop gets the world again).
-- **As a level**: **Save as level** exports the workshop's blocks and settings. For the levels
-  in this repository, the export is the JSON box format: blocks merged greedily into the
-  largest boxes (and `hollow` and `round` ones where they fit exactly), so a file stays short
-  and its diffs readable. A test checks the round trip: loading an export gives the same
-  blocks. Later it is also a level file in the world format (world-format phase 3).
-- **As a structure**: **Save as structure** turns the selection into a new structure, or a new
-  version of one you may edit (`/api/structures`, `/api/structures/version`). The Paste tool
-  lists the structures you may use, from the directory.
+### Store
 
-### 7. Working together
+The server keeps entities in a new SQLite table beside `chunks`:
+`entities(id INTEGER PRIMARY KEY, zone_x, zone_z, name TEXT, version INTEGER, data BLOB)`
+(postcard), and an entity log beside `edits`:
+`entity_edits(seq, at, player, entity, old BLOB, new BLOB)`, sharing the edits' `seq`. Both are
+written in the **same `flush()` transaction** as chunks and edits, so a crash loses blocks and
+entities together or not at all. `--restore-at` replays both logs in `seq` order, then
+reconciles player portals with the directory (below). Snapshots write entities into each zone
+blob's entity part: the zone blob gains an entity section after the blocks, so its format
+version goes to 2; version 1 blobs read as "no entities". The hash covers both.
 
-Several editors can be in one workshop at once: the server already orders everyone's edits.
-Each sees the others' selections as coloured outlines (a small presence message), and the
-History drawer marks whose op is whose. This comes after the single-builder editor works.
+## Who may edit what
 
-## Safety
+| | Basic | Advanced |
+| --- | --- | --- |
+| Who | the plot's builders (owner and its shared group) | the world's owner and its editors |
+| Where | inside that plot (the whole footprint and the arrival point) | anywhere in the world |
+| Blocks | as today | as today, and not stopped by plots (`Why::Claimed` doesn't apply to owner/editors) |
+| Portals | place, move, turn, resize (4 × 6 to 8 × 16), remove; `World` or `Pair` destinations; cost and cap as today | any destination; no cost; no cap but the zone's |
+| Spawn, objective, settings | no | yes, including closing an atlas tile's edges (`Settings.edges`; the edge check refuses `edge:*` through a closed one) |
+| Props | catalogue props, and their own (entitlement `use`); 64 a plot | any prop they may use; states, variants, channels, `readable` text |
+| Graph nodes | no | add, edit, build |
 
-- Everything an editor sends is untrusted: ops are size-capped and expanded with checked
-  arithmetic, paste blobs get the caps every blob gets, and settings are checked key by key.
-- Who may edit comes from the directory and is checked by the world server, not the page.
-- Workshops are private unless shared. Publishing one as a public world (for the atlas, say)
-  needs review and is out of scope.
-- No new public endpoints on the world side. The directory's workshop calls are signed-in
-  calls like the rest; its calls to the host carry the world secret, as instances' do.
-- Commands from the page run with the player's authority and nothing more: the server's
-  checks stay the gate.
+- **World editors**: a new directory table `world_editors(world, account)` with
+  `POST /api/worlds/editors` (owner only: grant, revoke) and the list included in
+  `/api/world/{id}/rules` (`owner`, `editors`), for showing who may edit.
+- **Advanced edits ask the directory every time**, as structure placement does:
+  `GET /api/world/{id}/editor?account=` (world secret), cached 5 s, off the world thread; the
+  edit waits for it. No answer means refused (`Unavailable`): advanced rights fail closed, and a
+  revoke takes effect within 5 s.
+- **Basic edits** use the plots in the rules fetched every 30 s, as block edits in plots do
+  today, so a builder removed from a group can still build for up to 30 s (shown on the plot
+  page when revoking).
+- **Guests** edit nothing in the editor. The editor needs a sign-in token.
+- **Basic portals cost Authority** as today: on a `Put` that makes a player portal the world
+  asks the directory (`POST /api/world/portal`, world secret: account, plot, position, dest,
+  and an **idempotency key** of world, player and the edit's `id`, so a retry never charges
+  twice), which charges, enforces the cap, records the row and gives the key item. The request
+  runs off the world thread (as tickets do), one pending per player, 5 s timeout
+  (`Unavailable`). When the answer comes the world checks the plot and rights again; if they
+  no longer hold it asks the directory to refund (recorded in the ledger) and refuses. Moving
+  or removing your own portal is free; removing refunds nothing. `/api/feats/portal` stays for
+  the inventory page and goes through the same function.
+- **One identity for a player portal**: its directory row id (`Portal.key`). The rules carry
+  every player portal's key, position and destination, and the world **reconciles** on each
+  fetch and after a restore: a row the directory has and the world lacks is made again (so a
+  charge followed by a crash never loses a paid portal), and an entity whose key the directory
+  no longer has is removed.
+- **Pairing**: `Dest::Pair { key }` names the other end by its key; it must be a portal of the
+  same owner. The directory resolves the world and the arrival point at travel time
+  (`/api/world/travel` already makes the ticket and the arrival), so moving the other end needs
+  no change here. A pair whose other end is gone leads to that world's spawn.
 
-## Rollout
+## In the page
 
-Each step ends with a command that passes or fails.
+### The page
 
-1. **Edit ops**: `vox-core::edit` (shapes, replace, paste expansion, caps); `ToServer::Op`,
-   `Undo`, `Redo`; batched apply, log and broadcast; protocol 9. Tests: expansion matches a
-   level box of the same shape; caps; undo with and without later edits; a big op sends
-   chunks.
-2. **Edit mode** in `vox-world`, desktop first: selection, ghost, tools, all driven by `edit:`
-   commands. Test with the client's screenshot mode and scripted commands.
-3. **Workshops**: the directory's calls, rights and limits; a new host call that adds a
-   persistent world at run time and keeps it across restarts; seeding from a level, a
-   snapshot or a structure; the `editors` list in the rules. Tests in `vox-directory`,
-   `vox-host` and `vox-server`.
-4. **The page and the bridge**: `/edit`, the palette, tools, selection panel and History drawer;
-   `command()` and `vox_event`. Checked in the browser.
-5. **Live settings**: `ToServer::Settings` and `ToClient::Settings`, the World tabs, gizmos for
-   spawn, portals and cameras.
-6. **Saving**: level export (with the round-trip test), Save as structure, and restoring a
-   snapshot while the workshop runs.
-7. **Together**: presence and outlines.
+`apps/site/src/entries/edit.tsx` and `pages/edit.html`, a new `features/editor/`:
 
-## Decisions (2026-11-27)
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ World: The Yard ▾   Basic │ Advanced      Undo  Redo      ● live, 3 here  │
+├──────────────┬────────────────────────────────────────────┬────────────────┤
+│ Tools        │                                            │ Inspector      │
+│  Select      │                                            │  Portal "home" │
+│  Blocks      │         the game (vox-client, wasm)        │  at  12 0 -4   │
+│  Portal      │     picking, ghosts, gizmos drawn here     │  axis z  yaw 0 │
+│  Prop        │                                            │  size 8 × 16   │
+│  Node (adv.) │                                            │  to: Pair ▾    │
+│ Palette /    │                                            │  [Remove]      │
+│ catalogue    │                                            │                │
+├──────────────┴────────────────────────────────────────────┴────────────────┤
+│ Entities: portals · props · nodes · spawn · objective     (click to fly)  │
+└────────────────────────────────────────────────────────────────────────────┘
+```
 
-The owner took the recommendations on the questions this design left open:
+Mantine owns the forms, lists, destination pickers and the recipe editor (a JSON text area;
+the page checks its shape and caps, and the server checks the recipe in full). Advanced controls are hidden, not just disabled, for
+someone who may not use them; the server checks anyway.
 
-- **Public worlds aren't edited in place.** Anyone with the right copies one into a workshop,
-  works there, and exports a level; changes to the worlds the game ships go through review as
-  a pull request against `data/levels/` (and the builders in `tools/assets/` where a level is
-  generated). Replacing a live public world from a workshop, by staff, after a snapshot, can
-  come later.
-- **Workshops: three an account**, at the default world size (512 × 128 × 512 blocks), free (no
-  Authority) to begin with. Their history is the usual week of snapshots. Storage isn't
-  counted against accounts until it has been measured on real workshops.
-- **Visit links: yes, later.** An owner can make an unlisted, read-only link to a workshop, and
-  revoke it; it comes after the seven steps above.
-- **No touch editing in the first version.** The editor is for desktop browsers with a mouse
-  and keyboard; on a touch device the page says so and offers play instead.
-- **Props get a tool in the editor** (a Props tab beside the blocks palette) once props exist,
-  not a page of their own.
+### The client in edit mode
+
+`StartConfig` gains `edit: true`. The client joins as a player (others see the author) and
+switches to an **edit camera**: fly freely, no gravity (moves are still checked by
+`vox-core::moves`, which allows flying speed), the quick wheel replaced by the active tool. In
+`vox-world`, a new `editor/` module adds:
+
+- **Picking**: the voxel ray (`vox-core::ray`) against blocks, portal frames, prop boxes and
+  node outlines.
+- **Ghosts**: what a tool would place, drawn translucent; red when the rules (`vox_core::edit`)
+  say no, with the reason.
+- **Gizmos**: move along an axis or on the ground plane, snapping to the half block (portals),
+  5 cm (props) or the block (nodes); turn by 90° (portals, nodes) or 15° (props); resize
+  handles on portals.
+- **Sending**: `Put`, `Remove`, `Build` on the client's one WebSocket, so the server orders them
+  with everyone's edits. Applied changes come back as `Entities`.
+
+### The bridge
+
+```rust
+#[wasm_bindgen] pub fn editor_command(json: String);   // JS -> client
+// client -> JS: window.vox_editor(json)
+```
+
+One schema, defined in Rust (`vox-world::editor::bridge`: `Command` and `Event`, serde,
+`#[serde(tag = "type")]`), with the TypeScript types in `apps/site/src/game/editor.ts`. A test
+in `vox-world` writes sample JSON for every variant to `apps/site/src/game/editor.samples.json`
+and a `bun test` parses each against the TypeScript types, so the two can't drift silently.
+
+Commands: `tool` (select, blocks, portal, prop, node), `block` (palette choice), `prop`
+(catalogue choice), `select` (an entity), `set` (a field on the selected entity, the whole
+component), `remove`, `fly_to`, `undo`, `redo`, `build` (a node). Events: `ready`
+(world, palette, catalogue, your rights), `entities` (the list, then changes), `selected`,
+`refused` (with the reason in words), `here` (who is in the world).
+
+Nothing secret crosses the bridge: the token is already in the page that started the client,
+and the site's content policy (`bins/vox-directory/src/routes.rs`) allows only its own scripts
+and no framing, so the bridge grants nothing a script on the page didn't have. It takes commands
+only from the page itself (no `postMessage` listener). `editor_command` refuses JSON over 64 KB,
+unknown fields (`deny_unknown_fields`), and any command when the client isn't in edit mode.
+Text other people wrote (portal names, `readable` text, recipes, player names) is shown only as
+React text; a test fails if `features/editor` uses `dangerouslySetInnerHTML` or `innerHTML`.
+
+### Undo
+
+The editor keeps the author's own changes as pairs (before, after), up to 100. Undo sends the
+`before` as a `Put` (or a `Remove` for something made) with `expect` set to the `seq` of the
+author's own change; if someone else has changed that entity since, the server refuses it
+(`Changed`) and the step is dropped. Undoing a `Build` is done by the server
+(`ToServer::Unbuild`): it puts each block's old value back only where the block still holds
+what the build put there, 4,096 a tick like a build; blocks others have changed since are
+left, and the editor says how many. (Block edits are limited to 20 a second a player, so an
+undo sent block by block from the client would take minutes for a large build.) World-wide undo is the owner's snapshot restore
+(`--restore-at`, and later on the site, world-format phase 7).
+
+## Props in the editor
+
+Built as props.md phases 1 to 3 describe (no change to that design):
+
+1. `crates/vox-art`: grid, palette, seeded RNG, `PropDef`, the `.vox` reader and importer, the
+   checks; the seed catalogue is built from the prop recipes in `source/props/` by `vox-props` (`source/vox/props/` does not exist yet).
+2. Prop recipe operations and golden tests (native and wasm).
+3. `VOXP` blobs, the `Prop` entity, the server's placement checks (props.md *Placing*),
+   meshing, batching and prop occupancy in the clients.
+
+Behaviours (phase 4) come after: the editor sets `state`, `variant` and `channel` fields that
+the entity already holds, and the inspector shows them, but only `light` and `motion` need to
+work for a first release; the rest follow props.md phase 4.
+
+The catalogue panel lists accepted props (name, tags, a thumbnail from the contact sheet).
+Player-made props and their entitlements are props.md phase 6, after this plan.
+
+## Graph nodes in the editor
+
+The minimum of world-graph-and-art.md the inspector needs:
+
+- `vox-art` phase 1: grid, palette, RNG, five operations (`box`, `roof`, `cut`, `openings`,
+  `trim`), evaluation, checks, export to level blocks; golden tests on both targets.
+- `crates/vox-graph`: `Node` (kind, detail, footprint, params, recipe, seed), `Link`, the
+  constraints (children inside parents, no overlaps) and `expand` (node to blocks, through
+  `vox-art`). No language model tools, no library, no `vox-forge`.
+
+In advanced mode: **add** a node (a kind and a footprint, drawn as an outline), **edit** its
+recipe (the JSON form; the page checks its shape, the server the whole recipe), **preview** (the client
+expands it in wasm and draws it as a ghost), **build** (`ToServer::Build`: the server expands
+the same recipe and seed, and applies the blocks as ordinary ordered edits by that player, so
+they are in the edit log and snapshots). A build changes at most **32,768 blocks**; the server
+applies it **4,096 blocks a tick**, so other players' edits interleave in the one order, and
+sends a chunk changed by more than 256 blocks as a whole `Chunk` message rather than a run of
+`Applied`. A preview over the cap is refused before sending, with the count. Expansion is deterministic, so the preview is what
+gets built. Links between nodes are shown and stored, but only `contains` is enforced for now.
+
+The seam for later: `vox-forge`'s MCP tools (world-graph-and-art.md phase 4) can drive the same
+`Put` and `Build` messages, so a language model would edit a live world through the same rules.
+
+## Security
+
+- **Every `Put`, `Remove` and `Build` is checked on the server**, whatever the client showed:
+  rights (re-checked on every edit), bounds and reach, caps, finite floats, sizes.
+- **Caps**: 4,000 entities a zone; 64 props a plot; portals as today (2 a plot) for players;
+  strings (names 32, `readable` 140, recipe JSON 16 KB) with control characters stripped;
+  recipes at most 200 operations (the same cap in the browser's parser) and 32,768 changed
+  blocks per build; `Put` 10 a second per player, `Build` one per 10 seconds per world.
+- **Portal destinations stay on this host**: `Url` accepts only `":<port>"` or `"/w/<id>/ws"`;
+  `World` and `Pair` must name a world the directory knows; `Dungeon` a template the host has.
+  Atlas edges are not portals anyone places (they come from the tile); an owner may only close
+  or open them (`Settings.edges`). A whole `ws://` or
+  `wss://` address is refused (`BadDest`): the client would connect there with a ticket.
+- **Spawn and objective**: the spawn needs room to stand (`vox-core::body`'s character height
+  free, over a solid block or the world's `floor`); the objective must be inside the world. A `Pair` end inside someone
+  else's plot is refused.
+- **Untrusted blobs**: `Component` decoding has the same caps as zones (entity counts, string
+  lengths); unknown component names and newer versions are refused, not guessed.
+- **Text**: portal names and `readable` text go through the same filter as names.
+- **The world secret** stays on localhost (`/api/world/*`); the new `/api/world/portal` is
+  under it and refused by the tunnel config like the others.
+
+## Wasm and the browser
+
+- Shared code (`vox-core::edit`, `vox-core::entity`, `vox-art`, `vox-graph`,
+  `vox-world::editor`) has no threads, no blocking I/O, no `std::time` clocks, and uses checked
+  arithmetic on sizes from the network or a recipe (wasm32 `usize` is 32 bits and release
+  builds wrap).
+- Recipe expansion for a preview runs within the per-frame meshing budget (5 ms in the
+  browser), spread over frames; a preview over budget shows its outline first.
+- The editor page loads the same `public/pkg` client; no second build.
+
+## Testing
+
+| What | How | Command |
+| --- | --- | --- |
+| Rules | unit tests in `vox_core::edit` for each `EntityWhy` | `cargo test -p vox-core edit` |
+| Entities | types round trip, caps refuse crafted input | `cargo test -p vox-core entity` |
+| Zone blobs | entities in v2 blobs, version-1 zone blobs still load | `cargo test -p vox-format zone` |
+| Wire | round trips, first bytes of old variants unchanged | `cargo test -p vox-core wire` |
+| Server | one test per refusal; a change reaches a second player; restore-at brings entities back; a stale `expect` is refused; a 32,768-block build interleaves with another player's edit; 20,000 props join with no message over 64 KB | `cargo test -p vox-server editor` |
+| Directory charge | the same idempotency key charges once; a failed re-check refunds; reconciliation recreates a paid portal | `cargo test -p vox-directory portal` |
+| Directory | editors grant and revoke; `/api/world/portal`; pairing | `cargo test -p vox-directory editors` |
+| vox-art, vox-graph | golden voxel hashes, native and wasm | `cargo test -p vox-art`, `cargo test -p vox-graph` |
+| Bridge | Rust samples parsed by the TypeScript types; over-size and unknown-field commands refused; no raw HTML in `features/editor` | `cargo test -p vox-world bridge && (cd apps/site && bun test)` |
+| Page | builds | `cd apps/site && bun run build` |
+| End to end | Playwright: sign in, open `/edit`, place a portal, a second page sees it | `tools/test/editor_e2e.py` |
+
+## Phases
+
+Each ships on its own; dependencies in brackets.
+
+1. **Entities** (world-format phase 2): `vox_core::entity`, the zone blob v2, the SQLite
+   table, seeding portals, spawn, objective and settings from level files, protocol 9
+   (`Put`, `Remove`, `Entities`, `EntityRefused`), clients reading portals from entities.
+2. **Rights**: `vox_core::edit` rules, `world_editors`, rules carrying owner and editors,
+   `/api/world/portal` and pairing.
+3. **Bridge and page**: edit camera, picking, ghosts, gizmos, the bridge, `/edit` with portals,
+   blocks, spawn, objective and settings. [1, 2] (The first usable editor.)
+4. **Props** (props.md phases 1 to 3), then the prop tool and inspector. [1]
+5. **Graph nodes** (vox-art phase 1, vox-graph), then the node inspector and `Build`. [1, 3;
+   shares vox-art with 4]
+6. **Undo, the entity list, the end-to-end test, help pages** (`docs/help/editor.md`). [3]
+
+## Open questions
+
+- Should `Build` make a **structure** version (world-format phase 6) instead of loose blocks, so
+  a built node can be rebuilt or copied? Loose blocks first; a structure once phase 6 exists.
+- Should a world owner be able to make **another player's** portal pair across into their
+  world refuse (a "no incoming portals" setting)?
+- Does the editor need a **read-only** mode for anyone (watch the editing, no rights), or is
+  `/play` enough?
+- The edit camera flies: should a world be able to switch flying off for non-editors?
+
+## Stress Test Results: the world editor (2026-11-27)
+
+### Resolved decisions
+- **Build flooding**: at most 32,768 changed blocks, applied 4,096 a tick, heavily changed
+  chunks resent whole. A big build no longer stalls the world thread or sends megabytes of edits.
+- **One id for player portals**: the directory row id (`Portal.key`, `Dest::Pair { key }`);
+  worlds reconcile with the directory on each rules fetch and after a restore.
+- **Charging Authority**: off the world thread, idempotency key, re-check then refund on
+  failure, 5 s timeout (`Unavailable`), reconciliation as the backstop.
+- **Revoked rights**: advanced edits ask the directory each time (5 s cache, fail closed);
+  basic edits keep the 30 s rules window that block edits already have.
+- **Saving and restore**: an `entity_edits` log sharing `seq`, written in the same `flush()`
+  transaction; `--restore-at` replays both logs.
+- **Concurrent edits and undo**: `expect` on `Put` and `Remove` (`Changed` when stale); Build
+  undo leaves blocks others changed.
+- **The bridge**: no new authority under the existing content policy; 64 KB cap, unknown fields
+  refused, edit mode only, world text only as React text (grep test), the recipe parser uses
+  the server's caps.
+- **Joining**: entities in batches of 512, nearest zone first, 64 KB a message; streaming by
+  view radius waits for world-scaling phase 3.
+
+### Changes made
+- Portal identity, `Dest::Pair`, `expect`, `Changed` and `Unavailable`, the entity log, build
+  caps, bridge limits, join batching, live `Settings`, and the note on `Welcome.settings`
+  (the server turns away other protocols, so it is not about older clients).
+
+### Deferred
+- Streaming entities by view radius (world-scaling phase 3).
+- Build as a structure version (world-format phase 6).
+- The four open questions above.
+
+### Confidence
+- Overall: **medium-high**. The editor's own design is sound; the risk is size: four sub-epics,
+  two of them new crates (`vox-art`, `vox-graph`), before the full editor exists. Phase 3 gives
+  a usable editor (portals, settings, spawn, objective) without props or nodes, which limits
+  the risk.
+
+## As built (2026-11-27)
+
+What implementation (beads `vox-tol.1` to `vox-tol.6`) settled that the sections above did not:
+
+- **Owners and keys come from the server.** A new prop's owner is stamped with the account
+  placing it, and an edit of an existing prop keeps the owner it has, whatever the client sent;
+  portal keys come only from the directory. The page holds ids as JavaScript numbers, which lose
+  integers past 2^53, so nothing it sends back may depend on one; for the same reason a node's
+  seed is at most 2^53 - 1 (`vox_core::entity::MAX_NODE_SEED`).
+- **Rights shown are never looser than rights enforced.** In Basic a level file's portal (no
+  key) is read-only, as the server rules; in Advanced a player's own (keyed) portal is read-only
+  on the page although the rules would let an editor move it: the page keeps other people's
+  portals out of reach on purpose.
+- **Atlas edges** are closed by leaving them out of the Settings entity's `atlas.edges`; the
+  server refuses travel over a closed edge and refuses a Settings Put that names an edge the
+  tile does not have, or `edges` that is not a list. A Settings with no `edges` leaves every edge
+  open.
+- **Props** must fit whole: every footprint cell inside the world, and a builder's inside their
+  own plot; a solid block may not be placed where a prop stands (`Why::Blocked`); a prop needs
+  one of the surfaces its definition accepts (floor, ceiling, wall, water, table; an endless
+  floor counts) or is refused (`NoSupport`), and a prop whose support goes (a block broken, a
+  build or undo, a table removed) is removed as an edit by whoever took the support away. The seed
+  catalogue (`data/props`, built by `vox-props` from the recipes in `source/props`: a barrel, a
+  stool and a crate, as the owner chose) has its palette in `data/props/palette.json`; an import
+  from `.vox` refuses a colour further than 48 squared (squared RGB distance) from the palette.
+  The client treats a prop whose hash is not in the catalogue as an orphan, as the server does.
+- **Graph nodes**: the client and the server turn a node entity into a `vox-graph` node with the
+  same code (`vox_graph::entity`), so a preview is what gets built; a preview over 32,768 blocks
+  is refused before sending, with its count. Nodes are added with **Add node**; there is no Node
+  tool on the rail.
+- **Undo** keeps only steps that chain from the state the entity is in, so an older step is
+  dropped once someone else's change has come between; a change sent without `expect` is not
+  undoable. A build is one step with no redo; an editor removed since may not undo their build.
+- **Local play**: `--editors-all` lets guests edit a world with no directory (each guest a local
+  account); it is refused with a directory, and must never be given to a production host.

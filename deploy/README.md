@@ -76,6 +76,18 @@ the older commit again.
   result into a fresh replica only with care: the next start restores the latest copy from R2.
 - **Trying it locally:** `tools/dev/litestream_probe.sh` and `tools/dev/container_probe.sh` run
   the container's start against a test bucket.
+- **Rolling back past the world editor:** world snapshots from that release on are zone format 2,
+  which holds each zone's entities (portals, props, nodes, settings) as well as its blocks, and
+  older binaries can't read them. Before going back to an older image, restore each world with the
+  newer binary to a snapshot from before the upgrade (`vox-server --db <world>.db --restore <id>`,
+  world stopped): it keeps the world's current entities, since that snapshot predates them. The
+  restore is itself a snapshot, so the newer binary can still undo it. This needs a shell where the
+  databases are (self-hosting; on Cloudflare, not yet: see below). The directory and the worlds
+  are in one image, so they always update together.
+- **Editing:** a world's owner and the editors they name edit it live at `/edit?world=<id>`
+  (`docs/help/editor.md`). `--editors-all`, which lets guests edit a world with no directory, is
+  for local play only (`tools/dev/play-local.sh`): it is refused alongside a directory and must
+  never go into `deploy/docker/host.args`.
 
 World owners (who may issue a world's currency) and grants of authority are made with the
 directory's `admin` commands against `directory.db`:

@@ -7,6 +7,8 @@ description = "A Vox world server: one shared build space, its players and its b
 [dependencies]
 vox-core.workspace = true
 vox-format.workspace = true
+vox-art = { path = "../../crates/vox-art" }
+vox-graph = { path = "../../crates/vox-graph" }
 axum = { workspace = true, features = ["ws"] }
 futures-util.workspace = true
 rusqlite.workspace = true

@@ -57,6 +57,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use vox_core::auth::{self, Character, Claims, SigningKey};
 
 pub mod game;
+mod editors;
 pub mod people;
 mod structures;
 pub mod social;

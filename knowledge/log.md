@@ -1,6 +1,18 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T21:09:20Z]: Linked `architecture/world-editor-design.md` to `decisions/world-editor.md` (The editor already built, which this design extends.). — Linked the workshops design to the built editor.
+* **Relate** [2026-11-27T21:09:20Z]: Linked `decisions/world-editor.md` to `architecture/world-editor-design.md` (The proposed next step: workshops, whole operations, saving as a level or structure.). — Linked the built editor's decision to the workshops design that follows it.
+* **Update** [2026-11-27T21:09:20Z]: Updated concept `decisions/world-editor-scope.md`. — The design it answers moved to docs/design/world-editor-workshops.md; notes the built live editor it sits beside.
+* **Update** [2026-11-27T21:09:08Z]: Updated concept `architecture/world-editor-design.md`. — Design moved to docs/design/world-editor-workshops.md when merged with the built editor (docs/design/world-editor.md); notes what already exists.
 * **Relate** [2026-11-27T20:58:00Z]: Linked `architecture/world-editor-design.md` to `decisions/world-editor-scope.md` (The owner's answers to the design's open questions.).
 * **Creation** [2026-11-27T20:58:00Z]: Documented concept `decisions/world-editor-scope.md` (Decision: The World Editor's Scope (Public Worlds, Workshops, Visits, Touch, Props)). — Owner took the recommendations on the world editor's open questions (2026-11-27)
+* **Update** [2026-11-27T20:45:40Z]: Updated concept `technologies/rust-workspace.md`. — New crates vox-art, vox-graph and bin vox-props.
+* **Update** [2026-11-27T20:45:40Z]: Updated concept `architecture/asset-pipeline.md`. — vox-props builds data/props from source/props.
+* **Update** [2026-11-27T20:45:40Z]: Updated concept `architecture/vox-client-and-web.md`. — The /edit page, the wasm editor_command bridge and game/editor.ts.
+* **Update** [2026-11-27T20:45:05Z]: Updated concept `architecture/vox-world.md`. — editor/ module, entities and props on the client.
+* **Update** [2026-11-27T20:45:05Z]: Updated concept `architecture/vox-server.md`. — Entities store and log, props library, editor edits and rights, builds and Unbuild, drop_unsupported, closed atlas edges, --editors-all.
+* **Update** [2026-11-27T20:44:34Z]: Updated concept `architecture/vox-core.md`. — Entity components, edit rules (check_put/check_remove, prop support) and prop footprints from the world editor.
+* **Update** [2026-11-27T20:44:17Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 9: entity messages (Put, Remove, Build, Unbuild, Entities, EntityRefused, EntityDone).
+* **Update** [2026-11-27T20:39:09Z]: Updated concept `decisions/world-editor.md`. — Implementation decisions (beads vox-tol.1-6): server-owned owners, seed cap, server-side Unbuild, atlas edges, prop rules, seed catalogue, editors-all.
 * **Relate** [2026-11-27T20:35:56Z]: Linked `architecture/world-editor-design.md` to `architecture/world-format-design.md` (Snapshots, live restore and levels as files that the editor builds on.).
 * **Relate** [2026-11-27T20:35:56Z]: Linked `architecture/world-editor-design.md` to `decisions/structure-entitlements.md` (Workshop rights follow the structure rights model; the editor saves selections as structures.).
 * **Creation** [2026-11-27T20:35:56Z]: Documented concept `architecture/world-editor-design.md` (Design (proposed): The World Editor on the Web). — Design for a web world/level editor, asked for 2026-11-27
@@ -9,6 +21,7 @@
 * **Deprecation** [2026-11-27T17:27:02Z]: Deprecated concept `decisions/pull-based-auto-deploy.md`. — Superseded by architecture/cloudflare-hosting-design: the server and its pull deploy are retired.
 * **Relate** [2026-11-27T16:35:18Z]: Linked `architecture/deployment.md` to `architecture/cloudflare-hosting-design.md` (Where hosting is going: Cloudflare Containers with SQLite streamed to R2 (proposed).).
 * **Creation** [2026-11-27T16:35:18Z]: Documented concept `architecture/cloudflare-hosting-design.md` (Design (proposed): vox.fail on Cloudflare Containers). — Owner's choices for moving vox.fail onto Cloudflare; design doc proposed, not built.
+* **Creation** [2026-11-27T16:13:10Z]: Documented concept `decisions/world-editor.md` (Decision: A Live In-Browser World Editor Built on World Entities). — World editor design agreed and stress-tested (docs/design/world-editor.md, beads vox-tol).
 * **Relate** [2026-11-27T16:11:44Z]: Linked `architecture/deployment.md` to `decisions/cloudflare-managed-tunnel.md` (How vox.fail's zone, rules, tunnel and DNS are set up: one cf script, tunnel managed in Cloudflare.).
 * **Creation** [2026-11-27T16:11:44Z]: Documented concept `decisions/cloudflare-managed-tunnel.md` (Decision: vox.fail's Cloudflare Side Is Scripted, With a Tunnel Managed in Cloudflare). — First-time Cloudflare setup for vox.fail, scripted with cf.
 * **Update** [2026-11-27T16:02:00Z]: Updated concept `decisions/edge-worker-offline-page.md`. — Deployed with the cf CLI (cloudflare.config.ts); placeholder DNS record until the tunnel is routed.

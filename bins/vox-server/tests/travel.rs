@@ -101,6 +101,27 @@ async fn only_from_the_doorway() {
     assert_eq!((to.as_str(), ticket, arrive), (":7781", None, [0.5, 0.0, 11.5]));
 }
 
+/// A doorway to a dungeon: its way is the dungeon's address, and its arrival is the level's own
+/// `arrive` (the Void's dungeon doorways once arrived at the doorway's sill instead).
+const DUNGEON_LEVEL: &str = r#"{ "world": { "sky": "void", "portals": [
+    {"name": "down", "at": [0.5, 0, 2.0], "axis": "z", "size": [4, 6], "level": "crypt", "url": "dungeon:crypt", "arrive": [0, 0, 11.5], "yaw": 0}
+  ] }, "boxes": [ { "block": "grass", "from": [-16, -1, -16], "to": [16, -1, 16] } ] }"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dungeon_doorway_arrives_at_the_levels_arrival() {
+    // no directory here, so the answer comes at once, with no ticket: the arrival is the level's
+    // `arrive` carried through the doorway (the sill maps onto it exactly)
+    let mut c = config("void");
+    c.seed = Some(DUNGEON_LEVEL.into());
+    let (_s, url) = serve(c).await;
+    let mut ws = join(&url, None).await.unwrap();
+    send(&mut ws, &ToServer::Pose { at: [0.5, 0.0, 2.0], blob: vec![] }).await;
+    send(&mut ws, &ToServer::Through { portal: "down".into(), side: 1 }).await;
+    let (to, ticket, arrive) = wait_for(&mut ws, 2.0, travel).await.expect("no way through");
+    assert_eq!((to.as_str(), ticket), ("dungeon:crypt", None));
+    assert_eq!(arrive, [0.0, 0.0, 11.5]);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn tickets_from_the_directory() {
     let key = auth::key_from_seed([9; 32]);

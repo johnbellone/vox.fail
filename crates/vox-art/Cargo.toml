@@ -1,0 +1,13 @@
+[package]
+name = "vox-art"
+version.workspace = true
+edition.workspace = true
+description = "Voxel art in the project's style: scales, sparse voxel grids, the project palette and a seeded RNG. No engine, native and wasm."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+blake3 = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+png.workspace = true

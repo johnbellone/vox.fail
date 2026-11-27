@@ -56,6 +56,24 @@ pub fn parse(settings: &Value) -> Vec<Door> {
 }
 
 impl Door {
+    /// The doorway of an entity [`crate::entity::Portal`]. The caller works out where it
+    /// leads (`url`, None for somewhere in this world) and the arrival point there.
+    /// Requires a validated Portal: `Component::validate` must have passed for it. That is
+    /// where the size and yaw are checked; this only clamps the size as [`parse`] does.
+    pub fn from_portal(p: &crate::entity::Portal, url: Option<String>, arrive: [f32; 3]) -> Door {
+        use crate::entity::Axis;
+        Door {
+            name: p.name.clone(),
+            at: p.at,
+            along_x: p.axis == Axis::X,
+            size: p.size.map(|c| c.clamp(1.0, 64.0)),
+            level: p.level.clone(),
+            url,
+            arrive,
+            yaw: if p.yaw.is_finite() { p.yaw.to_radians() } else { 0.0 },
+        }
+    }
+
     /// The axis you walk through along: x or z.
     fn normal(&self) -> [f32; 3] {
         if self.along_x { [1.0, 0.0, 0.0] } else { [0.0, 0.0, 1.0] }
@@ -132,5 +150,49 @@ mod tests {
         let mut x = d.clone();
         x.along_x = true;
         assert!(close(x.carry([0.0, 0.0, -38.5], 1.0), [-1.0, 0.0, 11.5]));
+    }
+
+    #[test]
+    fn from_portal_matches_parse() {
+        // the yard's doorway, as data/levels/yard.json writes it
+        let json = serde_json::json!({ "portals": [
+            {"name": "void", "at": [0, 0, 11.5], "axis": "z", "size": [8, 16], "level": "void", "url": ":7780", "arrive": [0, 0, -39.5], "yaw": 0},
+        ]});
+        let parsed = parse(&json);
+        let p = crate::entity::Portal {
+            name: "void".into(),
+            at: [0.0, 0.0, 11.5],
+            axis: crate::entity::Axis::Z,
+            size: [8.0, 16.0],
+            yaw: 0.0,
+            level: "void".into(),
+            to: crate::entity::Dest::Url { url: ":7780".into(), arrive: [0.0, 0.0, -39.5] },
+            key: None,
+        };
+        assert_eq!(Door::from_portal(&p, Some(":7780".into()), [0.0, 0.0, -39.5]), parsed[0]);
+    }
+
+    #[test]
+    fn from_portal_matches_parse_when_turned_and_clamped() {
+        // a doorway along x, turned a quarter, with a size that parse clamps to 64 by 1
+        let json = serde_json::json!({ "portals": [
+            {"name": "far", "at": [5, 0, 2], "axis": "x", "size": [100, 0.5], "level": "far", "url": "/w/7781/ws", "arrive": [-3, 0, 2], "yaw": 90},
+        ]});
+        let parsed = parse(&json);
+        assert_eq!(parsed[0].size, [64.0, 1.0]);
+        // the same values as a Portal, tidied the way the editor's input is
+        let mut c = crate::entity::Component::Portal(crate::entity::Portal {
+            name: "far".into(),
+            at: [5.0, 0.0, 2.0],
+            axis: crate::entity::Axis::X,
+            size: [100.0, 0.5],
+            yaw: 90.0,
+            level: "far".into(),
+            to: crate::entity::Dest::Url { url: "/w/7781/ws".into(), arrive: [-3.0, 0.0, 2.0] },
+            key: None,
+        });
+        c.tidy();
+        let crate::entity::Component::Portal(p) = c else { panic!("still a portal") };
+        assert_eq!(Door::from_portal(&p, Some("/w/7781/ws".into()), [-3.0, 0.0, 2.0]), parsed[0]);
     }
 }

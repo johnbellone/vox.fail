@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run the Void, the yard, the islands, the dark sea and orbit locally (guests allowed, so portals work) and join the
-# Void with the desktop client.
+# Void with the desktop client. --editors-all: local worlds accept edits from guests (no directory, so nobody is
+# asked about editor rights). Never run a directory-backed world with it; the world refuses that combination.
+# This script serves no site, so the /edit page is not started here.
 # Usage: tools/dev/play-local.sh [client args...]   e.g. --name Sam --model models/dog.glb
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -16,7 +18,7 @@ cargo build --release -p vox-server -p vox-client
 
 pids=()
 start() { # name port seed
-  ./target/release/vox-server --listen "127.0.0.1:$2" --name "$1" --db "$1.db" --seed "data/levels/$3.json" &
+  ./target/release/vox-server --listen "127.0.0.1:$2" --name "$1" --db "$1.db" --seed "data/levels/$3.json" --editors-all &
   pids+=($!)
 }
 start void 7780 void

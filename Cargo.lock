@@ -7010,6 +7010,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vox-art"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "png",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vox-client"
 version = "0.1.0"
 dependencies = [
@@ -7061,8 +7071,19 @@ dependencies = [
  "ruzstd 0.8.3",
  "serde",
  "serde_json",
+ "vox-art",
  "vox-core",
  "zstd",
+]
+
+[[package]]
+name = "vox-graph"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vox-art",
+ "vox-core",
 ]
 
 [[package]]
@@ -7084,6 +7105,16 @@ name = "vox-link"
 version = "0.1.0"
 dependencies = [
  "tungstenite 0.27.0",
+]
+
+[[package]]
+name = "vox-props"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vox-art",
+ "vox-format",
 ]
 
 [[package]]
@@ -7111,8 +7142,10 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.30.0",
+ "vox-art",
  "vox-core",
  "vox-format",
+ "vox-graph",
  "vox-voice",
 ]
 
@@ -7132,7 +7165,10 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+ "vox-art",
  "vox-core",
+ "vox-format",
+ "vox-graph",
  "vox-link",
  "vox-voice",
  "wasm-bindgen",

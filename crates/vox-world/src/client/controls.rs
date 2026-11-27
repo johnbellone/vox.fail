@@ -1,6 +1,7 @@
 //! Walking, looking and building from the input actions.
 
 use super::*;
+use vox_core::body::{Occupancy, with_props};
 
 /// Walking, flying, looking, choosing and building.
 ///
@@ -27,8 +28,16 @@ pub fn controls(
     mut walkers: Query<&mut Transform, With<Walker>>,
     mut shown: Query<&mut Visibility>,
     mut repeat: Local<BuildRepeat>,
-    wheel: Option<Res<crate::hud::QuickWheel>>,
+    // the quick wheel (if the HUD is in) and the prop cells that block walking (if props are in);
+    // one parameter, to stay within Bevy's sixteen
+    overlay: (Option<Res<crate::hud::QuickWheel>>, Option<Res<crate::props::PropOccupancy>>),
+    mut editor: Option<ResMut<crate::editor::EditorState>>,
 ) {
+    let (wheel, props) = overlay;
+    // this frame's click is not known to be a pick until the mouse is looked at below
+    if let Some(e) = editor.as_mut() {
+        e.pointer_claimed = false;
+    }
     if !w.active() {
         return;
     }
@@ -60,6 +69,16 @@ pub fn controls(
     let now = w.now();
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let pad_active = active.is_gamepad();
+    // edit mode is the editor's state being there (EditorPlugin is added only then): the player
+    // always flies, at the edit flight's speed (editor::camera)
+    let edit = editor.is_some();
+    let fly_speed = if edit { crate::editor::camera::EDIT_FLY } else { FLY };
+    // with an editor tool that takes the click (Select picks, Portal places a doorway: see
+    // Tool::consumes_click) a click neither breaks a block nor walks to the point
+    let click_taken = editor.as_ref().and_then(|e| e.tool).is_some_and(|t| t.consumes_click());
+    // no props in the world (or none loaded): the blocks alone stop the body
+    let no_props = Occupancy::default();
+    let occupancy = props.as_ref().map_or(&no_props, |p| &p.0);
     if actions.just_pressed(A::View) {
         w.cam_mode = w.cam_mode.next();
         let s = w.cam_mode.label();
@@ -94,6 +113,9 @@ pub fn controls(
             w.captured = true;
             swallowed = true;
         }
+    }
+    if let Some(e) = editor.as_mut() {
+        e.pointer_claimed = swallowed;
     }
     // the ray under the pointer, from where the camera was last frame
     w.pick = None;
@@ -170,7 +192,13 @@ pub fn controls(
         let n = w.hotbar.len() as i32;
         w.slot = ((w.slot as i32 + cycle).rem_euclid(n)) as usize;
     }
-    if toggle_fly {
+    if edit {
+        // nothing turns the edit flight off
+        if !w.fly {
+            w.fly = true;
+            w.vy = 0.0;
+        }
+    } else if toggle_fly {
         w.fly = !w.fly;
         w.vy = 0.0;
         let s = if w.fly { "Flying" } else { "Walking" };
@@ -186,8 +214,14 @@ pub fn controls(
         place = clicked.1 && !shift;
         remove = clicked.1 && shift;
     } else if !swallowed {
-        let held = (actions.pressed(A::Break), actions.pressed(A::Place));
-        let just = (actions.just_pressed(A::Break), actions.just_pressed(A::Place));
+        let mut held = (actions.pressed(A::Break), actions.pressed(A::Place));
+        let mut just = (actions.just_pressed(A::Break), actions.just_pressed(A::Place));
+        // the click of a tool that takes it is the Break action; it must not reach the repeat
+        // (zeroed before the step, so the repeat timer does not latch on it)
+        if click_taken {
+            held.0 = false;
+            just.0 = false;
+        }
         (remove, place) = repeat.step(held, just, now, turned);
     }
     let pick = actions.just_pressed(A::Pick);
@@ -209,13 +243,15 @@ pub fn controls(
     let right = Vec3::new(basis.cos(), 0.0, -basis.sin());
     let mut dir = fwd * stick.y + right * stick.x;
     // a click (or holding the button) on the ground walks there
-    if diablo && mouse.pressed(MouseButton::Left) && !shift {
-        if let Some((o, d)) = w.pick {
-            if let Some(h) = ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 160.0) {
-                let p = IVec3::from(h.cell).as_vec3() + Vec3::new(0.5, 1.0, 0.5);
-                w.goal = Some(p);
-            }
-        }
+    if diablo
+        && mouse.pressed(MouseButton::Left)
+        && !shift
+        && !click_taken
+        && let Some((o, d)) = w.pick
+        && let Some(h) = ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 160.0)
+    {
+        let p = IVec3::from(h.cell).as_vec3() + Vec3::new(0.5, 1.0, 0.5);
+        w.goal = Some(p);
     }
     if dir.length() > 0.1 {
         w.goal = None;
@@ -227,7 +263,21 @@ pub fn controls(
             dir = to.normalize() * (to.length() / 2.0).clamp(0.35, 1.0);
         }
     }
-    let speed = if w.fly { FLY } else if run { RUN } else { WALK } / size;
+    // a fly-to (the page's go-to, editor::camera) gives way to the player's own motion: any
+    // walking, flying or click-to-walk cancels it; while it runs, the keys add nothing, so the
+    // total speed stays at the flight's
+    let mut flying_to = false;
+    if let Some(s) = editor.as_mut().filter(|s| s.fly_to.is_some()) {
+        if dir.length() > 0.1 || up || down {
+            s.fly_to = None;
+        } else {
+            flying_to = true;
+        }
+    }
+    if flying_to {
+        dir = Vec3::ZERO;
+    }
+    let speed = if w.fly { fly_speed } else if run { RUN } else { WALK } / size;
     // in steps of at most 50 ms, so a slow frame (or a slow machine) still moves in real time
     let frame = real.delta_secs().min(0.25);
     let steps = (frame / 0.05).ceil().max(1.0) as usize;
@@ -237,7 +287,7 @@ pub fn controls(
     for _ in 0..steps {
         let mut vel = dir * speed;
         if w.fly {
-            vel.y = (up as i32 - down as i32) as f32 * FLY / size;
+            vel.y = (up as i32 - down as i32) as f32 * fly_speed / size;
         } else {
             if w.grounded && std::mem::take(&mut jump) {
                 w.vy = (2.0 * GRAVITY * JUMP_HEIGHT).sqrt() / size;
@@ -249,13 +299,14 @@ pub fn controls(
         let mut body = w.body;
         let contact = {
             let wr: &WorldClient = &w;
-            body.travel(|c| wr.stands_on(c), (vel * dt).to_array(), step)
+            body.travel(with_props(|c| wr.stands_on(c), occupancy), (vel * dt).to_array(), step)
         };
         w.body = body;
         if contact.hit[1] {
             w.vy = 0.0;
         }
-        w.grounded = !w.fly && (contact.ground || (w.vy <= 0.0 && w.body.on_ground(|c| w.stands_on(c))));
+        w.grounded = !w.fly
+            && (contact.ground || (w.vy <= 0.0 && w.body.on_ground(with_props(|c| w.stands_on(c), occupancy))));
     }
     // walking to a point and stuck against something: give up
     if w.goal.is_some() && dir.length() > 0.1 {
@@ -324,12 +375,32 @@ pub fn controls(
             w.edit(h.cell, 0);
         } else if place {
             let c = [h.cell[0] + h.normal[0], h.cell[1] + h.normal[1], h.cell[2] + h.normal[2]];
-            let b = w.selected();
+            let b = placed_block(
+                editor.as_ref().and_then(|e| e.tool),
+                editor.as_ref().and_then(|e| e.block.as_deref()),
+                |n| w.block_id(n),
+                w.selected(),
+            );
             w.edit(c, b);
         } else if pick {
             let b = w.view.get(h.cell);
             w.pick_block(b);
         }
+    }
+}
+
+/// The block a place click builds. With the editor's Blocks tool, it is the block the page
+/// chose, found by name in this world's palette (`lookup`); otherwise, or when the name is not
+/// in the palette, it is the hotbar's block.
+pub fn placed_block(
+    tool: Option<crate::editor::bridge::Tool>,
+    chosen: Option<&str>,
+    lookup: impl Fn(&str) -> Option<u16>,
+    hotbar: u16,
+) -> u16 {
+    match (tool, chosen) {
+        (Some(crate::editor::bridge::Tool::Blocks), Some(name)) => lookup(name).unwrap_or(hotbar),
+        _ => hotbar,
     }
 }
 
@@ -391,5 +462,22 @@ impl BuildRepeat {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::bridge::Tool;
+
+    #[test]
+    fn editor_blocks_tool_places_the_chosen_block() {
+        let lookup = |n: &str| (n == "glass").then_some(7u16);
+        assert_eq!(placed_block(Some(Tool::Blocks), Some("glass"), lookup, 1), 7);
+        // another tool, no choice, or a name not in the palette: the hotbar's block
+        assert_eq!(placed_block(Some(Tool::Select), Some("glass"), lookup, 1), 1);
+        assert_eq!(placed_block(Some(Tool::Blocks), None, lookup, 1), 1);
+        assert_eq!(placed_block(Some(Tool::Blocks), Some("nope"), lookup, 1), 1);
+        assert_eq!(placed_block(None, Some("glass"), lookup, 1), 1);
     }
 }

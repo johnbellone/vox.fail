@@ -1,0 +1,11 @@
+[package]
+name = "vox-graph"
+version.workspace = true
+edition.workspace = true
+description = "The world graph: nodes refined in detail levels, links between them, the placement rules, and expansion of a node's recipe into block cells. No engine, native and wasm."
+
+[dependencies]
+vox-art = { path = "../vox-art" }
+vox-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true

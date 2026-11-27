@@ -15,10 +15,12 @@
 //! is there (signed-in players: where they stand, how many blocks they placed), which is how
 //! players earn authority and raids are won, and fetches its rules every half minute: the
 //! plots players claimed (only their builders may change blocks inside one) and the portals
-//! they opened (added to the settings new arrivals get).
+//! they opened (kept as portal entities, which new arrivals get with the rest).
 
 mod connection;
+mod entities;
 pub mod flags;
+mod props;
 mod snapshot;
 mod world;
 #[allow(unused_imports)]
@@ -28,7 +30,7 @@ pub use world::*;
 pub use snapshot::{Restore, SnapStore, list_snapshots, restore};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -49,19 +51,19 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use rusqlite::{Connection, params};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use vox_core::{
     Bounds, Chunk, ChunkKey, Why, World,
+    edit::Role,
+    entity::{Component, EntityId},
     weather::{Climate, Weather},
-    wire::{self, Applied, PROTOCOL, ToClient, ToServer},
+    wire::{self, Applied, MAX_MESSAGE, PROTOCOL, ToClient, ToServer},
     world::Bucket,
 };
 
 /// Messages waiting per player before they count as falling behind. A world is at most
 /// 1024 chunks, all sent on joining.
 const QUEUE: usize = 2048;
-/// Largest message a player may send.
-const MAX_MESSAGE: usize = 64 * 1024;
 /// A pose blob is a skeleton's worth of joints; half of MAX_MESSAGE is generous.
 const MAX_POSE_BLOB: usize = 32 * 1024;
 /// Poses per second one connection may send (a client sends about 20).
@@ -72,10 +74,17 @@ const MAX_VOICE_PER_SECOND: f32 = 60.0;
 const VOICE_BURST: f32 = 100.0;
 /// How long a new connection has to say hello.
 const HELLO_WITHIN: Duration = Duration::from_secs(10);
-/// How far (in blocks, from the eyes) a player may edit.
-pub const REACH: f32 = 16.0;
-/// Eye height above the feet, in blocks.
-const EYES: f32 = 3.2;
+/// Entity edits (`Put`, `Remove`) per second per player, and the burst allowed.
+const EDIT_RATE: f32 = 10.0;
+/// How long a directory answer on advanced rights (world editors) is kept. Negative answers
+/// are kept as long as positive ones: a newly granted editor waits up to this long for
+/// advanced edits, and a revoked one keeps them up to this long. Failures (no answer, a non-200,
+/// a timeout) are not kept at all, so the next edit asks again.
+const EDITOR_CACHE: Duration = Duration::from_secs(5);
+/// Rights questions waiting for the directory at most; past this an edit is refused.
+const ASKS_QUEUED: usize = 256;
+/// Player portal calls to the directory waiting at most; past this an edit is refused.
+const PORTAL_ASKS_QUEUED: usize = 256;
 
 #[derive(Clone)]
 pub struct Config {
@@ -123,6 +132,13 @@ pub struct Config {
     pub world_secret: Option<String>,
     pub report_every: Duration,
     pub rules_every: Duration,
+    /// the folder of accepted props: `catalogue.json` and each prop's `<hash>.voxp` (see props.rs)
+    pub props: PathBuf,
+    /// every signed-in player is an editor (advanced edits), with no question to the directory,
+    /// and so is every guest (judged as a local account, see `world::guest_account`). For local
+    /// play and tests only: a live world asks the directory who may edit, and a world with a
+    /// directory refuses this flag. Without it, guests may not edit.
+    pub editors_all: bool,
 }
 
 impl Config {
@@ -152,6 +168,8 @@ impl Config {
             world_secret: None,
             report_every: Duration::from_secs(60),
             rules_every: Duration::from_secs(30),
+            editors_all: false,
+            props: PathBuf::from("data/props"),
         }
     }
 }
@@ -182,11 +200,119 @@ enum Event {
     Status(oneshot::Sender<Status>),
     /// who's here for the directory (and start counting edits again)
     Report(oneshot::Sender<serde_json::Value>),
-    /// the directory's plots, portals and raid parties (lists of account ids)
-    Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>),
+    /// the directory's plots, portals and raid parties (lists of account ids), and when the fetch
+    /// that got them began (a portal list that began before the world's last keyed-portal change
+    /// predates it, and is not applied)
+    Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>, Instant),
     /// the directory's answer for a trip: where to go, and the ticket (if it gave one)
     Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3] },
+    /// the directory's answer on whether an account may make advanced edits (None: no answer,
+    /// which refuses the edit)
+    Editor { conn: u64, account: u64, editor: Option<bool> },
+    /// the directory's answer to a player's portal call (`status` None: no answer in time)
+    Portal { conn: u64, account: u64, call: PortalCall, status: Option<u16>, body: serde_json::Value },
     Shutdown,
+}
+
+/// A player's entity edit waiting for the directory to say whether they may make advanced
+/// edits.
+#[derive(Debug)]
+pub(crate) enum Edit {
+    /// place entity `entity` (None: a new one) as `component`
+    Put { entity: Option<EntityId>, expect: Option<u64>, component: Component },
+    /// remove entity `entity`
+    Remove { entity: EntityId, expect: Option<u64> },
+    /// build the node `node`: its recipe's blocks are applied a tick at a time (`world.rs`)
+    Build { node: EntityId },
+}
+
+/// A build accepted and not yet finished: the blocks still to apply, in order, and who asked
+/// for it. The blocks are made by `player` (their name goes in the edit log), as ordinary edits
+/// are. A build keeps going when its builder leaves; the answer is then sent to nobody.
+#[derive(Debug)]
+pub(crate) struct BuildJob {
+    /// the builder's connection and request id, for the answer
+    pub conn: u64,
+    pub id: u32,
+    /// the node built (its entity id, for the answer)
+    pub node: EntityId,
+    /// the builder's player id and name, as their edits are made
+    pub player: u32,
+    pub name: String,
+    /// blocks left to apply: their cells and block ids, in order
+    pub blocks: VecDeque<([i32; 3], u16)>,
+    /// the edit number of the last block applied (or the number at the start, if none was)
+    pub last_seq: u64,
+    /// set when the job undoes a build (`ToServer::Unbuild`): then `blocks` holds the old blocks
+    /// to put back and this the rest of what to check; None for a build
+    pub undo: Option<Undo>,
+    /// every block a build changed, as (cell, old, new), kept for its undo when it finishes
+    /// (not filled for an undo)
+    pub changed: Vec<([i32; 3], u16, u16)>,
+}
+
+/// What an undo of a build carries beside its queue of old blocks.
+#[derive(Debug)]
+pub(crate) struct Undo {
+    /// the block the build put in each queued cell, in the queue's order: the old block goes back
+    /// only where the cell still holds this
+    pub expect: VecDeque<u16>,
+    /// cells restored so far
+    pub restored: usize,
+    /// cells left as they are: changed since, or in a plot the builder has no part in now
+    pub left: usize,
+}
+
+/// A finished build kept for its builder's session, so it can be undone.
+#[derive(Debug)]
+pub(crate) struct KeptBuild {
+    /// the client's number for the build (its edit id)
+    pub build: u32,
+    /// the blocks it changed: cell, the block before, the block it put there
+    pub changed: Vec<([i32; 3], u16, u16)>,
+}
+
+/// Builds kept per connection for undo, the oldest dropped first. A build is up to 32,768
+/// blocks, so this bounds what one connection holds.
+pub(crate) const KEPT_BUILDS: usize = 8;
+
+/// An edit held while the directory answers, with the request id to refuse it under, and the
+/// role it is judged as. A held edit for advanced rights (`editor_answer`) has no role yet: the
+/// directory's answer sets it, so the placeholder there is never read.
+#[derive(Debug)]
+pub(crate) struct Pending {
+    pub id: u32,
+    pub edit: Edit,
+    pub role: Role,
+}
+
+/// A directory call about a player's portal: a new one is charged (`Make`), a keyed one is moved
+/// (`Update`), given another destination (`Link`) or removed (`Remove`); `Refund` gives a charge
+/// back for a portal that was not placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PortalCall {
+    Make,
+    Update,
+    Link,
+    Remove,
+    Refund,
+}
+
+/// A call for the directory's portal endpoints. `conn` is the player waiting for the answer
+/// (None: nobody waits, as for a refund).
+pub(crate) struct PortalAsk {
+    pub conn: Option<u64>,
+    pub account: u64,
+    pub call: PortalCall,
+    /// the call's fields (the world and the account are added when it is sent)
+    pub body: serde_json::Value,
+}
+
+/// A question for the directory: may this account make advanced edits here? The answer comes
+/// back as [`Event::Editor`] for this connection.
+pub(crate) struct Asking {
+    pub conn: u64,
+    pub account: u64,
 }
 
 /// A trip through a portal to ask the directory a ticket for: who, where to (the portal's
@@ -212,6 +338,11 @@ pub struct Plot {
 }
 
 impl Plot {
+    /// The same area as vox-core's rules see it (for the entity checks).
+    fn area(&self) -> vox_core::edit::PlotArea {
+        vox_core::edit::PlotArea { x0: self.x0, z0: self.z0, x1: self.x1, z1: self.z1, builders: self.builders.clone() }
+    }
+
     fn from_json(v: &serde_json::Value) -> Option<Plot> {
         let i = |k: &str| v.get(k)?.as_i64().map(|n| n as i32);
         Some(Plot {
@@ -241,6 +372,10 @@ pub struct Server {
 impl Server {
     /// Open (or create) the world and start its thread. Call from inside a tokio runtime.
     pub fn start(cfg: Config) -> Result<Server, String> {
+        // as flags.rs refuses it: every account an editor is for local play only
+        if cfg.editors_all && (cfg.directory_url.is_some() || cfg.directory.is_some()) {
+            return Err("editors_all is for local play and tests; not with a directory".into());
+        }
         let gate = Arc::new(Gate { key: cfg.directory, guests: cfg.guests, world: cfg.name.clone(), used: Mutex::new(HashMap::new()) });
         let office = match (&cfg.directory_url, &cfg.world_secret) {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone())),
@@ -248,6 +383,10 @@ impl Server {
         };
         let (trip_tx, trip_rx) = mpsc::channel(TRIPS_QUEUED);
         let (goal_tx, goal_rx) = mpsc::channel(GOALS_QUEUED);
+        let (ask_tx, ask_rx) = mpsc::channel(ASKS_QUEUED);
+        let (portal_tx, portal_rx) = mpsc::channel(PORTAL_ASKS_QUEUED);
+        // woken when the directory has changed its portals, so the rules are fetched at once
+        let rules_now = Arc::new(Notify::new());
         let link = match (&cfg.directory_url, &cfg.world_secret) {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone(), cfg.report_every, cfg.rules_every)),
             _ => None,
@@ -258,6 +397,9 @@ impl Server {
         if office.is_some() {
             state.trips = Some(trip_tx);
             state.goals = Some(goal_tx);
+            state.editors = Some(ask_tx);
+            state.portals = Some(portal_tx);
+            state.rules_now = Some(rules_now.clone());
         }
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
@@ -274,10 +416,12 @@ impl Server {
             }
         });
         if let Some(link) = link {
-            tokio::spawn(directory_link(tx.clone(), link));
+            tokio::spawn(directory_link(tx.clone(), link, rules_now.clone()));
         }
         if let Some((url, secret, world)) = office {
             tokio::spawn(objective_reached(goal_rx, url.clone(), secret.clone(), world.clone()));
+            tokio::spawn(editor_office(tx.clone(), ask_rx, url.clone(), secret.clone(), world.clone()));
+            tokio::spawn(portal_office(tx.clone(), portal_rx, rules_now, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(ticket_office(tx.clone(), trip_rx, url, secret, world));
         }
         Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)) })
@@ -343,6 +487,12 @@ struct Player {
     account: Option<u64>,
     /// blocks they placed since the last report
     placed: u32,
+    /// entity edits they may still make (a rate of their own, apart from block edits)
+    edits: Bucket,
+    /// the entity edit held while the directory answers on advanced rights (one at a time)
+    pending: Option<Pending>,
+    /// their last finished builds, oldest first, for `ToServer::Unbuild` (dropped with them)
+    kept: VecDeque<KeptBuild>,
 }
 
 struct WorldState {
@@ -366,9 +516,8 @@ struct WorldState {
     weather: Option<Weather>,
     weather_at: Instant,
     keyframe_at: Instant,
-    /// claimed plots and player-opened portals, from the directory
+    /// claimed plots, from the directory
     plots: Vec<Plot>,
-    portals: Vec<serde_json::Value>,
     /// which raid party each signed-in account is in (index into the directory's list); an
     /// account listed in two parties keeps the first
     party_of: HashMap<u64, u32>,
@@ -382,12 +531,46 @@ struct WorldState {
     /// where trips go to get a ticket from the directory (None: no directory; players go on
     /// without one)
     trips: Option<mpsc::Sender<Trip>>,
-    /// the place to reach (a dungeon's level names one: `"objective": {"name", "at", "radius"}`),
-    /// and whether it has been; reaching it ends a raid on the dungeon
+    /// the place to reach (the world's Objective entity, see `refresh_from_entities`), and
+    /// whether it has been; reaching it ends a raid on the dungeon
     objective: Option<Objective>,
     reached: bool,
     /// where "the objective was reached, by these accounts" goes (to the directory)
     goals: Option<mpsc::Sender<Vec<u64>>>,
+    /// the world's entities (doorways, spawn, objective, settings), written with the blocks
+    entities: entities::Entities,
+    /// the props the world accepts, read when it opened (props.rs)
+    props: props::PropLibrary,
+    /// where questions on advanced rights go (to the directory); None: no directory to ask
+    editors: Option<mpsc::Sender<Asking>>,
+    /// where player portal calls go (to the directory); None: no directory, so no player portals
+    portals: Option<mpsc::Sender<PortalAsk>>,
+    /// where each keyed portal leads (its rules row), by key, rebuilt on every rules fetch
+    portal_routes: HashMap<i64, entities::Route>,
+    /// refunds that could not be queued, tried once more on the next tick
+    refunds_due: Vec<(u64, i64)>,
+    /// when a keyed portal was last made, moved, linked or removed here (the directory has
+    /// changed its list): a rules fetch that began before it is not applied to the portals
+    last_keyed_commit: Option<Instant>,
+    /// woken after a keyed-portal change here, so the rules are fetched again at once and the
+    /// fetch that follows is one that began after the change (None: no directory)
+    rules_now: Option<Arc<Notify>>,
+    /// the directory's answers on advanced rights, by account, with when they came
+    editor_cache: HashMap<u64, (Instant, bool)>,
+    /// the settings the ground, climate and sun were last built from
+    applied: serde_json::Value,
+    /// the world's palette as a vox-art palette (one colour each, in block id order) and each
+    /// name's block id, made once at open. None when the palette is not one vox-art takes, and
+    /// then builds are refused.
+    build_palette: Option<(vox_art::Palette, HashMap<String, u16>)>,
+    /// builds accepted and not finished, the first being applied
+    builds: VecDeque<BuildJob>,
+    /// when the last build was started (one per ten seconds per world; a build that is refused
+    /// after expansion still counts, so the expansion itself is limited too)
+    last_build: Option<Instant>,
+    /// the settings moved on from what `meta('settings')` holds, so the next flush writes them
+    /// (a flush with nothing else dirty would otherwise skip them)
+    settings_unsaved: bool,
 }
 
 /// A place in a world to reach: a dungeon's objective.
@@ -401,17 +584,6 @@ pub(crate) struct Objective {
 }
 
 impl Objective {
-    /// From a world's settings: `"objective": {"name": "the altar", "at": [0, 0, -9], "radius": 3}`.
-    pub(crate) fn from_settings(settings: &serde_json::Value) -> Option<Objective> {
-        let o = settings.get("objective")?;
-        let a = o.get("at")?.as_array()?;
-        let at = [a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32, a.get(2)?.as_f64()? as f32];
-        let radius = o.get("radius").and_then(|r| r.as_f64()).unwrap_or(3.0) as f32;
-        let name = o.get("name").and_then(|n| n.as_str()).unwrap_or("the objective");
-        let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
-        (at.iter().all(|v| v.is_finite()) && radius.is_finite() && radius > 0.0).then(|| Objective { name, at, radius: radius.min(64.0) })
-    }
-
     fn holds(&self, p: [f32; 3]) -> bool {
         (0..3).map(|i| (p[i] - self.at[i]).powi(2)).sum::<f32>() <= self.radius * self.radius
     }
@@ -432,4 +604,90 @@ fn sun_at(hours: f32) -> f32 {
 
 fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Asking the directory about player portals for the world thread (a charge, a change or a
+/// removal of one, a refund). Each call runs on its own task, so one slow answer holds nobody
+/// up, and gives up after five seconds (no answer). The answer goes back to the player as
+/// `Event::Portal`. A refund has no one waiting: a failed one is only logged.
+async fn portal_office(tx: mpsc::Sender<Event>, mut asks: mpsc::Receiver<PortalAsk>, rules_now: Arc<Notify>, url: String, secret: String, world: String) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(5)).build() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("no link to the directory for portals: {e}"),
+    };
+    while let Some(mut ask) = asks.recv().await {
+        let (http, tx, rules_now, url, secret, world) = (http.clone(), tx.clone(), rules_now.clone(), url.clone(), secret.clone(), world.clone());
+        tokio::spawn(async move {
+            let path = match ask.call {
+                PortalCall::Make => "portal",
+                PortalCall::Update => "portal/update",
+                PortalCall::Link => "portal/link",
+                PortalCall::Remove => "portal/remove",
+                PortalCall::Refund => "portal/refund",
+            };
+            // the world and the account are the world's own words, not the player's
+            ask.body["world"] = serde_json::json!(world);
+            ask.body["account"] = serde_json::json!(ask.account);
+            // a refund that got no 200 is asked once more after a second: a charge given back
+            // by a directory that was briefly away must not be lost
+            let mut attempts = 0;
+            let (status, reply) = loop {
+                attempts += 1;
+                let got = http.post(format!("{url}/api/world/{path}")).bearer_auth(&secret).json(&ask.body).send().await;
+                let (status, reply) = match got {
+                    Ok(r) => {
+                        let status = r.status().as_u16();
+                        (Some(status), r.json::<serde_json::Value>().await.unwrap_or(serde_json::Value::Null))
+                    }
+                    Err(e) => {
+                        eprintln!("can't reach the directory for a portal: {e}");
+                        (None, serde_json::Value::Null)
+                    }
+                };
+                if ask.call == PortalCall::Refund && attempts == 1 && status != Some(200) {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+                break (status, reply);
+            };
+            // the directory's list has changed (or, for a refund, its charge): the world fetches
+            // the rules now rather than at its next time, so a new portal can be walked through
+            let changed = match ask.call {
+                PortalCall::Refund => status == Some(200) && reply["refunded"].as_bool() == Some(true),
+                _ => status == Some(200),
+            };
+            if changed {
+                rules_now.notify_one();
+            }
+            match ask.conn {
+                Some(conn) => {
+                    let _ = tx.send(Event::Portal { conn, account: ask.account, call: ask.call, status, body: reply }).await;
+                }
+                None => {
+                    if ask.call == PortalCall::Refund && !changed {
+                        eprintln!("the directory didn't refund portal {} to account {} ({status:?})", ask.body["key"], ask.account);
+                    }
+                }
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `editors_all` (every account an editor) is for local play only: a world with a directory
+    /// URL or a directory key refuses to start with it, as flags.rs does.
+    #[test]
+    fn editors_all_is_refused_with_a_directory() {
+        let mut c = Config::new(":memory:", vec![]);
+        c.editors_all = true;
+        c.directory_url = Some("http://127.0.0.1:7700".into());
+        assert_eq!(Server::start(c).err().as_deref(), Some("editors_all is for local play and tests; not with a directory"));
+        let mut c = Config::new(":memory:", vec![]);
+        c.editors_all = true;
+        c.directory = Some(vox_core::auth::key_from_seed([9; 32]).verifying_key());
+        assert!(Server::start(c).is_err());
+    }
 }

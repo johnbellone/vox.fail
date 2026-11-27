@@ -6,6 +6,7 @@ description = "Vox's world format: regions as compressed, content-addressed blob
 
 [dependencies]
 vox-core.workspace = true
+vox-art = { path = "../vox-art" }
 serde.workspace = true
 serde_json.workspace = true
 blake3 = "1"
