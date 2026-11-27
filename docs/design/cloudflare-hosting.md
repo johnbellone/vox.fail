@@ -4,7 +4,9 @@ Status: **approved** (2026-11-27). **Phases 1 and 2 built**: Litestream, `start.
 `vox-supervise` and the args files are in the image. `tools/dev/litestream_probe.sh` and
 `tools/dev/container_probe.sh` pass against R2 with the real servers. The image itself hasn't
 been built yet: the first release build is its test. **Phase 3 built**: the Worker serves the
-site, and `bun test` in `apps/edge` covers it. Phases 4 to 7 are not built.
+site, and `bun test` in `apps/edge` covers it. **Phase 4 built** (`src/container.ts`,
+`wrangler.jsonc`): `wrangler deploy --dry-run` accepts it with a placeholder image. It needs the
+Workers Paid plan and Docker to deploy for real. Phases 5 to 7 are not built.
 
 As built:
 - Litestream **0.5.18**, which replicates the whole data folder (`dir`, `watch`, `recursive`).
@@ -18,6 +20,11 @@ As built:
   API client then goes to the offline page, whose Try again returns to the page.
 - The Worker's files include the browser client, which only a release builds. So `edge.yml`
   only checks, and releases deploy the Worker (phase 6).
+- The Worker is configured with Wrangler (`apps/edge/wrangler.jsonc`), not `cf`: `cf` 1.0's
+  `cloudflare.config.ts` doesn't accept containers yet. Wrangler builds the image from
+  `deploy/docker/Dockerfile` and pushes it to Cloudflare's registry as it deploys.
+- A new image takes over at the container's next start, after it next sleeps. A running
+  container keeps its image, so a release never cuts off people who are playing.
 
 Related: [deploy/README.md](../../deploy/README.md) (today's hosting: one server behind a tunnel),
 [apps/edge/README.md](../../apps/edge/README.md) (the Worker in front of vox.fail),
@@ -178,8 +185,10 @@ Both processes get `VOX_WORLD_SECRET`. The directory also gets the Discord and S
 
 ## To check while building
 
-- Whether an open WebSocket through the Durable Object counts as activity. If not, the
-  Durable Object counts open world sockets itself before stopping the container.
+- Whether an open WebSocket through the Durable Object counts as activity. The code doesn't rely
+  on it: the Durable Object relays world sockets itself, counts them, and renews the inactivity
+  timeout from an alarm every five minutes while any are open. A socket that arrives during a
+  cold start is refused with 503 and `Retry-After`, and both clients reconnect.
 - That `cf-connecting-ip` reaches the container through the Durable Object. If it doesn't,
   the Worker sets it from the request.
 - How long Cloudflare waits after SIGTERM. With continuous replication, only the

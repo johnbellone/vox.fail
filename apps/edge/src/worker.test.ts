@@ -5,6 +5,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { backTo } from "./back";
+import { portFor } from "./ports";
 import worker, { encodings, type Env } from "./worker";
 
 const realFetch = globalThis.fetch;
@@ -23,9 +24,28 @@ function servers(status: number | "throw") {
   return seen;
 }
 
+/** The servers' Durable Object, which hands requests to the stand-in servers (fetch above). */
+const named: string[] = [];
+const forwarded: Request[] = [];
+const SERVERS: Env["SERVERS"] = {
+  idFromName(name) {
+    named.push(name);
+    return name;
+  },
+  get() {
+    return {
+      fetch(req: Request) {
+        forwarded.push(req);
+        return globalThis.fetch(req);
+      },
+    };
+  },
+};
+
 /** The Worker's files: `files` by path; anything else is a 404. */
 function files(have: Record<string, string>): Env {
   return {
+    SERVERS,
     ASSETS: {
       async fetch(req) {
         const p = new URL(typeof req === "string" ? req : req.url).pathname;
@@ -117,6 +137,22 @@ describe("the servers", () => {
       }
       expect(seen).toEqual(["/api/me", "/auth/discord", "/w/void/ws"]);
     }
+  });
+
+  test("they're one Durable Object, told the visitor's address", async () => {
+    servers(200);
+    named.length = 0;
+    forwarded.length = 0;
+    await worker.fetch(get("/api/me", { "cf-connecting-ip": "203.0.113.7" }), env);
+    expect(named).toEqual(["vox"]);
+    expect(forwarded[0]?.headers.get("cf-connecting-ip")).toBe("203.0.113.7");
+  });
+
+  test("worlds go to vox-host, the rest to the directory", () => {
+    expect(portFor("/w/void/ws")).toBe(7790);
+    expect(portFor("/w/void/")).toBe(7790);
+    expect(portFor("/api/me")).toBe(7700);
+    expect(portFor("/auth/discord")).toBe(7700);
   });
 
   test("the internal routes never reach them", async () => {

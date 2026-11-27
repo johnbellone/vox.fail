@@ -1,0 +1,42 @@
+// vox.fail's Worker and its servers' container (docs/design/cloudflare-hosting.md). Wrangler, not
+// cf: cf 1.0's cloudflare.config.ts doesn't take containers yet.
+//
+//   bun run build           the Worker's files into dist/ (see build.ts)
+//   bunx wrangler deploy    builds deploy/docker/Dockerfile (needs Docker), pushes the image to
+//                           Cloudflare's registry, and deploys; releases do this (release.yml)
+//
+// Secrets (deploy/cloudflare-setup.sh sets them): VOX_WORLD_SECRET, VOX_DISCORD_CLIENT_ID,
+// VOX_DISCORD_CLIENT_SECRET, VOX_STEAM_KEY, VOX_DIRECTORY_KEY, LITESTREAM_ACCESS_KEY_ID,
+// LITESTREAM_SECRET_ACCESS_KEY.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vox-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "vox.fail/*", "zone_name": "vox.fail" }],
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    // the Worker decides what's a file and what goes to the servers
+    "run_worker_first": true
+  },
+  "durable_objects": { "bindings": [{ "name": "SERVERS", "class_name": "VoxServers" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VoxServers"] }],
+  "containers": [
+    {
+      "class_name": "VoxServers",
+      // the Durable Object picks the image and size, and when a new image takes over
+      "scheduling_policy": "durable_object",
+      "images": {
+        "vox": { "dockerfile": "../../deploy/docker/Dockerfile", "build_context": "../.." }
+      }
+    }
+  ],
+  "vars": {
+    "VOX_R2_BUCKET": "vox-data",
+    "VOX_R2_ENDPOINT": "https://428c739b016a3b9acc55d38057a0d5ed.r2.cloudflarestorage.com"
+  },
+  "observability": { "enabled": true }
+}

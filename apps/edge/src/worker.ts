@@ -1,14 +1,15 @@
 // vox.fail's front door on Cloudflare (docs/design/cloudflare-hosting.md). The Worker serves the
 // site itself: the pages, the browser client (/pkg/), /assets/ and /data/, from its static files,
-// with the headers the directory used to set. Only /api/, /auth/ and /w/ go on to the servers.
-// When they can't be reached, the API answers a JSON 503 that the site turns into the offline
-// page, and a page request gets that page.
-//
-// A Worker's own fetch to its zone goes to the origin, not back through the Worker.
+// with the headers the directory used to set. Only /api/, /auth/ and /w/ go on to the servers,
+// which run in a container behind the Durable Object SERVERS (src/container.ts). When they can't
+// be started, the API answers a JSON 503 that the site turns into the offline page, and a page
+// request gets that page.
 
 export interface Env {
   /** The site's files (dist/: the pages, pkg/, assets/, data/, _offline/). */
   ASSETS: { fetch(req: Request | string): Promise<Response> };
+  /** The Durable Object that runs the servers' container (one, named "vox"). */
+  SERVERS: { idFromName(name: string): unknown; get(id: unknown): { fetch(req: Request): Promise<Response> } };
 }
 
 const OFFLINE_PAGE = "/_offline/offline.html";
@@ -18,9 +19,9 @@ const DYNAMIC = ["/api/", "/auth/", "/w/"];
 /** For the servers on localhost only (world reports, travel, dungeon instances): never from outside. */
 const INTERNAL = ["/api/world/", "/api/host/"];
 
-// What Cloudflare or cloudflared answer when the server isn't there: 502 (cloudflared can't reach
-// the service), 504, the 52x origin errors and 530 (no tunnel, error 1033). Not 503: the directory
-// itself says 503 when it's busy, and that should reach the page as it is.
+// What says the servers aren't there: 530 (the container didn't start), 502 (it can't be
+// reached), 504 and the 52x errors. Not 503: the directory itself says 503 when it's busy, and
+// that should reach the page as it is.
 const DOWN = new Set([502, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530]);
 export const isDown = (status: number) => DOWN.has(status);
 
@@ -119,11 +120,19 @@ async function offline(req: Request, env: Env, url: URL, upstream: Response | un
   return upstream ?? new Response("offline", { status: 503, headers: OFFLINE_HEADERS });
 }
 
-/** On to the servers; when they can't be reached, the offline answers. */
+/**
+ * On to the servers; when they can't be reached, the offline answers. The visitor's address goes
+ * with it: the directory counts sign-in tries by cf-connecting-ip (--behind-proxy).
+ */
 async function toServers(req: Request, env: Env, url: URL): Promise<Response> {
+  const forward = new Request(req);
+  const ip = req.headers.get("cf-connecting-ip");
+  if (ip) forward.headers.set("cf-connecting-ip", ip);
+  // the directory's fallback when cf-connecting-ip is missing; never let a visitor choose it
+  forward.headers.delete("x-forwarded-for");
   let upstream: Response | undefined;
   try {
-    upstream = await fetch(req);
+    upstream = await env.SERVERS.get(env.SERVERS.idFromName("vox")).fetch(forward);
   } catch {
     upstream = undefined;
   }
