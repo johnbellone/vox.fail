@@ -6,7 +6,8 @@
 //! entry gives is left out and logged; a missing folder or catalogue means no props at all.
 //!
 //! What the world keeps of a prop is what its rules need, taken from the decoded definition: the
-//! footprint, the height and whether it collides. The blob's bytes are not kept, so nothing that
+//! footprint, the height, whether it collides, the surfaces it stands on and whether it is a
+//! table. The blob's bytes are not kept, so nothing that
 //! arrives later is served or checked against them.
 //!
 //! A prop already in a world whose hash has since left the catalogue (an orphan) keeps its
@@ -22,10 +23,11 @@ use std::{
     path::Path,
 };
 
-use vox_art::prop::Collide;
+use vox_art::prop::{Collide, Surface};
 use vox_core::{
     ChunkKey,
     body::prop_footprint_cells,
+    edit::{Around, Support, prop_stands, support_cells},
     entity::{Component, EntityId, Prop, prop_cell},
 };
 use vox_format::prop::{Catalogue, PropBlob};
@@ -44,6 +46,10 @@ pub struct Footprint {
     height: u8,
     /// whether the prop blocks walking (anything but `collide: none`)
     collides: bool,
+    /// the surfaces it may stand on or hang from (`place.on`)
+    on: Vec<Support>,
+    /// whether it has the `table` tag: props that accept the `table` surface stand on it
+    table: bool,
 }
 
 impl Footprint {
@@ -52,6 +58,20 @@ impl Footprint {
             floor: blob.def.place.footprint.clone(),
             height: blob.def.place.height,
             collides: !matches!(blob.def.collide, Collide::None),
+            on: blob
+                .def
+                .place
+                .on
+                .iter()
+                .map(|s| match s {
+                    Surface::Floor => Support::Floor,
+                    Surface::Wall => Support::Wall,
+                    Surface::Ceiling => Support::Ceiling,
+                    Surface::Table => Support::Table,
+                    Surface::Water => Support::Water,
+                })
+                .collect(),
+            table: blob.def.tags.iter().any(|t| t == "table"),
         }
     }
 
@@ -192,6 +212,55 @@ impl PropLibrary {
         })
     }
 
+    /// Does a placed prop of an accepted hash stand on a surface it accepts? `solid` says which
+    /// blocks hold a prop up (not air, not water), `water` which are water, and `prop_of` gives
+    /// an entity's prop by id (a table is a colliding prop with the `table` tag). A hash the
+    /// world does not accept stands on nothing here: callers leave orphans alone (see the module
+    /// doc).
+    pub fn stands<'a>(
+        &self,
+        prop: &Prop,
+        solid: &dyn Fn([i32; 3]) -> bool,
+        water: &dyn Fn([i32; 3]) -> bool,
+        prop_of: impl Fn(EntityId) -> Option<&'a Prop>,
+    ) -> bool {
+        let Some(fp) = self.defs.get(&prop.prop) else { return false };
+        let table = |cell: [i32; 3]| self.covers_table(cell, &prop_of);
+        prop_stands(&fp.on, prop.at, prop.yaw, &fp.floor, fp.height, &Around { solid, water, table: &table })
+    }
+
+    /// Does a placed colliding prop with the `table` tag cover `cell`?
+    fn covers_table<'a>(&self, cell: [i32; 3], prop_of: &impl Fn(EntityId) -> Option<&'a Prop>) -> bool {
+        let Some(ids) = self.index.chunks.get(&ChunkKey::of(cell)) else { return false };
+        ids.iter().filter_map(|&id| prop_of(id)).any(|q| {
+            self.defs.get(&q.prop).is_some_and(|fp| fp.table && fp.covers(q).contains(&cell))
+        })
+    }
+
+    /// Does `prop` lean on any of the cells in `broken`: is one of them a cell its surfaces look
+    /// at (under it, over it, behind it, or the table under it)? Props of an unknown hash lean on
+    /// nothing.
+    pub fn leans_on(&self, prop: &Prop, broken: &HashSet<[i32; 3]>) -> bool {
+        let Some(fp) = self.defs.get(&prop.prop) else { return false };
+        fp.on.iter().any(|&s| support_cells(s, prop.at, prop.yaw, &fp.floor, fp.height).iter().any(|c| broken.contains(c)))
+    }
+
+    /// The props (colliding or not) whose pivots stand in the chunk columns around `cell`, nearer
+    /// than a footprint reaches: every prop that could lean on it. Costs the neighbourhood, not
+    /// the world.
+    pub fn around(&self, cell: [i32; 3]) -> Vec<EntityId> {
+        let [cx, cz] = column_of(cell);
+        let mut ids = Vec::new();
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                if let Some(set) = self.columns.get(&[cx.saturating_add(dx), cz.saturating_add(dz)]) {
+                    ids.extend(set.iter().copied());
+                }
+            }
+        }
+        ids
+    }
+
     /// How many props have their pivot in the columns `x` and `z` (blocks, lo inclusive, hi
     /// exclusive). Counts the props in the columns those ranges span, `prop_of` giving each by
     /// id, so a plot's cap costs the plot and not the world.
@@ -290,8 +359,8 @@ mod tests {
     /// A library of a crate (one cell, two high, collides) and a rug (one cell, does not collide).
     fn library() -> PropLibrary {
         let defs = HashMap::from([
-            (CRATE, Footprint { floor: vec![[0, 0]], height: 2, collides: true }),
-            (RUG, Footprint { floor: vec![[0, 0]], height: 1, collides: false }),
+            (CRATE, Footprint { floor: vec![[0, 0]], height: 2, collides: true, on: vec![Support::Floor], table: false }),
+            (RUG, Footprint { floor: vec![[0, 0]], height: 1, collides: false, on: vec![Support::Floor], table: false }),
         ]);
         PropLibrary { defs, index: PropIndex::default(), columns: HashMap::new() }
     }

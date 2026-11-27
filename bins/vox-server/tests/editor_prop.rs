@@ -4,7 +4,9 @@
 //! move may cover its own old cells; a corrupted blob is left out and the rest still load; a
 //! builder's plot holds 64 props and no more (a move into a full plot is refused, a move within
 //! one is not); a builder removes its own prop; and an orphan prop (its hash left the catalogue)
-//! takes no cells, cannot be moved, and can be removed.
+//! takes no cells, cannot be moved, and can be removed; a prop is placed only on a surface it
+//! accepts (a floor prop over air, and a wall prop with no wall behind it, are refused), and a
+//! prop whose support is broken is removed and everyone is told.
 
 use std::{
     path::PathBuf,
@@ -37,8 +39,8 @@ use vox_server::{Config, Server};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// A floor of grass at y = -1 and a spawn on it (as the other editor tests use).
-const LEVEL: &str = r#"{ "world": { "sky": "void" }, "boxes": [ { "block": "grass", "from": [-8, -1, -8], "to": [8, -1, 8] } ] }"#;
+/// A floor of grass at y = -1 (wide enough for a second plot at x 20 to 30) and a spawn on it (as the other editor tests use).
+const LEVEL: &str = r#"{ "world": { "sky": "void" }, "boxes": [ { "block": "grass", "from": [-8, -1, -8], "to": [40, -1, 16] } ] }"#;
 
 /// A crate: one floor cell, two blocks up, and it collides.
 const CRATE: &str = r#"{ "id": "crate.box", "name": "Crate", "scale": "prop", "size": [4, 4, 4], "pivot": [1, 0, 1],
@@ -52,6 +54,22 @@ const LONG: &str = r#"{ "id": "crate.long", "name": "Long crate", "scale": "prop
 const RUG: &str = r#"{ "id": "rug.round", "name": "Rug", "scale": "prop", "size": [4, 1, 4], "pivot": [1, 0, 1],
     "place": { "on": ["floor"], "footprint": [[0, 0]], "height": 1 }, "collide": "none", "palette_version": 1 }"#;
 
+/// A sign: one cell, one high, hung on a wall.
+const SIGN: &str = r#"{ "id": "sign.wall", "name": "Sign", "scale": "prop", "size": [4, 4, 4], "pivot": [1, 0, 1],
+    "place": { "on": ["wall"], "footprint": [[0, 0]], "height": 1 }, "collide": "none", "palette_version": 1 }"#;
+
+/// A table: one floor cell, one block high, tagged `table`, and it collides.
+const TABLE: &str = r#"{ "id": "table.low", "name": "Table", "scale": "prop", "size": [4, 4, 4], "pivot": [1, 0, 1],
+    "place": { "on": ["floor"], "footprint": [[0, 0]], "height": 1 }, "collide": "footprint", "tags": ["table"], "palette_version": 1 }"#;
+
+/// A cup: one cell, it stands on a table.
+const CUP: &str = r#"{ "id": "cup.tin", "name": "Cup", "scale": "prop", "size": [4, 4, 4], "pivot": [1, 0, 1],
+    "place": { "on": ["table"], "footprint": [[0, 0]], "height": 1 }, "collide": "none", "palette_version": 1 }"#;
+
+/// A buoy: one cell, it floats on water.
+const BUOY: &str = r#"{ "id": "buoy.red", "name": "Buoy", "scale": "prop", "size": [4, 4, 4], "pivot": [1, 0, 1],
+    "place": { "on": ["water"], "footprint": [[0, 0]], "height": 1 }, "collide": "none", "palette_version": 1 }"#;
+
 fn key() -> SigningKey {
     auth::key_from_seed([9; 32])
 }
@@ -59,7 +77,7 @@ fn key() -> SigningKey {
 /// A world that takes sign-in from `key` and reads its props from `props`. Advanced rights are
 /// asked of a directory (see `world`).
 fn config(props: &std::path::Path) -> Config {
-    let mut c = Config::new(":memory:", ["grass", "stone", "planks"].map(String::from).to_vec());
+    let mut c = Config::new(":memory:", ["grass", "stone", "planks", "water"].map(String::from).to_vec());
     c.name = "test".into();
     c.seed = Some(LEVEL.into());
     c.directory = Some(key().verifying_key());
@@ -190,6 +208,10 @@ struct Folder {
     crate_box: [u8; 16],
     long: [u8; 16],
     rug: [u8; 16],
+    sign: [u8; 16],
+    table: [u8; 16],
+    cup: [u8; 16],
+    buoy: [u8; 16],
 }
 
 fn folder(tag: &str, corrupt_long: bool) -> Folder {
@@ -199,6 +221,10 @@ fn folder(tag: &str, corrupt_long: bool) -> Folder {
     let (crate_bytes, crate_hash) = make(CRATE, &[([1, 0, 1], 1), ([2, 2, 2], 3)]);
     let (mut long_bytes, long_hash) = make(LONG, &[([1, 0, 1], 1), ([2, 0, 1], 2)]);
     let (rug_bytes, rug_hash) = make(RUG, &[([1, 0, 1], 1)]);
+    let (sign_bytes, sign_hash) = make(SIGN, &[([1, 0, 1], 1)]);
+    let (table_bytes, table_hash) = make(TABLE, &[([1, 0, 1], 1)]);
+    let (cup_bytes, cup_hash) = make(CUP, &[([1, 0, 1], 1)]);
+    let (buoy_bytes, buoy_hash) = make(BUOY, &[([1, 0, 1], 1)]);
     if corrupt_long {
         long_bytes[0] = b'X';
     }
@@ -207,12 +233,21 @@ fn folder(tag: &str, corrupt_long: bool) -> Folder {
         ("crate.box", "Crate", crate_hash, crate_bytes),
         ("crate.long", "Long crate", long_hash, long_bytes),
         ("rug.round", "Rug", rug_hash, rug_bytes),
+        ("sign.wall", "Sign", sign_hash, sign_bytes),
+        ("table.low", "Table", table_hash, table_bytes),
+        ("cup.tin", "Cup", cup_hash, cup_bytes),
+        ("buoy.red", "Buoy", buoy_hash, buoy_bytes),
     ] {
         std::fs::write(dir.join(format!("{}.voxp", hash.hex())), bytes).unwrap();
         cat.props.insert(id.into(), CatalogueEntry { hash, name: name.into(), tags: vec![] });
     }
     std::fs::write(dir.join("catalogue.json"), cat.encode().unwrap()).unwrap();
-    Folder { dir, crate_box: crate_hash.0, long: long_hash.0, rug: rug_hash.0 }
+    Folder { dir, crate_box: crate_hash.0, long: long_hash.0, rug: rug_hash.0,
+        sign: sign_hash.0,
+        table: table_hash.0,
+        cup: cup_hash.0,
+        buoy: buoy_hash.0,
+    }
 }
 
 /// A stand-in directory with a plot round the origin whose builder is account 8; account 7 is
@@ -602,4 +637,142 @@ async fn editor_prop_a_builder_places_a_prop_with_no_owner_as_its_own() {
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_prop_a_builder_places_a_prop_named_for_someone_else_as_its_own() {
     builder_places_as_its_own("stamp-other", Some(7)).await;
+}
+
+/// The next block edit at `cell` that a player is told of.
+async fn next_edit_at(ws: &mut Ws, cell: [i32; 3]) -> wire::Applied {
+    until(ws, |m| match m {
+        ToClient::Edits(v) => v.into_iter().find(|e| e.cell == cell),
+        _ => None,
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_a_floor_prop_over_air_is_refused_and_over_a_block_is_made() {
+    let f = folder("floating", false);
+    let (_server, url) = world(&f, Arc::default()).await;
+    let mut a = join(&url, "Ann", token(7, "Ann")).await;
+    // outside the directory's plot (0..10), where only its builder may edit
+    send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
+    // the grass is block y = -1: a floor cell at y = 1 has air (y = 0) under it
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-25, 10, -25], 0, 7) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NoSupport));
+    // the same spot over a block of planks is accepted
+    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-3, 0, -3], block: 3 }).await;
+    next_edit_at(&mut a.ws, [-3, 0, -3]).await;
+    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: prop(f.crate_box, [-25, 10, -25], 0, 7) }).await;
+    assert_eq!(next_done(&mut a.ws).await.0, 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_breaking_the_block_under_a_prop_removes_it_for_everyone() {
+    let f = folder("support", false);
+    let (_server, url) = world(&f, Arc::default()).await;
+    let mut a = join(&url, "Ann", token(7, "Ann")).await;
+    let mut b = join(&url, "Bob", token(8, "Bob")).await;
+    // outside the directory's plot (0..10), as the other block tests stand
+    send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-25, 0, -25], 0, 7) }).await;
+    let (_, under, _) = next_done(&mut a.ws).await;
+    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.crate_box, [-45, 0, -25], 0, 7) }).await;
+    let (_, beside, _) = next_done(&mut a.ws).await;
+    // Bob has been told of both
+    assert_eq!(next_entities(&mut b.ws).await.len(), 1);
+    assert_eq!(next_entities(&mut b.ws).await.len(), 1);
+
+    // the grass under the first crate (block (-3, -1, -3)) is broken
+    send(&mut a.ws, &ToServer::Edit { id: 3, cell: [-3, -1, -3], block: 0 }).await;
+    next_edit_at(&mut b.ws, [-3, -1, -3]).await;
+    let gone = next_entities(&mut b.ws).await;
+    assert_eq!(gone.len(), 1, "only the crate that lost its floor goes");
+    assert_eq!((gone[0].entity, gone[0].component.clone()), (under, None));
+    assert_ne!(under, beside);
+    // the one that kept its floor stays, and nothing is left to stand on where the first stood
+    send(&mut a.ws, &ToServer::Put { id: 4, entity: None, expect: None, component: prop(f.crate_box, [-25, 0, -25], 0, 7) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (4, EntityWhy::NoSupport));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_a_wall_prop_needs_a_wall_behind_it() {
+    let f = folder("wall", false);
+    let (_server, url) = world(&f, Arc::default()).await;
+    let mut a = join(&url, "Ann", token(7, "Ann")).await;
+    send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
+    // yaw 0 has its back to +z: the sign's pivot cell is (-3, 0, -3), so the wall is (-3, 0, -2)
+    let sign = prop(f.sign, [-25, 0, -25], 0, 7);
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: sign.clone() }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NoSupport));
+    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-3, 0, -2], block: 3 }).await;
+    next_edit_at(&mut a.ws, [-3, 0, -2]).await;
+    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: sign }).await;
+    let (_, entity, seq) = next_done(&mut a.ws).await;
+    // turned to face the other way, it has no wall behind it
+    send(&mut a.ws, &ToServer::Put { id: 4, entity: Some(entity), expect: Some(seq), component: prop(f.sign, [-25, 0, -25], 12, 7) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (4, EntityWhy::NoSupport));
+    // and breaking the wall takes the sign down
+    send(&mut a.ws, &ToServer::Edit { id: 5, cell: [-3, 0, -2], block: 0 }).await;
+    let gone = next_entities(&mut a.ws).await;
+    assert_eq!((gone[0].entity, gone[0].component.clone()), (entity, None));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_the_endless_floor_holds_a_floor_prop_up() {
+    let f = folder("endless", false);
+    // the Void's way: a floor with no blocks at all
+    let mut c = config(&f.dir);
+    c.seed = Some(r#"{ "world": { "sky": "void", "floor": 0 } }"#.into());
+    c.directory_url = Some(directory(Arc::default()).await);
+    c.world_secret = Some("s3cret".into());
+    let (_server, url) = serve(c).await;
+    let mut a = join(&url, "Ann", token(7, "Ann")).await;
+    send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
+    // a floor cell at y = 0 has the floor (y < 0) under it
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-30, 0, -30], 0, 7) }).await;
+    assert_eq!(next_done(&mut a.ws).await.0, 1);
+    // one block up has air under it
+    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.crate_box, [-60, 10, -30], 0, 7) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (2, EntityWhy::NoSupport));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_removing_a_table_takes_what_stood_on_it_for_everyone() {
+    let f = folder("table", false);
+    let (_server, url) = world(&f, Arc::default()).await;
+    let mut a = join(&url, "Ann", token(7, "Ann")).await;
+    let mut b = join(&url, "Bob", token(8, "Bob")).await;
+    send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
+    // a cup has nothing to stand on until there is a table (cells: the table at y 0, the cup at y 1)
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.cup, [-30, 10, -30], 0, 7) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NoSupport));
+    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.table, [-30, 0, -30], 0, 7) }).await;
+    let (_, table, seq) = next_done(&mut a.ws).await;
+    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: prop(f.cup, [-30, 10, -30], 0, 7) }).await;
+    let (_, cup, _) = next_done(&mut a.ws).await;
+    assert_eq!(next_entities(&mut b.ws).await.len(), 1);
+    assert_eq!(next_entities(&mut b.ws).await.len(), 1);
+
+    send(&mut a.ws, &ToServer::Remove { id: 4, entity: table, expect: Some(seq) }).await;
+    let first = next_entities(&mut b.ws).await;
+    assert_eq!((first[0].entity, first[0].component.clone()), (table, None));
+    let second = next_entities(&mut b.ws).await;
+    assert_eq!((second[0].entity, second[0].component.clone()), (cup, None));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_a_water_prop_needs_water_under_it() {
+    let f = folder("water", false);
+    let (_server, url) = world(&f, Arc::default()).await;
+    let mut a = join(&url, "Ann", token(7, "Ann")).await;
+    send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
+    // water is block 4 in this palette; stone is 2
+    send(&mut a.ws, &ToServer::Edit { id: 1, cell: [-3, 0, -3], block: 4 }).await;
+    next_edit_at(&mut a.ws, [-3, 0, -3]).await;
+    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-6, 0, -3], block: 2 }).await;
+    next_edit_at(&mut a.ws, [-6, 0, -3]).await;
+    // a buoy on cell y = 1 over the water is made, over the stone it is refused
+    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: prop(f.buoy, [-30, 10, -30], 0, 7) }).await;
+    assert_eq!(next_done(&mut a.ws).await.0, 3);
+    send(&mut a.ws, &ToServer::Put { id: 4, entity: None, expect: None, component: prop(f.buoy, [-60, 10, -30], 0, 7) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (4, EntityWhy::NoSupport));
 }

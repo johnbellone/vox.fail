@@ -8,6 +8,7 @@
 //! [`Component::validate`] checks the values; this module checks rights, destinations, place
 //! and caps. Each refusal is a distinct [`EntityWhy`] so a client can say why.
 
+use crate::body::prop_footprint_cells;
 use crate::entity::{Component, Dest, EntityWhy, Prop, prop_cell};
 use crate::world::{Bounds, Cell};
 
@@ -86,6 +87,80 @@ pub struct Ctx<'a> {
     pub prop_cells: &'a dyn Fn(&Prop) -> Vec<Cell>,
     /// Does the world accept this prop (its version hash)?
     pub known_prop: &'a dyn Fn(&[u8; 16]) -> bool,
+    /// Does the prop have a surface it accepts to stand on (see [`prop_stands`])? The caller
+    /// answers from its library (the definition's surfaces) and its blocks; it leaves the prop
+    /// being changed out of what counts as a table.
+    pub prop_supported: &'a dyn Fn(&Prop) -> bool,
+}
+
+/// What a prop may stand on or hang from. The same five as `vox_art::prop::Surface`, which
+/// vox-core cannot depend on; the callers map one to the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Support {
+    /// the block under every footprint cell is solid
+    Floor,
+    /// a solid block behind the pivot
+    Wall,
+    /// a solid block over the top of every footprint cell
+    Ceiling,
+    /// every footprint cell stands on a colliding prop that is a table
+    Table,
+    /// the block under every footprint cell is water
+    Water,
+}
+
+/// What the world holds around a prop, as [`prop_stands`] asks it. Each answers for one cell.
+pub struct Around<'a> {
+    /// a block that holds a prop up: not air, not water
+    pub solid: &'a dyn Fn(Cell) -> bool,
+    pub water: &'a dyn Fn(Cell) -> bool,
+    /// a cell a colliding prop with the table tag covers
+    pub table: &'a dyn Fn(Cell) -> bool,
+}
+
+/// The cells `surface` looks at for a prop at `at` (5 cm units) turned by `yaw`: the blocks (or
+/// table cells) it must find. Empty when the prop has no footprint, or the cells overflow.
+///
+/// Facing: a prop at yaw 0 faces -z (as a Bevy model does), so its back is the +z side; yaw
+/// turns it as [`prop_footprint_cells`] turns its footprint. A wall prop's pivot is its back, so
+/// the wall is the cell behind the pivot's cell.
+pub fn support_cells(surface: Support, at: [i32; 3], yaw: u8, footprint: &[[i16; 2]], height: u8) -> Vec<Cell> {
+    let bottom = prop_footprint_cells(at, yaw, footprint, 1);
+    match surface {
+        Support::Floor | Support::Table | Support::Water => {
+            bottom.into_iter().filter_map(|[x, y, z]| Some([x, y.checked_sub(1)?, z])).collect()
+        }
+        Support::Ceiling => bottom
+            .into_iter()
+            .filter_map(|[x, y, z]| Some([x, y.checked_add(i32::from(height))?, z]))
+            .collect(),
+        Support::Wall => {
+            // the footprint's own turn gives the cell behind the pivot
+            let behind = prop_footprint_cells(at, yaw, &[[0, 1]], 1);
+            behind.into_iter().take(1).collect()
+        }
+    }
+}
+
+/// Does a prop with these surfaces and shape have at least one it can stand on here? Each
+/// surface needs all of its [`support_cells`] to hold (the wall needs its one).
+pub fn prop_stands(
+    on: &[Support],
+    at: [i32; 3],
+    yaw: u8,
+    footprint: &[[i16; 2]],
+    height: u8,
+    around: &Around,
+) -> bool {
+    on.iter().any(|&surface| {
+        let cells = support_cells(surface, at, yaw, footprint, height);
+        let holds: &dyn Fn(Cell) -> bool = match surface {
+            Support::Floor | Support::Wall | Support::Ceiling => around.solid,
+            Support::Water => around.water,
+            Support::Table => around.table,
+        };
+        !cells.is_empty() && cells.into_iter().all(holds)
+    })
 }
 
 /// The cell a position stands in: the floor of each coordinate.
@@ -348,6 +423,11 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
         if !placement_kept && !(ctx.prop_footprint_free)(p) {
             return Err(EntityWhy::Blocked);
         }
+        // and a surface it accepts: floating props are refused (a text or state edit keeps its
+        // place, and so keeps whatever it stood on)
+        if !placement_kept && !(ctx.prop_supported)(p) {
+            return Err(EntityWhy::NoSupport);
+        }
     }
 
     if let Component::Spawn(s) = new {
@@ -411,6 +491,10 @@ mod tests {
         true
     }
 
+    fn supported(_: &Prop) -> bool {
+        true
+    }
+
     /// A prop that covers only its pivot's cell.
     fn pivot_only(p: &Prop) -> Vec<Cell> {
         vec![prop_cell(p.at)]
@@ -461,6 +545,7 @@ mod tests {
             prop_footprint_free: &free_footprint,
             prop_cells: &pivot_only,
             known_prop: &any_prop,
+            prop_supported: &supported,
         }
     }
 
@@ -1123,6 +1208,70 @@ mod tests {
         // an editor may set one
         let e = ctx(Role::Editor, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
         assert_eq!(check_put(&e, None, &wired(Some(3))), Ok(()));
+    }
+
+    /// Surfaces for a one-cell prop two high, in a world with a floor at y = -1 and a wall of
+    /// solid blocks at z = 3 (and water at y = -1 for x >= 20).
+    fn stands(on: &[Support], at: [i32; 3], yaw: u8, solid: &dyn Fn(Cell) -> bool) -> bool {
+        let water = |c: Cell| c[1] == -1 && c[0] >= 20;
+        let table = |c: Cell| c == [7, 0, 7];
+        let around = Around { solid, water: &water, table: &table };
+        prop_stands(on, at, yaw, &[[0, 0]], 2, &around)
+    }
+
+    #[test]
+    fn a_floor_prop_needs_a_block_under_it() {
+        let blocks = |c: Cell| c[1] == -1;
+        assert!(stands(&[Support::Floor], [25, 0, 25], 0, &blocks));
+        assert!(!stands(&[Support::Floor], [25, 10, 25], 0, &blocks), "over air");
+        // any one surface is enough
+        assert!(stands(&[Support::Ceiling, Support::Floor], [25, 0, 25], 0, &blocks));
+    }
+
+    #[test]
+    fn a_ceiling_prop_needs_a_block_over_its_top() {
+        // two high, on floor cell y = 0: the cell over it is y = 2
+        let blocks = |c: Cell| c[1] == 2;
+        assert!(stands(&[Support::Ceiling], [25, 0, 25], 0, &blocks));
+        assert!(!stands(&[Support::Ceiling], [25, 10, 25], 0, &blocks));
+    }
+
+    #[test]
+    fn a_wall_prop_needs_a_block_behind_its_pivot_whichever_way_it_faces() {
+        // yaw 0: the back is +z; each quarter turn (6 steps) moves it on: +x, then -z, then -x
+        let at = [25, 0, 25];
+        let back = |yaw: u8| support_cells(Support::Wall, at, yaw, &[[0, 0]], 2);
+        assert_eq!(back(0), vec![[2, 0, 3]]);
+        assert_eq!(back(6), vec![[3, 0, 2]]);
+        assert_eq!(back(12), vec![[2, 0, 1]]);
+        assert_eq!(back(18), vec![[1, 0, 2]]);
+        let wall = |c: Cell| c == [2, 0, 3];
+        assert!(stands(&[Support::Wall], at, 0, &wall));
+        assert!(!stands(&[Support::Wall], at, 12, &wall), "turned to the other side");
+    }
+
+    #[test]
+    fn a_water_prop_needs_water_and_a_table_prop_a_table() {
+        let none = |_: Cell| false;
+        assert!(stands(&[Support::Water], [205, 0, 25], 0, &none));
+        assert!(!stands(&[Support::Water], [25, 0, 25], 0, &none), "no water there");
+        assert!(stands(&[Support::Table], [75, 10, 75], 0, &none));
+        assert!(!stands(&[Support::Table], [75, 0, 75], 0, &none), "not on the table's cell");
+    }
+
+    #[test]
+    fn a_placement_with_nothing_to_stand_on_is_refused_but_a_text_edit_is_not() {
+        let plots = [];
+        let nothing = |_: &Prop| false;
+        let c = Ctx { prop_supported: &nothing, ..ctx(Role::Editor, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        let p = Component::Prop(prop([55, 0, 55], Some(7)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NoSupport));
+        // the same prop with new text keeps its place, and what it stood on
+        let words = Component::Prop(Prop { text: Some("hi".into()), ..prop([55, 0, 55], Some(7)) });
+        assert_eq!(check_put(&c, Some(&p), &words), Ok(()));
+        // a move needs a surface again
+        let moved = Component::Prop(prop([65, 0, 55], Some(7)));
+        assert_eq!(check_put(&c, Some(&p), &moved), Err(EntityWhy::NoSupport));
     }
 
     #[test]

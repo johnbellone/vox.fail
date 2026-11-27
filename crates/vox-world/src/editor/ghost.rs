@@ -40,7 +40,8 @@ use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use vox_core::body::{Occupancy, prop_footprint_cells, with_props};
-use vox_core::edit::{Ctx, Role};
+use vox_art::prop::Surface;
+use vox_core::edit::{Around, Ctx, Role, Support, prop_stands};
 use vox_core::entity::{Axis, Component, Dest, EntityId, EntityWhy, PROP_UNITS_PER_BLOCK, PROP_YAWS, Portal, Prop};
 use vox_core::world::{Bounds, Cell};
 use vox_format::Hash;
@@ -136,6 +137,7 @@ pub fn check_portal(known: &Known, portal: &Component) -> Result<(), EntityWhy> 
         // a portal has no footprint cells of a prop's
         prop_cells: &|_: &Prop| Vec::new(),
         known_prop: &no_prop_kind,
+        prop_supported: &no_prop,
     };
     vox_core::edit::check_put(&ctx, None, portal)
 }
@@ -182,6 +184,8 @@ struct PropShape {
     mesh: Handle<Mesh>,
     footprint: Vec<[i16; 2]>,
     height: u8,
+    /// the surfaces the def lets it stand on
+    on: Vec<Support>,
 }
 
 /// Where a prop's blob stands for the ghost. Pending: not here yet. Failed: the fetch found
@@ -218,13 +222,34 @@ pub struct PropLook {
     why: Option<EntityWhy>,
 }
 
+/// A prop's blob as the ghost needs it.
+struct Decoded {
+    mesh: Mesh,
+    footprint: Vec<[i16; 2]>,
+    height: u8,
+    on: Vec<Support>,
+}
+
 /// Decodes a prop's blob (`props.rs` keeps it at [`crate::props::blob_path`]) into its mesh,
 /// footprint and height. None when it does not decode.
-fn decode_prop(bytes: &[u8], hash: [u8; 16]) -> Option<(Mesh, Vec<[i16; 2]>, u8)> {
+fn decode_prop(bytes: &[u8], hash: [u8; 16]) -> Option<Decoded> {
     let blob = PropBlob::decode_named(bytes, &Hash(hash)).ok()?;
     let voxel = blob.def.scale.scale().voxel_size();
     let parts = mesh_parts(&blob.grid, blob.def.pivot, voxel).ok()?;
-    Some((parts.into_mesh(), blob.def.place.footprint.clone(), blob.def.place.height))
+    let on = blob
+        .def
+        .place
+        .on
+        .iter()
+        .map(|s| match s {
+            Surface::Floor => Support::Floor,
+            Surface::Wall => Support::Wall,
+            Surface::Ceiling => Support::Ceiling,
+            Surface::Table => Support::Table,
+            Surface::Water => Support::Water,
+        })
+        .collect();
+    Some(Decoded { mesh: parts.into_mesh(), footprint: blob.def.place.footprint.clone(), height: blob.def.place.height, on })
 }
 
 /// The shape of the prop the ghost shows, brought to `hash` this frame. A prop not shown before
@@ -248,8 +273,8 @@ fn prop_shape(look: &mut PropLook, hash: [u8; 16], meshes: &mut Assets<Mesh>) ->
         // blob has failed now rather than being read again every frame
         let bytes = if cfg!(target_arch = "wasm32") { bytes } else { Some(bytes.unwrap_or_default()) };
         *slot = read_blob(bytes.as_deref(), |b| {
-            let (mesh, footprint, height) = decode_prop(b, hash)?;
-            Some(PropShape { mesh: meshes.add(mesh), footprint, height })
+            let d = decode_prop(b, hash)?;
+            Some(PropShape { mesh: meshes.add(d.mesh), footprint: d.footprint, height: d.height, on: d.on })
         });
         if matches!(slot, Blob::Failed) {
             crate::note!("prop {} could not be read: its ghost is not shown", Hash(hash).hex());
@@ -280,12 +305,14 @@ fn within(unit: i32, block: i32) -> i32 {
 /// Would `vox_core::edit::check_put` allow this new prop? The page's catalogue choice is
 /// `prop.prop`. The owner is stamped with the same placeholder account as [`check_portal`] uses,
 /// so the owner rule passes and the server, which stamps the real owner, decides; `footprint_free`
-/// says whether the prop's cells are clear.
+/// says whether the prop's cells are clear and `supported` whether it has a surface to stand on
+/// (the server's own rule, `vox_core::edit::prop_stands`, run on what the client knows).
 pub fn check_prop(
     known: &Known,
     prop: &Prop,
     cells: &dyn Fn(&Prop) -> Vec<Cell>,
     footprint_free: &dyn Fn(&Prop) -> bool,
+    supported: &dyn Fn(&Prop) -> bool,
 ) -> Result<(), EntityWhy> {
     let spawns = known.entities.values().filter(|(_, c)| matches!(c, Component::Spawn(_))).count();
     let account = Some(0);
@@ -308,6 +335,7 @@ pub fn check_prop(
         // every footprint cell must be in the world (and, for a builder, the server checks the plot)
         prop_cells: cells,
         known_prop: &known_prop,
+        prop_supported: supported,
     };
     vox_core::edit::check_put(&ctx, None, &Component::Prop(stamped))
 }
@@ -404,7 +432,14 @@ fn prop_ghost(
             entities: &entities.map,
             solid: &solid,
         };
-        tint(check_prop(&known, &prop, &cells, &footprint_free))
+        // what holds a prop up here: what the client walks on (not water), water by its block's
+        // flag, and for a table any prop, since the client does not know the server's tags (the
+        // server decides)
+        let water = |c: Cell| w.is_liquid(w.view.get(c));
+        let table = |c: Cell| props.contains(c);
+        let around = Around { solid: &|c| w.stands_on(c), water: &water, table: &table };
+        let supported = |p: &Prop| prop_stands(&shape.on, p.at, p.yaw, &shape.footprint, shape.height, &around);
+        tint(check_prop(&known, &prop, &cells, &footprint_free, &supported))
     };
     // the world's solid test borrows the client, and the notice below needs it
     drop(solid);
@@ -642,6 +677,7 @@ mod tests {
         let no_blocks = |_: Cell| false;
         let free = |_: &Prop| true;
         let pivot = |p: &Prop| prop_footprint_cells(p.at, p.yaw, &[[0, 0]], 1);
+        let held = |_: &Prop| true;
         // the feet are at (0.5, 0, -2) blocks, and the prop at [5, 0, -20] units (5 cm each) is there too
         let known = Known {
             at: Some([0.5, 0.0, -2.0]),
@@ -649,9 +685,9 @@ mod tests {
             entities: &empty,
             solid: &no_blocks,
         };
-        assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &free), Ok(()));
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &free, &held), Ok(()));
         // out of reach: 20 blocks from the feet
-        assert_eq!(check_prop(&known, &ghost_prop([5, 0, 180]), &pivot, &free), Err(EntityWhy::TooFar));
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, 180]), &pivot, &free, &held), Err(EntityWhy::TooFar));
     }
 
     #[test]
@@ -666,9 +702,32 @@ mod tests {
         };
         let blocked = |_: &Prop| false;
         let pivot = |p: &Prop| prop_footprint_cells(p.at, p.yaw, &[[0, 0]], 1);
-        let verdict = check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &blocked);
+        let held = |_: &Prop| true;
+        let verdict = check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &blocked, &held);
         assert_eq!(verdict, Err(EntityWhy::Blocked));
         assert_eq!(tint(verdict), Tint::Red(EntityWhy::Blocked));
+    }
+
+    #[test]
+    fn editor_prop_ghost_is_red_with_nothing_to_stand_on() {
+        let empty = BTreeMap::new();
+        // grass at y = -1 only
+        let ground = |c: Cell| c[1] == -1;
+        let known = Known { at: Some([0.5, 0.0, -2.0]), bounds: Bounds::default(), entities: &empty, solid: &ground };
+        let pivot = |p: &Prop| prop_footprint_cells(p.at, p.yaw, &[[0, 0]], 1);
+        let free = |_: &Prop| true;
+        let none = |_: Cell| false;
+        let around = Around { solid: &ground, water: &none, table: &none };
+        // the ghost's own closure, as `prop_ghost` makes it, for a floor prop and a wall prop
+        let on_floor = |p: &Prop| prop_stands(&[Support::Floor], p.at, p.yaw, &[[0, 0]], 1, &around);
+        let on_wall = |p: &Prop| prop_stands(&[Support::Wall], p.at, p.yaw, &[[0, 0]], 1, &around);
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &free, &on_floor), Ok(()));
+        // over air: a floor of 1 block lower is not under it
+        let verdict = check_prop(&known, &ghost_prop([5, 10, -20]), &pivot, &free, &on_floor);
+        assert_eq!(verdict, Err(EntityWhy::NoSupport));
+        assert_eq!(tint(verdict), Tint::Red(EntityWhy::NoSupport));
+        // no wall behind it
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &free, &on_wall), Err(EntityWhy::NoSupport));
     }
 
     #[test]

@@ -963,9 +963,13 @@ impl WorldState {
     fn commit_edit(&mut self, conn: u64, id: u32, edit: Edit) -> bool {
         let Some(p) = self.players.get(&conn) else { return false };
         let (name, tx) = (p.name.clone(), p.tx.clone());
+        let by = name.clone();
         let seq = self.seq + 1;
         let when = now_unix();
         let keyed: bool;
+        // the cells a prop stood in before this edit took it away or moved it: what stood on it
+        // (on a table) may have lost its support
+        let mut vacated: Vec<[i32; 3]> = Vec::new();
         let (change, zones, touched) = match edit {
             Edit::Put { entity, component, .. } => {
                 let old = entity.and_then(|e| self.entities.map.get(&e)).map(|(_, c)| c.clone());
@@ -977,6 +981,9 @@ impl WorldState {
                     return false;
                 };
                 self.props.index_change(eid, old.as_ref(), Some(&component));
+                if let Some(Component::Prop(q)) = &old {
+                    vacated = self.props.cells(q);
+                }
                 let mut zones = vec![entities::zone_key(&component)];
                 zones.extend(old.as_ref().map(entities::zone_key));
                 let touched = is_objective_or_settings(&component) || old.as_ref().is_some_and(is_objective_or_settings);
@@ -989,6 +996,9 @@ impl WorldState {
                     return false;
                 };
                 self.props.index_change(entity, Some(&old), None);
+                if let Component::Prop(q) = &old {
+                    vacated = self.props.cells(q);
+                }
                 keyed = matches!(old, Component::Portal(ref p) if p.key.is_some());
                 (EntityChange { seq, entity, component: None }, vec![entities::zone_key(&old)], is_objective_or_settings(&old))
             }
@@ -1015,6 +1025,11 @@ impl WorldState {
         if touched {
             self.refresh_from_entities();
         }
+        // the same rule as for a broken block: what was held up by the prop that went (or moved
+        // away) goes with it, as the player who did it
+        if !vacated.is_empty() {
+            self.drop_unsupported(&by, vacated);
+        }
         true
     }
 
@@ -1029,13 +1044,19 @@ impl WorldState {
     }
 
     /// The prop rules for an edit of `editing` (None for a new entity): whether the world accepts
-    /// a prop's hash, whether its footprint is free, and the cells it covers. The footprint check
+    /// a prop's hash, whether its footprint is free, the cells it covers and whether it has a
+    /// surface to stand on. The footprint check
     /// leaves out the entity being changed, so a prop may be turned or moved onto its own old cells.
     #[allow(clippy::type_complexity)]
     fn prop_rules(
         &self,
         editing: Option<EntityId>,
-    ) -> (impl Fn(&[u8; 16]) -> bool + '_, impl Fn(&Prop) -> bool + '_, impl Fn(&Prop) -> Vec<[i32; 3]> + '_) {
+    ) -> (
+        impl Fn(&[u8; 16]) -> bool + '_,
+        impl Fn(&Prop) -> bool + '_,
+        impl Fn(&Prop) -> Vec<[i32; 3]> + '_,
+        impl Fn(&Prop) -> bool + '_,
+    ) {
         let lib = &self.props;
         let known = move |hash: &[u8; 16]| lib.known(hash);
         let cells = move |p: &Prop| lib.cells(p);
@@ -1051,7 +1072,76 @@ impl WorldState {
                 });
             props::free(lib, p, others, |c| self.world.get(c) != 0)
         };
-        (known, free, cells)
+        let supported = move |p: &Prop| self.stands(p);
+        (known, free, cells, supported)
+    }
+
+    /// Is this block water? The palette names it, as the terrain does (`vox_core::terrain`).
+    fn is_water(&self, block: u16) -> bool {
+        block != 0 && self.cfg.palette.get(usize::from(block) - 1).is_some_and(|n| n == "water")
+    }
+
+    /// The height below which the world is solid with no blocks (the Void's endless floor): the
+    /// live Settings' `floor`, read as the client reads it, so both agree on what is ground.
+    fn endless_floor(&self) -> Option<i32> {
+        self.applied.get("floor").and_then(|v| v.as_i64()).map(|f| f as i32)
+    }
+
+    /// Does the prop stand on a surface it accepts, in the world as it is now? Blocks that hold a
+    /// prop up are those that are neither air nor water, and the endless floor; a table is
+    /// another prop.
+    fn stands(&self, p: &Prop) -> bool {
+        let floor = self.endless_floor();
+        let solid = |c: [i32; 3]| {
+            if floor.is_some_and(|f| c[1] < f) {
+                return true;
+            }
+            let b = self.world.get(c);
+            b != 0 && !self.is_water(b)
+        };
+        let water = |c: [i32; 3]| self.is_water(self.world.get(c));
+        self.props.stands(p, &solid, &water, |id| match self.entities.map.get(&id) {
+            Some((_, Component::Prop(q))) => Some(q),
+            _ => None,
+        })
+    }
+
+    /// Removes the props that have lost what they stood on, after blocks changed at `broken` (a
+    /// cell that held a block: broken, replaced, or turned to water). A prop that no longer has any
+    /// of its surfaces and leaned on one of those cells is removed as the player `by` made it
+    /// go: the same entity log, edit number and broadcast as an editor's removal. The removed
+    /// prop's own cells then count as broken, so what stood on it (on a table) goes too. Only
+    /// props in the chunk columns around each cell are looked at. A prop already floating before
+    /// (placed before this rule) is left alone, and so is an orphan (its hash is not in the
+    /// catalogue, so it has no surfaces to lose). Nothing goes back to an inventory yet: there
+    /// is none.
+    pub(super) fn drop_unsupported(&mut self, by: &str, broken: Vec<[i32; 3]>) {
+        let mut changes = Vec::new();
+        let mut broken = broken;
+        while !broken.is_empty() {
+            let cells: HashSet<[i32; 3]> = broken.drain(..).collect();
+            // the props around any of the cells, once each
+            let mut candidates: Vec<EntityId> = cells.iter().flat_map(|&c| self.props.around(c)).collect();
+            candidates.sort_unstable();
+            candidates.dedup();
+            for id in candidates {
+                let Some((_, Component::Prop(p))) = self.entities.map.get(&id) else { continue };
+                if !self.props.leans_on(p, &cells) || self.stands(p) {
+                    continue;
+                }
+                let p = p.clone();
+                let seq = self.seq + 1;
+                let Some(old) = self.entities.remove(seq, now_unix(), by.to_string(), id) else { continue };
+                self.props.index_change(id, Some(&old), None);
+                self.seq = seq;
+                self.snap_changed.insert(entities::zone_key(&old));
+                changes.push(EntityChange { seq, entity: id, component: None });
+                broken.extend(self.props.cells(&p));
+            }
+        }
+        if !changes.is_empty() {
+            self.broadcast_entities(changes);
+        }
     }
 
     /// Starts a build the rules have passed (`judge`): the node's recipe is expanded and checked
@@ -1171,6 +1261,8 @@ impl WorldState {
         let Some(mut job) = self.builds.pop_front() else { return };
         let mut made: Vec<(u64, [i32; 3], u16)> = Vec::new();
         let mut per_chunk: HashMap<ChunkKey, usize> = HashMap::new();
+        // cells that held a block and now hold another: props may have lost what they stood on
+        let mut changed_cells: Vec<[i32; 3]> = Vec::new();
         while made.len() < BUILD_PER_TICK {
             let Some((cell, block)) = job.blocks.pop_front() else { break };
             // an undo puts the old block back only where the cell still holds what the build put
@@ -1185,6 +1277,9 @@ impl WorldState {
             match job.undo.as_mut() {
                 Some(u) => u.restored += 1,
                 None => job.changed.push((cell, old, block)),
+            }
+            if old != 0 {
+                changed_cells.push(cell);
             }
             self.seq += 1;
             self.log.push((self.seq, now_unix(), job.name.clone(), cell, old, block));
@@ -1216,6 +1311,10 @@ impl WorldState {
                 None => continue,
             };
             self.broadcast(&m, None);
+        }
+        // after the blocks, so everyone sees the support go and then the prop
+        if !changed_cells.is_empty() {
+            self.drop_unsupported(&job.name, changed_cells);
         }
         if job.blocks.is_empty() {
             // a build that changed nothing has nothing to undo, and would take a kept slot
@@ -1262,7 +1361,7 @@ impl WorldState {
                     Some(id) => Some(self.held(*id, *expect)?),
                 };
                 let zone = entities::zone_key(component);
-                let (known_prop, footprint_free, prop_cells) = self.prop_rules(*entity);
+                let (known_prop, footprint_free, prop_cells, prop_supported) = self.prop_rules(*entity);
                 let props_in_plot = match component {
                     Component::Prop(p) => props_in_plot(&plots, &self.props, &self.entities, prop_cell(p.at)),
                     _ => 0,
@@ -1277,6 +1376,7 @@ impl WorldState {
                     prop_footprint_free: &footprint_free,
                     prop_cells: &prop_cells,
                     known_prop: &known_prop,
+                    prop_supported: &prop_supported,
                     zone_entities: self.entities.zone_count(zone),
                     moves_zone: old.is_some_and(|o| entities::zone_key(o) != zone),
                     plot_portals: plot_portals_at(&plots, component, &self.entities),
@@ -1335,7 +1435,7 @@ impl WorldState {
             }
             Edit::Remove { entity, expect } => {
                 let old = self.held(*entity, *expect)?;
-                let (known_prop, footprint_free, prop_cells) = self.prop_rules(Some(*entity));
+                let (known_prop, footprint_free, prop_cells, prop_supported) = self.prop_rules(Some(*entity));
                 let ctx = Ctx {
                     role,
                     account,
@@ -1346,6 +1446,7 @@ impl WorldState {
                     prop_footprint_free: &footprint_free,
                     prop_cells: &prop_cells,
                     known_prop: &known_prop,
+                    prop_supported: &prop_supported,
                     zone_entities: 0,
                     moves_zone: false,
                     plot_portals: 0,
@@ -1360,6 +1461,9 @@ impl WorldState {
     pub(super) fn message(&mut self, conn: u64, msg: ToServer) {
         let now = self.started.elapsed().as_secs_f64();
         let Some(p) = self.players.get_mut(&conn) else { return };
+        // a block that held something and was changed: who changed it, and where (props that
+        // stood on it are dealt with once the player is no longer borrowed)
+        let mut broke: Option<(String, [i32; 3])> = None;
         match msg {
             ToServer::Hello { .. } | ToServer::Watch { .. } => {}
             ToServer::Put { id, entity, expect, component } => {
@@ -1486,7 +1590,8 @@ impl WorldState {
                     let claimed = self.plots.iter().any(|pl| pl.holds(cell) && !account.is_some_and(|a| pl.builders.contains(&a)));
                     self.world.check(cell, block).and_then(|_| {
                         // a solid block may not go where a colliding prop stands (breaking one is
-                        // not refused here; see vox-tol.4.17 for what removing support does)
+                        // not refused here: a prop that loses its support is removed after it,
+                        // see `drop_unsupported`)
                         let in_prop = block != 0
                             && self.props.covers_cell(cell, |id| match self.entities.map.get(&id) {
                                 Some((_, Component::Prop(q))) => Some(q),
@@ -1518,10 +1623,16 @@ impl WorldState {
                         self.log.push((self.seq, now_unix(), p.name.clone(), cell, old, block));
                         self.dirty.insert(ChunkKey::of(cell));
                         self.snap_changed.insert(vox_format::zone_of(ChunkKey::of(cell)));
+                        if old != 0 {
+                            broke = Some((p.name.clone(), cell));
+                        }
                         self.broadcast(&ToClient::Edits(vec![a]), None);
                     }
                 }
             }
+        }
+        if let Some((by, cell)) = broke {
+            self.drop_unsupported(&by, vec![cell]);
         }
     }
 }

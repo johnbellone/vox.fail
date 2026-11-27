@@ -389,6 +389,9 @@ pub enum EntityWhy {
     Unavailable,
     /// a malformed value: a number that isn't finite, bad JSON
     Invalid,
+    /// a prop with nothing under (or behind, or over) it to stand on; last, as the wire numbers
+    /// the variants in order
+    NoSupport,
 }
 
 impl std::fmt::Display for EntityWhy {
@@ -407,6 +410,7 @@ impl std::fmt::Display for EntityWhy {
             EntityWhy::Changed => "that changed since you looked",
             EntityWhy::Unavailable => "that's not available right now",
             EntityWhy::Invalid => "that isn't a valid value",
+            EntityWhy::NoSupport => "it has nothing to stand on",
         })
     }
 }
