@@ -60,8 +60,10 @@ Two products share one Cargo workspace:
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
 | `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen), `screenshots.sh` (the README's pictures, drawn by the real client into `docs/screenshots/`; run by hand when the look changes). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
+| `tools/review/` | | Avatar review: `render_sheet.mjs` (the close-up sheet, three.js), `ingame.py` (the in-game sheet, the app's snapshot mode), `avatar_pr.py` (check an avatar, write or check its pull request). See `docs/avatar/avatar-workflow.md`. |
 | `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
 | `.pi/agents/` | | Project subagents: `vox-writer` (haiku) and `vox-reviewer` (sonnet). See [Models and subagents](#models-and-subagents). |
+| `.pi/prompts/`, `.agents/skills/` | | Pi commands (`/new-avatar`, `/review-avatar`) and skills (`new-avatar`, `okf-memory`). |
 | `.beads/` | | The beads task database (`bd`). Never edit by hand. |
 | `knowledge/` | | okf project memory. Use the `okf_*` tools, not file tools. |
 | `source/vox/` | | MagicaVoxel sources for the characters and props. |
@@ -239,6 +241,14 @@ bd list                               # everything, as a tree
 - **Found something else?** Create a new bead (`--deps "discovered-from:<id>"`); do not widen the
   current one.
 - `bd metrics off` keeps usage reporting off (already set in this clone).
+
+## Avatars
+
+A new avatar (an animal or creature on the shared block rig) follows the `new-avatar` skill
+(`.agents/skills/new-avatar/SKILL.md`; `/new-avatar` in Pi) and is reviewed in the avatar pull
+request format, which the avatar review bot checks. Requests come in as "New avatar" issues; the
+avatar request bot builds them once a maintainer adds `avatar-go`. Everything is in
+[docs/avatar/avatar-workflow.md](docs/avatar/avatar-workflow.md).
 
 ## Design documents
 
