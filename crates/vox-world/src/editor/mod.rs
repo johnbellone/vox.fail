@@ -18,6 +18,7 @@
 
 pub mod bridge;
 pub mod camera;
+pub mod ghost;
 pub mod pick;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -100,6 +101,8 @@ impl EditorState {
         self.tracked.clear();
         self.live = false;
         self.snapshot_due = false;
+        // a block chosen in one world is not carried into another
+        self.block = None;
     }
 
     /// The world says it has sent everything it has: tell the page the whole list next.
@@ -175,7 +178,8 @@ impl Plugin for EditorPlugin {
             .add_systems(Update, (apply_commands, send_changes).chain().in_set(EditorSystems).after(receive))
             .add_systems(Update, camera::fly_to.after(EditorSystems).before(crate::client::controls))
             // after the controls, so the click that captures the mouse is known (pointer_claimed)
-            .add_systems(Update, pick::select.after(EditorSystems).after(crate::client::controls));
+            .add_systems(Update, pick::select.after(EditorSystems).after(crate::client::controls))
+            .add_systems(Update, ghost::ghost.after(EditorSystems).after(crate::client::controls));
     }
 }
 
@@ -234,7 +238,6 @@ fn apply_commands(
     w: ResMut<WorldClient>,
 ) {
     for command in inbox.0.drain(..) {
-        let page = command.page_ref();
         match &command {
             Command::Tool { tool } => {
                 state.tool = Some(*tool);
@@ -281,22 +284,31 @@ fn apply_commands(
             }
             Command::Create { .. } | Command::Set { .. } | Command::Remove { .. } => {}
         }
-        if !w.linked() {
-            outbox.0.push(Event::Refused {
-                id: 0,
-                r#ref: page,
-                why: "Offline".into(),
-                text: "the world isn't connected right now".into(),
-            });
-            continue;
-        }
-        let id = match state.slot(page) {
-            Slot::Fresh(id) | Slot::Again(id) => id,
-            Slot::InFlight => continue,
-        };
-        if let Some(msg) = to_server(&command, id) {
-            w.send_entity(&msg);
-        }
+        send_edit(&w, &mut state, &mut outbox, &command);
+    }
+}
+
+/// Sends an entity command (`Create`, `Set` or `Remove`) to the server, numbered for its `ref`
+/// (see [`EditorState::slot`]). Without a link it is refused to the page as `Offline`; an edit
+/// whose `ref` is already in flight is not sent again. Used by the page's commands and by the
+/// ghost's click, so both take the same path.
+pub(crate) fn send_edit(w: &WorldClient, state: &mut EditorState, outbox: &mut EditorOutbox, command: &Command) {
+    let page = command.page_ref();
+    if !w.linked() {
+        outbox.0.push(Event::Refused {
+            id: 0,
+            r#ref: page,
+            why: "Offline".into(),
+            text: "the world isn't connected right now".into(),
+        });
+        return;
+    }
+    let id = match state.slot(page) {
+        Slot::Fresh(id) | Slot::Again(id) => id,
+        Slot::InFlight => return,
+    };
+    if let Some(msg) = to_server(command, id) {
+        w.send_entity(&msg);
     }
 }
 
@@ -447,8 +459,10 @@ mod tests {
         let mut st = EditorState::default();
         st.slot(Some(1));
         st.sent.insert(EntityId(4), 3);
+        st.block = Some("stone".into());
         st.reset();
         assert!(st.sent.is_empty() && st.tracked.is_empty() && !st.snapshot_due && !st.live);
+        assert_eq!(st.block, None);
         st.ready();
         assert!(st.snapshot_due && st.live);
     }

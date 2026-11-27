@@ -15,7 +15,7 @@
 //! resends the edit under the same number, so it is never charged twice.
 
 use serde::{Deserialize, Serialize};
-use vox_core::entity::Component;
+use vox_core::entity::{Axis, Component};
 
 /// Largest command the bridge accepts, in bytes of JSON.
 pub const MAX_COMMAND_BYTES: usize = 64 * 1024;
@@ -29,6 +29,14 @@ pub enum Tool {
     Portal,
     Prop,
     Node,
+}
+
+impl Tool {
+    /// Whether a click with this tool is the tool's own: it picks or places something, so the
+    /// click neither breaks a block nor walks the player to the point under the pointer.
+    pub fn consumes_click(self) -> bool {
+        matches!(self, Tool::Select | Tool::Portal)
+    }
 }
 
 /// What the page asks the editor to do.
@@ -109,6 +117,9 @@ pub enum Event {
     },
     /// the block the pointer is on, for forms that need a position
     Picked { cell: [i32; 3] },
+    /// a click on a doorway ghost the rules allow: where the doorway would be (its sill's middle),
+    /// which way it faces and its size. The page makes the doorway (a Create) from its form.
+    Spot { at: [f32; 3], axis: Axis, size: [f32; 2] },
     /// who else is in the world
     Here { players: Vec<String> },
 }
@@ -160,7 +171,7 @@ pub fn event_json(e: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vox_core::entity::{Axis, Dest, Portal};
+    use vox_core::entity::{Dest, Portal};
 
     const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/site/src/game/editor.samples.json");
 
@@ -216,6 +227,7 @@ mod tests {
             Event::Refused { id: 0, r#ref: None, why: "NotYet".into(), text: "build is not in the editor yet".into() },
             Event::Done { r#ref: 2, entity: 3, seq: 13 },
             Event::Picked { cell: [1, -2, 30] },
+            Event::Spot { at: [4.5, 3.0, -2.5], axis: Axis::X, size: [4.0, 6.0] },
             Event::Here { players: vec!["Sam".into()] },
         ]
     }
@@ -292,6 +304,15 @@ mod tests {
     fn unknown_types_are_refused() {
         assert!(parse_command(r#"{"type":"explode"}"#).is_err());
         assert!(parse_command(r#"{"type":"tool","tool":"hammer"}"#).is_err());
+    }
+
+    #[test]
+    fn the_select_and_portal_tools_take_the_click() {
+        assert!(Tool::Select.consumes_click());
+        assert!(Tool::Portal.consumes_click());
+        assert!(!Tool::Blocks.consumes_click());
+        assert!(!Tool::Prop.consumes_click());
+        assert!(!Tool::Node.consumes_click());
     }
 
     #[test]

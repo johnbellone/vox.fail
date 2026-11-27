@@ -103,6 +103,7 @@ export type Event =
   | { type: "refused"; id: number; ref: number | null; why: string; text: string }
   | { type: "done"; ref: number; entity: number; seq: number }
   | { type: "picked"; cell: [number, number, number] }
+  | { type: "spot"; at: Vec3; axis: Axis; size: [number, number] }
   | { type: "here"; players: string[] };
 
 type Obj = Record<string, unknown>;
@@ -344,6 +345,10 @@ export function readEvent(v: unknown): Event | null {
     case "picked":
       return has(v, ["cell"]) && Array.isArray(v.cell) && v.cell.length === 3 && v.cell.every(isI32)
         ? { type: "picked", cell: v.cell as [number, number, number] }
+        : null;
+    case "spot":
+      return has(v, ["at", "axis", "size"]) && isVec3(v.at) && isAxis(v.axis) && isSize(v.size)
+        ? { type: "spot", at: v.at, axis: v.axis, size: v.size }
         : null;
     case "here":
       return has(v, ["players"]) && isStrs(v.players) ? { type: "here", players: v.players } : null;

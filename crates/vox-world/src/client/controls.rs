@@ -73,9 +73,9 @@ pub fn controls(
     // always flies, at the edit flight's speed (editor::camera)
     let edit = editor.is_some();
     let fly_speed = if edit { crate::editor::camera::EDIT_FLY } else { FLY };
-    // with the editor's Select tool a click picks what it is on (editor::pick): it neither
-    // breaks a block nor walks to the point
-    let select_tool = editor.as_ref().is_some_and(|e| e.tool == Some(crate::editor::bridge::Tool::Select));
+    // with an editor tool that takes the click (Select picks, Portal places a doorway: see
+    // Tool::consumes_click) a click neither breaks a block nor walks to the point
+    let click_taken = editor.as_ref().and_then(|e| e.tool).is_some_and(|t| t.consumes_click());
     // no props in the world (or none loaded): the blocks alone stop the body
     let no_props = Occupancy::default();
     let occupancy = props.as_ref().map_or(&no_props, |p| &p.0);
@@ -216,9 +216,9 @@ pub fn controls(
     } else if !swallowed {
         let mut held = (actions.pressed(A::Break), actions.pressed(A::Place));
         let mut just = (actions.just_pressed(A::Break), actions.just_pressed(A::Place));
-        // the Select tool's click is the Break action; it picks, so it must not reach the
-        // repeat (zeroed before the step, so the repeat timer does not latch on it)
-        if select_tool {
+        // the click of a tool that takes it is the Break action; it must not reach the repeat
+        // (zeroed before the step, so the repeat timer does not latch on it)
+        if click_taken {
             held.0 = false;
             just.0 = false;
         }
@@ -243,7 +243,7 @@ pub fn controls(
     let right = Vec3::new(basis.cos(), 0.0, -basis.sin());
     let mut dir = fwd * stick.y + right * stick.x;
     // a click (or holding the button) on the ground walks there
-    if diablo && mouse.pressed(MouseButton::Left) && !shift && !select_tool {
+    if diablo && mouse.pressed(MouseButton::Left) && !shift && !click_taken {
         if let Some((o, d)) = w.pick {
             if let Some(h) = ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 160.0) {
                 let p = IVec3::from(h.cell).as_vec3() + Vec3::new(0.5, 1.0, 0.5);

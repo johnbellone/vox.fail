@@ -18,6 +18,23 @@ use crate::client::WorldClient;
 use crate::entities::WorldEntities;
 use crate::input::{Action, Actions, UiMode};
 
+/// The ray through the pointer, as (origin in blocks, direction). While the mouse is captured
+/// it goes through the middle of the view (the crosshair); otherwise through the pointer's place
+/// in the window. The direction is the camera's, so it need not be unit length. None when there
+/// is no pointer to read or the camera cannot make a ray from it.
+pub fn cursor_ray(w: &WorldClient, win: &Window, cam: &Camera, gt: &GlobalTransform) -> Option<([f32; 3], [f32; 3])> {
+    let pos = if w.captured { win.size() * 0.5 } else { win.cursor_position()? };
+    let ray = cam.viewport_to_world(gt, pos).ok()?;
+    let size = w.block_size();
+    Some(((ray.origin / size).to_array(), Vec3::from(ray.direction).to_array()))
+}
+
+/// Which cells stop a pick or a ray in the client: the endless floor below `w.floor`, and any
+/// solid block of the view. The same rule `client::controls` uses for the cursor's ray.
+pub fn solid(w: &WorldClient) -> impl Fn(Cell) -> bool + '_ {
+    move |c: Cell| w.floor.is_some_and(|f| c[1] < f) || w.view.solid(c)
+}
+
 /// How far a pick reaches, in blocks: the same reach as the cursor's ray in `client::controls`.
 pub const PICK_REACH: f32 = 200.0;
 
@@ -159,18 +176,7 @@ pub fn select(
         return;
     }
     let (Ok(win), Ok((cam, gt))) = (windows.single(), cams.single()) else { return };
-    // while the mouse is captured the ray is from the middle of the view (the crosshair); else
-    // from the pointer, and with no pointer there is nothing to pick
-    let pos = if w.captured {
-        win.size() * 0.5
-    } else {
-        let Some(p) = win.cursor_position() else { return };
-        p
-    };
-    let Ok(ray) = cam.viewport_to_world(gt, pos) else { return };
-    let size = w.block_size();
-    let origin = (ray.origin / size).to_array();
-    let dir = Vec3::from(ray.direction).to_array();
+    let Some((origin, dir)) = cursor_ray(&w, win, cam, gt) else { return };
 
     let mut portals = Vec::new();
     let mut props = Vec::new();
@@ -181,9 +187,7 @@ pub fn select(
             _ => {}
         }
     }
-    // the same solid test the client's own picks use (client::controls)
-    let solid = |c: Cell| w.floor.is_some_and(|f| c[1] < f) || w.view.solid(c);
-    match pick(origin, dir, PICK_REACH, solid, &portals, &props) {
+    match pick(origin, dir, PICK_REACH, solid(&w), &portals, &props) {
         Some(Hit::Entity { id, .. }) => {
             state.selected = Some(id.0);
             outbox.0.push(Event::Selected { entity: Some(id.0) });

@@ -27,7 +27,7 @@ describe("editor samples", () => {
       ["block", "build", "create", "fly_to", "redo", "remove", "select", "set", "tool", "undo"],
     );
     expect([...types(samples.events)].sort()).toEqual(
-      ["done", "entities", "here", "picked", "ready", "refused", "selected"],
+      ["done", "entities", "here", "picked", "ready", "refused", "selected", "spot"],
     );
   });
 });
@@ -87,6 +87,14 @@ describe("event guards", () => {
     expect(isEvent({ type: "selected", entity: 3, extra: 1 })).toBe(true);
     expect(readEvent({ type: "selected", entity: 3, extra: 1 })).toEqual({ type: "selected", entity: 3 });
     expect(isEvent({ type: "ready", world: "void", palette: [], extra: 1 })).toBe(true);
+  });
+
+  test("a spot is a doorway's place, axis and size; a bad axis or size is refused", () => {
+    const spot = { type: "spot", at: [4.5, 3, -2.5], axis: "X", size: [4, 6] };
+    expect(readEvent(spot)).toEqual({ type: "spot", at: [4.5, 3, -2.5], axis: "X", size: [4, 6] });
+    expect(isEvent({ ...spot, axis: "Y" })).toBe(false);
+    expect(isEvent({ ...spot, size: [4] })).toBe(false);
+    expect(isEvent({ type: "spot", at: [0, 0, 0], axis: "Z" })).toBe(false);
   });
 
   test("an extra field inside a component passes and is dropped", () => {
