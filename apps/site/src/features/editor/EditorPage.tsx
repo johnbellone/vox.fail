@@ -4,16 +4,31 @@
 // events are installed before the client starts, so none is missed.
 
 import { Alert, Box, Center, Flex, Stack, Text } from "@mantine/core";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, messageOf, post, worldUrl } from "../../api/client";
-import type { Me, Token, WorldEntry } from "../../api/types";
+import { useApi } from "../../api/hooks";
+import type { Inventory, Me, Token, WorldEntry, Worlds } from "../../api/types";
 import { loadClient } from "../../game/wasm";
 import { type Command, type Tool, onEvent, sendCommand } from "../../game/editor";
 import { chooseBlock } from "./BlockPalette";
 import { EditorHeader, type Mode } from "./EditorHeader";
 import { EntityList } from "./EntityList";
 import { Inspector } from "./Inspector";
-import { applyChanges, cleared, type Entities, sortedRows } from "./state";
+import { NewPortal } from "./NewPortal";
+import {
+  applyChanges,
+  cleared,
+  dropEdit,
+  type Edits,
+  refuseEdit,
+  resendEdit,
+  retryCommand,
+  type Entities,
+  sentEdit,
+  settleEdit,
+  sortedRows,
+  type Spot,
+} from "./state";
 import { ToolRail } from "./ToolRail";
 
 const CANVAS = "editor-game";
@@ -36,6 +51,24 @@ export function EditorPage() {
   // the world's block names (from `ready`) and the one the page has chosen to paint with
   const [palette, setPalette] = useState<string[]>([]);
   const [block, setBlock] = useState<string>();
+  // the open portal edits, by ref (see state.ts); refs are numbered here and never reused
+  const [edits, setEdits] = useState<Edits>(() => new Map());
+  const editsRef = useRef(edits);
+  useEffect(() => {
+    editsRef.current = edits;
+  }, [edits]);
+  const nextRef = useRef(1);
+  // stable, so the new-portal form's close effect runs when its edit settles, not on every render
+  const closeSpot = useCallback(() => setSpot(undefined), []);
+  // where the Portal tool last marked a spot: a new-portal form opens there, keyed by its number
+  const [spot, setSpot] = useState<{ id: number; spot: Spot }>();
+  const spotSeq = useRef(0);
+  // the worlds to lead to, and the player's keys to pair with (both for the portal forms)
+  const worldList = useApi<Worlds>("/api/worlds");
+  const inventory = useApi<Inventory>("/api/inventory");
+  const worlds: WorldEntry[] = worldList.data?.worlds ?? [];
+  const items = inventory.data?.items ?? [];
+  const itemsError = inventory.error?.message;
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +81,8 @@ export function EditorPage() {
           setEntities(cleared());
           setSelected(null);
           setRefusal(undefined);
+          setEdits(new Map());
+          setSpot(undefined);
           setPalette(e.palette);
           setBlock(undefined);
           break;
@@ -58,10 +93,17 @@ export function EditorPage() {
           setSelected(e.entity);
           break;
         case "refused":
-          setRefusal(e.text);
+          // a refusal of an open portal edit is shown by its form; any other goes in the banner
+          if (e.ref === null || !editsRef.current.has(e.ref)) setRefusal(e.text);
+          setEdits((prev) => settleEdit(prev, e));
           break;
         case "done":
           setRefusal(undefined);
+          setEdits((prev) => settleEdit(prev, e));
+          break;
+        case "spot":
+          spotSeq.current += 1;
+          setSpot({ id: spotSeq.current, spot: { at: e.at, axis: e.axis, size: e.size } });
           break;
         case "here":
           setHere(e.players.length);
@@ -137,6 +179,38 @@ export function EditorPage() {
     }
   };
 
+  // sends one portal edit; a failure (no editor running) is recorded as its refusal
+  const sendEdit = (ref: number, c: Command) => {
+    try {
+      sendCommand(c);
+    } catch (err) {
+      setEdits((prev) => refuseEdit(prev, ref, "NotRunning", messageOf(err)));
+    }
+  };
+
+  // starts an edit: a fresh ref, the command built with it, sent. The caller's form follows the ref.
+  const submit = (make: (ref: number) => Command): number => {
+    const ref = nextRef.current;
+    nextRef.current += 1;
+    const c = make(ref);
+    // set here, not only in the effect: a retry or a second submit in the same tick reads it
+    const next = sentEdit(editsRef.current, ref, c);
+    editsRef.current = next;
+    setEdits(next);
+    sendEdit(ref, c);
+    return ref;
+  };
+
+  // resends a refused-Unavailable edit: the same command with the same ref (never charged twice)
+  const retry = (ref: number) => {
+    const c = retryCommand(editsRef.current, ref);
+    if (!c) return;
+    setEdits((prev) => resendEdit(prev, ref));
+    sendEdit(ref, c);
+  };
+
+  const forget = (ref: number) => setEdits((prev) => dropEdit(prev, ref));
+
   const pickTool = (t: Tool) => {
     setTool(t);
     send({ type: "tool", tool: t });
@@ -198,6 +272,24 @@ export function EditorPage() {
             aria-label="The world being edited"
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", outline: "none", background: "#f3f5f9" }}
           />
+          {spot && ready && world && (
+            <Box pos="absolute" top={8} right={8} w="min(340px, calc(100% - 16px))" style={{ zIndex: 1, maxHeight: "calc(100% - 16px)", overflowY: "auto" }}>
+              <NewPortal
+                key={spot.id}
+                spot={spot.spot}
+                level={world.id}
+                advanced={canAdvanced && mode === "advanced"}
+                worlds={worlds}
+                items={items}
+                itemsError={itemsError}
+                edits={edits}
+                submit={submit}
+                retry={retry}
+                forget={forget}
+                onClose={closeSpot}
+              />
+            </Box>
+          )}
           {!ready && (
             <Center pos="absolute" inset={0} bg="#f3f5f9" aria-live="polite">
               <Stack align="center" gap="xs" w="min(360px, 80vw)">
@@ -211,7 +303,17 @@ export function EditorPage() {
             </Center>
           )}
         </Box>
-        <Inspector row={selected === null ? undefined : entities.rows.get(selected)} />
+        <Inspector
+          row={selected === null ? undefined : entities.rows.get(selected)}
+          advanced={canAdvanced && mode === "advanced"}
+          worlds={worlds}
+          items={items}
+          itemsError={itemsError}
+          edits={edits}
+          submit={submit}
+          retry={retry}
+          forget={forget}
+        />
       </Flex>
       <EntityList rows={rows} selected={selected} onError={setNotice} />
     </Stack>
