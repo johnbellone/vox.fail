@@ -24,3 +24,4 @@
 * [Design (phase 1 built): The World Format](world-format-design.md) - Regions stored as content-addressed zstd blobs with snapshots in a folder or an Oxen repository (squashed daily) and structure entitlements; phase 1 and the Oxen store are built.
 * [Design (proposed): World Graph and Generated Art](world-graph-and-art-design.md) - A plan where a language model edits a graph of nodes and typed recipes that a Rust interpreter turns into voxels in the project's style.
 * [Design (phases 1-4 built): Block-Game Controls, HUD and Menus](controls-and-hud-design.md) - Action-based input with gamepad hints per brand, first-person view, pixel HUD and controller-navigable menus for Vox worlds.
+* [Design (proposed): Props and the Prop Pipeline](prop-pipeline-design.md) - A prop is a small authored object with behaviours, made as a recipe or an imported MagicaVoxel file, checked, reviewed, and placed in worlds as a versioned entity; with a seventy-prop catalogue.

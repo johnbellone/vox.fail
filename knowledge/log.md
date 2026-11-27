@@ -1,3 +1,8 @@
+## 2026-11-27
+* **Relate** [2026-11-27T02:46:21Z]: Linked `architecture/asset-pipeline.md` to `architecture/prop-pipeline-design.md` (Proposed replacement for the Python prop builders: recipes and .vox import in Rust.).
+* **Relate** [2026-11-27T02:46:21Z]: Linked `architecture/world-graph-and-art-design.md` to `architecture/prop-pipeline-design.md` (The prop scale made concrete: what a prop is, its pipeline and a first catalogue.).
+* **Creation** [2026-11-27T02:46:20Z]: Documented concept `architecture/prop-pipeline-design.md` (Design (proposed): Props and the Prop Pipeline); set stale_after 2026-12-26.
+
 ## 2026-11-26
 * **Relate** [2026-11-26T22:12:53Z]: Linked `architecture/economy-and-social.md` to `decisions/structure-entitlements.md` (Who may use, copy and edit a structure; plots' builders are meant to edit their plot's structure.).
 * **Relate** [2026-11-26T22:12:53Z]: Linked `architecture/world-format-design.md` to `decisions/structure-entitlements.md` (Structures have an owner and use, copy and edit rights.).

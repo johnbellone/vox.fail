@@ -3,7 +3,7 @@ type: Process
 title: "Asset Pipeline: MagicaVoxel to glTF"
 description: "How characters, props, sets, levels and textures are authored and generated, and which script rebuilds what."
 tags: [process, assets, python, tools, glb]
-generated: { by: agent/mcp, at: "2026-11-26T15:57:58Z" }
+generated: { by: agent/mcp, at: "2026-11-27T02:46:21Z" }
 status: stable
 code_refs: [tools/, source/vox/, data/]
 ---
@@ -39,3 +39,4 @@ All assets must satisfy `convention/hard-constraints`. Sound effects stay real C
 
 # Related Concepts
 - [Characters, Props, Sets and Content Licences](../project/characters-and-content.md): what the pipeline produces
+- [Design (proposed): Props and the Prop Pipeline](prop-pipeline-design.md): Proposed replacement for the Python prop builders: recipes and .vox import in Rust.
