@@ -78,14 +78,15 @@ pub struct Portal {
     pub at: [f32; 3], pub axis: Axis, pub size: [f32; 2], pub yaw: f32,
     pub level: String,                 // the echo it shows
     pub to: Dest,
-    pub owner: Option<u64>,            // a player's portal (plot), or None (the world's own)
-    pub plot: Option<i64>,
+    /// a player's portal: its row id in the directory's `portals` table, which holds the owner,
+    /// the plot and what was paid; None for the world's own portals
+    pub key: Option<i64>,
 }
 
 pub enum Dest {
     Here { arrive: [f32; 3] },         // somewhere else in this world
     World { world: String },           // a world's spawn (today's plot portals)
-    Pair { world: String, portal: EntityId },   // a player's other portal
+    Pair { key: i64 },                 // a player's other portal, by its directory key
     Dungeon { name: String },          // "dungeon:<name>"
     Url { url: String, arrive: [f32; 3] },      // ":7781" or "/w/<id>/ws" only (see Security)
 }
@@ -102,8 +103,8 @@ Added last, so older variants keep their first byte (the `old_variants_keep_thei
 test grows):
 
 ```rust
-ToServer::Put { id: u32, entity: Option<EntityId>, component: Component }  // None: make a new one
-ToServer::Remove { id: u32, entity: EntityId }
+ToServer::Put { id: u32, entity: Option<EntityId>, expect: Option<u64>, component: Component }  // entity None: make one
+ToServer::Remove { id: u32, entity: EntityId, expect: Option<u64> }
 ToServer::Build { id: u32, node: EntityId }                                // expand a node into blocks
 ToClient::Entities(Vec<EntityChange>)  // on join (all of them, after Ready) and to everyone on change
 ToClient::EntityRefused { id: u32, why: EntityWhy }
@@ -112,8 +113,20 @@ pub struct EntityChange { pub seq: u64, pub entity: EntityId, pub component: Opt
 ```
 
 `id` is the sender's own number, echoed back, as with `Edit`. Changes share the world's edit
-sequence (`seq`), so blocks and entities are seen in one order. `Welcome.settings` stays for
-older clients, filled from the `Settings` entity.
+sequence (`seq`), so blocks and entities are seen in one order.
+
+- **Concurrency**: `expect` is the `seq` of the last change the sender saw for that entity; when
+  it no longer matches, the server refuses with `Changed`. The inspector and undo both send it,
+  so two editors never silently overwrite each other ("changed by Ann, reload").
+- **Joining**: entities go out after `Ready` in batches of at most 512 a message, nearest zone
+  first, and no message over 64 KB (checked on both sides, as chunks are). The client meshes
+  props within the per-frame budget. Streaming by view radius is world-scaling phase 3; every
+  entity row has its zone, so that changes what is sent, not the format.
+- **Settings live**: a changed `Settings` entity is applied by clients while running (sky,
+  time, clouds, water, hotbar), and the server updates its weather climate from it.
+- **Versions**: the server turns away any other protocol (`world.rs`, `join` and `watch`), so
+  client and server ship together. `Welcome.settings` stays, filled from the `Settings`
+  entity, because the client sets up the sky before the first `Entities` arrive.
 
 ### Rules (`vox-core`)
 
@@ -124,15 +137,20 @@ sizes, plot rectangles, who is asking); `vox-format`'s types call them.
 
 `EntityWhy`: `NotYours` (not your plot, not an editor), `Outside`, `TooFar`, `TooMany` (a cap),
 `TooBig` (a string, a recipe), `Blocked` (footprint not free, no standing room), `BadDest`,
-`NoSuchProp`, `CantAfford`, `TooFast`.
+`NoSuchProp`, `CantAfford`, `TooFast`, `Changed` (someone changed it since: `expect` didn't
+match), `Unavailable` (the directory didn't answer in 5 s).
 
 ### Store
 
 The server keeps entities in a new SQLite table beside `chunks`:
 `entities(id INTEGER PRIMARY KEY, zone_x, zone_z, name TEXT, version INTEGER, data BLOB)`
-(postcard), and writes them into each zone blob's entity part when it snapshots. The zone blob
-gains an entity section after the blocks, so its format version goes to 2; version 1 blobs
-read as "no entities". The hash covers both.
+(postcard), and an entity log beside `edits`:
+`entity_edits(seq, at, player, entity, old BLOB, new BLOB)`, sharing the edits' `seq`. Both are
+written in the **same `flush()` transaction** as chunks and edits, so a crash loses blocks and
+entities together or not at all. `--restore-at` replays both logs in `seq` order, then
+reconciles player portals with the directory (below). Snapshots write entities into each zone
+blob's entity part: the zone blob gains an entity section after the blocks, so its format
+version goes to 2; version 1 blobs read as "no entities". The hash covers both.
 
 ## Who may edit what
 
@@ -148,17 +166,31 @@ read as "no entities". The hash covers both.
 
 - **World editors**: a new directory table `world_editors(world, account)` with
   `POST /api/worlds/editors` (owner only: grant, revoke) and the list included in
-  `/api/world/{id}/rules` (`owner`, `editors`). The world checks each edit against the rules
-  it last fetched, so a revoke takes effect within 30 s; the world also refetches on demand
-  when an advanced edit comes from someone not on its list (at most once a minute per account).
+  `/api/world/{id}/rules` (`owner`, `editors`), for showing who may edit.
+- **Advanced edits ask the directory every time**, as structure placement does:
+  `GET /api/world/{id}/editor?account=` (world secret), cached 5 s, off the world thread; the
+  edit waits for it. No answer means refused (`Unavailable`): advanced rights fail closed, and a
+  revoke takes effect within 5 s.
+- **Basic edits** use the plots in the rules fetched every 30 s, as block edits in plots do
+  today, so a builder removed from a group can still build for up to 30 s (shown on the plot
+  page when revoking).
 - **Guests** edit nothing in the editor. The editor needs a sign-in token.
 - **Basic portals cost Authority** as today: on a `Put` that makes a player portal the world
-  asks the directory (`POST /api/world/portal`, world secret: account, plot, position, dest),
-  which charges, enforces the cap, records the row and gives the key item; only then does the
-  world apply the entity. Moving or removing your own portal is free; removing refunds nothing.
-  `/api/feats/portal` stays for the inventory page and goes through the same function.
-- **Pairing**: a `Pair` destination must be a portal of the same owner, in a world the
-  directory knows. The directory keeps both rows; it resolves the arrival point at travel time
+  asks the directory (`POST /api/world/portal`, world secret: account, plot, position, dest,
+  and an **idempotency key** of world, player and the edit's `id`, so a retry never charges
+  twice), which charges, enforces the cap, records the row and gives the key item. The request
+  runs off the world thread (as tickets do), one pending per player, 5 s timeout
+  (`Unavailable`). When the answer comes the world checks the plot and rights again; if they
+  no longer hold it asks the directory to refund (recorded in the ledger) and refuses. Moving
+  or removing your own portal is free; removing refunds nothing. `/api/feats/portal` stays for
+  the inventory page and goes through the same function.
+- **One identity for a player portal**: its directory row id (`Portal.key`). The rules carry
+  every player portal's key, position and destination, and the world **reconciles** on each
+  fetch and after a restore: a row the directory has and the world lacks is made again (so a
+  charge followed by a crash never loses a paid portal), and an entity whose key the directory
+  no longer has is removed.
+- **Pairing**: `Dest::Pair { key }` names the other end by its key; it must be a portal of the
+  same owner. The directory resolves the world and the arrival point at travel time
   (`/api/world/travel` already makes the ticket and the arrival), so moving the other end needs
   no change here. A pair whose other end is gone leads to that world's spawn.
 
@@ -224,16 +256,22 @@ component), `remove`, `fly_to`, `undo`, `redo`, `build` (a node). Events: `ready
 (world, palette, catalogue, your rights), `entities` (the list, then changes), `selected`,
 `refused` (with the reason in words), `here` (who is in the world).
 
-Nothing secret crosses the bridge: the token is already in the page that started the client.
-The bridge takes commands only from the page itself (`editor_command` is a Rust function the
-page calls; there is no `postMessage` listener).
+Nothing secret crosses the bridge: the token is already in the page that started the client,
+and the site's content policy (`bins/vox-directory/src/routes.rs`) allows only its own scripts
+and no framing, so the bridge grants nothing a script on the page didn't have. It takes commands
+only from the page itself (no `postMessage` listener). `editor_command` refuses JSON over 64 KB,
+unknown fields (`deny_unknown_fields`), and any command when the client isn't in edit mode.
+Text other people wrote (portal names, `readable` text, recipes, player names) is shown only as
+React text; a test fails if `features/editor` uses `dangerouslySetInnerHTML` or `innerHTML`.
 
 ### Undo
 
 The editor keeps the author's own changes as pairs (before, after), up to 100. Undo sends the
-`before` as a `Put` (or a `Remove` for something made); if someone else has changed that entity
-since, the undo is refused and the step dropped. Undoing a `Build` sends the blocks' old values
-as ordinary edits. World-wide undo is the owner's snapshot restore
+`before` as a `Put` (or a `Remove` for something made) with `expect` set to the `seq` of the
+author's own change; if someone else has changed that entity since, the server refuses it
+(`Changed`) and the step is dropped. Undoing a `Build` sends each block's old value only where
+the block still holds what the build put there; blocks others have changed since are left, and
+the editor says how many. World-wide undo is the owner's snapshot restore
 (`--restore-at`, and later on the site, world-format phase 7).
 
 ## Props in the editor
@@ -267,7 +305,10 @@ In advanced mode: **add** a node (a kind and a footprint, drawn as an outline), 
 recipe (the JSON form, checked against the schema `vox-art` generates), **preview** (the client
 expands it in wasm and draws it as a ghost), **build** (`ToServer::Build`: the server expands
 the same recipe and seed, and applies the blocks as ordinary ordered edits by that player, so
-they are in the edit log and snapshots). Expansion is deterministic, so the preview is what
+they are in the edit log and snapshots). A build changes at most **32,768 blocks**; the server
+applies it **4,096 blocks a tick**, so other players' edits interleave in the one order, and
+sends a chunk changed by more than 256 blocks as a whole `Chunk` message rather than a run of
+`Applied`. A preview over the cap is refused before sending, with the count. Expansion is deterministic, so the preview is what
 gets built. Links between nodes are shown and stored, but only `contains` is enforced for now.
 
 The seam for later: `vox-forge`'s MCP tools (world-graph-and-art.md phase 4) can drive the same
@@ -279,8 +320,8 @@ The seam for later: `vox-forge`'s MCP tools (world-graph-and-art.md phase 4) can
   rights (re-checked on every edit), bounds and reach, caps, finite floats, sizes.
 - **Caps**: 4,000 entities a zone; 64 props a plot; portals as today (2 a plot) for players;
   strings (names 32, `readable` 140, recipe JSON 16 KB) with control characters stripped;
-  recipes at most 200 operations and a voxel budget of 64 × 64 × 64 blocks per build; `Put`
-  10 a second per player, `Build` one per 10 seconds per world.
+  recipes at most 200 operations (the same cap in the browser's parser) and 32,768 changed
+  blocks per build; `Put` 10 a second per player, `Build` one per 10 seconds per world.
 - **Portal destinations stay on this host**: `Url` accepts only `":<port>"` or `"/w/<id>/ws"`;
   `World` and `Pair` must name a world the directory knows; `Dungeon` a template the host has.
   Atlas edges are not portals anyone places (they come from the tile); an owner may only close
@@ -312,10 +353,11 @@ The seam for later: `vox-forge`'s MCP tools (world-graph-and-art.md phase 4) can
 | Rules | unit tests in `vox_core::edit` for each `EntityWhy` | `cargo test -p vox-core edit` |
 | Entities | round trips, version-1 zone blobs still load, crafted blobs refused | `cargo test -p vox-format entities` |
 | Wire | round trips, first bytes of old variants unchanged | `cargo test -p vox-core wire` |
-| Server | one test per refusal; a change reaches a second player; restore brings entities back; plot portal charges Authority once | `cargo test -p vox-server editor` |
+| Server | one test per refusal; a change reaches a second player; restore-at brings entities back; a stale `expect` is refused; a 32,768-block build interleaves with another player's edit; 20,000 props join with no message over 64 KB | `cargo test -p vox-server editor` |
+| Directory charge | the same idempotency key charges once; a failed re-check refunds; reconciliation recreates a paid portal | `cargo test -p vox-directory portal` |
 | Directory | editors grant and revoke; `/api/world/portal`; pairing | `cargo test -p vox-directory editors` |
 | vox-art, vox-graph | golden voxel hashes, native and wasm | `cargo test -p vox-art`, `cargo test -p vox-graph` |
-| Bridge | Rust samples parsed by the TypeScript types | `cargo test -p vox-world bridge && (cd apps/site && bun test)` |
+| Bridge | Rust samples parsed by the TypeScript types; over-size and unknown-field commands refused; no raw HTML in `features/editor` | `cargo test -p vox-world bridge && (cd apps/site && bun test)` |
 | Page | builds | `cd apps/site && bun run build` |
 | End to end | Playwright: sign in, open `/edit`, place a portal, a second page sees it | `tools/test/editor_e2e.py` |
 
@@ -344,3 +386,40 @@ Each ships on its own; dependencies in brackets.
 - Does the editor need a **read-only** mode for anyone (watch the editing, no rights), or is
   `/play` enough?
 - The edit camera flies: should a world be able to switch flying off for non-editors?
+
+## Stress Test Results: the world editor (2026-11-27)
+
+### Resolved decisions
+- **Build flooding**: at most 32,768 changed blocks, applied 4,096 a tick, heavily changed
+  chunks resent whole. A big build no longer stalls the world thread or sends megabytes of edits.
+- **One id for player portals**: the directory row id (`Portal.key`, `Dest::Pair { key }`);
+  worlds reconcile with the directory on each rules fetch and after a restore.
+- **Charging Authority**: off the world thread, idempotency key, re-check then refund on
+  failure, 5 s timeout (`Unavailable`), reconciliation as the backstop.
+- **Revoked rights**: advanced edits ask the directory each time (5 s cache, fail closed);
+  basic edits keep the 30 s rules window that block edits already have.
+- **Saving and restore**: an `entity_edits` log sharing `seq`, written in the same `flush()`
+  transaction; `--restore-at` replays both logs.
+- **Concurrent edits and undo**: `expect` on `Put` and `Remove` (`Changed` when stale); Build
+  undo leaves blocks others changed.
+- **The bridge**: no new authority under the existing content policy; 64 KB cap, unknown fields
+  refused, edit mode only, world text only as React text (grep test), the recipe parser uses
+  the server's caps.
+- **Joining**: entities in batches of 512, nearest zone first, 64 KB a message; streaming by
+  view radius waits for world-scaling phase 3.
+
+### Changes made
+- Portal identity, `Dest::Pair`, `expect`, `Changed` and `Unavailable`, the entity log, build
+  caps, bridge limits, join batching, live `Settings`, and the note on `Welcome.settings`
+  (the server turns away other protocols, so it is not about older clients).
+
+### Deferred
+- Streaming entities by view radius (world-scaling phase 3).
+- Build as a structure version (world-format phase 6).
+- The four open questions above.
+
+### Confidence
+- Overall: **medium-high**. The editor's own design is sound; the risk is size: four sub-epics,
+  two of them new crates (`vox-art`, `vox-graph`), before the full editor exists. Phase 3 gives
+  a usable editor (portals, settings, spawn, objective) without props or nodes, which limits
+  the risk.
