@@ -1368,9 +1368,15 @@ pub fn weather_look(
     }
 }
 
-/// The world's ground relief, handed to the block material when it changes (a new world, or
-/// the blocks' material made after the settings came).
-pub fn relief_to_blocks(out: Res<Outdoors>, blocks: Option<Res<crate::blocks::Blocks>>, mut mats: ResMut<Assets<crate::blocks::BlockMaterial>>) {
+/// The world's ground relief, and the water on the ground where you are, handed to the block
+/// material when they change (a new world, the weather, or the blocks' material made after the
+/// settings came).
+pub fn relief_to_blocks(
+    out: Res<Outdoors>,
+    w: Res<WorldClient>,
+    blocks: Option<Res<crate::blocks::Blocks>>,
+    mut mats: ResMut<Assets<crate::blocks::BlockMaterial>>,
+) {
     let Some(blocks) = blocks else { return };
     let (dip, at) = match out.relief {
         Some(r) => (
@@ -1379,10 +1385,27 @@ pub fn relief_to_blocks(out: Res<Outdoors>, blocks: Option<Res<crate::blocks::Bl
         ),
         None => (0.0, UVec4::ZERO),
     };
-    let stale = mats.get(&blocks.world_solid).is_some_and(|m| m.extension.relief.x != dip || m.extension.relief_at != at);
+    // wet: rain falling now, or water left on the ground
+    let water = match w.air() {
+        Some(a) => {
+            let rain = if a.rain.is_finite() { a.rain.max(0.0) } else { 0.0 };
+            let fill = if a.puddles.is_finite() { a.puddles.clamp(0.0, 1.0) } else { 0.0 };
+            let wet = (fill * 5.0 + (rain / 1.5).min(1.0) * 0.6).min(1.0);
+            Vec4::new(fill, wet, if a.temperature < 0.0 { 1.0 } else { 0.0 }, rain.min(50.0))
+        }
+        None => Vec4::ZERO,
+    };
+    // small changes wait, so the material isn't sent again every frame as puddles creep
+    let stale = mats.get(&blocks.world_solid).is_some_and(|m| {
+        let e = &m.extension;
+        // (the rain rate only sets how busy the rings are: a coarser step will do)
+        let d = (e.water - water).abs();
+        e.relief.x != dip || e.relief_at != at || d.x.max(d.y) > 0.01 || d.w > 0.25 || e.water.z != water.z
+    });
     if stale && let Some(mut m) = mats.get_mut(&blocks.world_solid) {
         m.extension.relief.x = dip;
         m.extension.relief_at = at;
+        m.extension.water = water;
     }
 }
 

@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped whenever these messages change in a way old players can't read. 6: travel by the
 /// server (`Through`, `Travel`; `Notice` came after it); 7: voice (`ToServer::Voice`,
-/// `ToClient::Voice`).
-pub const PROTOCOL: u32 = 7;
+/// `ToClient::Voice`); 8: the ground's water in weather keyframes (`Keyframe::ground`).
+pub const PROTOCOL: u32 = 8;
 
 /// Voice channel: heard by players near the speaker.
 pub const VOICE_NEARBY: u8 = 0;

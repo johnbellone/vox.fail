@@ -17,6 +17,10 @@
 // vox_core::relief, version 1), tilt the surface's normal by their slope and darken the
 // hollows. They fade out where a wall or block is near (the corner shading says so) and in the
 // distance, where they would only shimmer.
+//
+// When it rains the tops of blocks get wet (darker, shinier), and water stands in the dips:
+// below a waterline set by how full the weather says the ground is, less what the block
+// drinks, the surface is a flat mirror with rain rings on it, or ice when it's freezing.
 
 import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -39,6 +43,35 @@ import bevy_pbr::render::pbr_bindings;
 // ground relief: the seed, the world's origin on the map (x, z blocks, two's complement), the
 // version
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> relief_at: vec4<u32>;
+// water on the ground where you are (the weather's): x how full the dips are, y how wet the
+// ground is (0-1), z 1 when it's frozen, w the rain falling (mm/h)
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var<uniform> water: vec4<f32>;
+
+// Rain landing in a puddle at p (blocks): rings spreading from where drops fall, as a slope.
+// Two staggered layers of half-block cells, each with a drop now and then (more cells and
+// sooner in heavier rain).
+fn rain_rings(p: vec2<f32>, t: f32, rate: f32) -> vec2<f32> {
+    var g = vec2(0.0);
+    let busy = clamp(rate / 3.0, 0.15, 1.0);
+    let period = mix(2.5, 0.8, clamp(rate / 6.0, 0.0, 1.0));
+    for (var l = 0u; l < 2u; l++) {
+        let q = p * 2.0 + vec2(f32(l) * 0.37, f32(l) * 0.71);
+        let cell = floor(q);
+        let h = mix32((bitcast<u32>(i32(cell.x)) * 0x9e3779b1u) ^ mix32(bitcast<u32>(i32(cell.y)) ^ (l * 0x632be5abu)));
+        let r1 = f32(h & 0xffffu) / 65535.0;
+        let r2 = f32(h >> 16u) / 65535.0;
+        if r2 > busy {
+            continue;
+        }
+        let phase = fract(t / period + r1);
+        let d = q - (cell + vec2(0.25 + 0.5 * r1, 0.25 + 0.5 * r2));
+        let dist = length(d);
+        let x = (dist - phase * 0.45) / 0.05;
+        let wave = sin(x * 3.14159) * exp(-x * x) * (1.0 - phase);
+        g += d / max(dist, 1e-4) * wave * 0.25;
+    }
+    return g;
+}
 
 // ---- ground relief: vox_core::relief, version 1. The hashes must stay bit for bit the same
 // as there (u32 arithmetic wraps in both); the blend is smooth floating point, within about
@@ -195,26 +228,72 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     pbr_input.N = apply_normal_mapping(flags, tbn, double_sided, is_front, nt);
     }
     @if(VERTEX_UVS_B) {
+    let tile = textureSampleGrad(height_tex, height_smp, in.uv, ddx, ddy);
+    let top = vertex_output.world_normal.y > 0.5;
+    // wet tops darken (porous ground, which drinks the rain, the most) and shine
+    if top && water.y > 0.0 {
+        let soak = tile.a;
+        let bc = pbr_input.material.base_color;
+        pbr_input.material.base_color = vec4(bc.rgb * (1.0 - water.y * (0.12 + 0.25 * soak)), bc.a);
+        pbr_input.material.perceptual_roughness *= 1.0 - water.y * (0.65 - 0.3 * soak);
+    }
     // ground relief, on the tops of blocks that have it (the tile data's blue)
-    let dip = relief.x * textureSampleGrad(height_tex, height_smp, in.uv, ddx, ddy).b;
-    if dip > 0.0 && vertex_output.world_normal.y > 0.5 {
+    let dip = relief.x * tile.b;
+    if dip > 0.0 && top {
         let size = max(relief.y, 1e-3);
         // gone where a pixel covers more than about a quarter of a block (it would shimmer),
-        // and where the corner shading says a wall or block is close (ground meets it flat)
+        // and where the corner shading says a wall or block is close (ground meets it flat);
+        // puddles, being broad and flat, show further off
         let fade = 1.0 - smoothstep(0.08, 0.3, foot / size);
+        let far = 1.0 - smoothstep(0.3, 1.2, foot / size);
         let pin = smoothstep(0.82, 1.0, vertex_output.color.r);
         let k = dip * fade * pin;
-        if k > 1e-4 {
+        // how much of the dips hold water on this ground: what the rain left, less what the
+        // ground drinks (the tile data's alpha)
+        let standing = water.x * (1.0 - tile.a);
+        let wet_dips = standing > 0.001 && pin * far > 0.0;
+        if k > 1e-4 || wet_dips {
             let p = in.world_position.xz / size;
-            let e = 1.0 / 16.0;
             let d0 = relief_depth(p);
-            let g = vec2(relief_depth(p + vec2(e, 0.0)) - d0, relief_depth(p + vec2(0.0, e)) - d0) / e;
-            // the ground is k * depth below the top, so it leans away from where depth grows
-            pbr_input.N = normalize(pbr_input.N + vec3(g.x, 0.0, g.y) * k);
-            // and dust settles in the hollows: up to 18% darker at the deepest (k / relief.x is
-            // this block's share of the world's deepest dip, faded and pinned)
-            let dark = 0.18 * d0 * k / relief.x;
-            pbr_input.material.base_color = vec4(pbr_input.material.base_color.rgb * (1.0 - dark), pbr_input.material.base_color.a);
+            if k > 1e-4 {
+                let e = 1.0 / 16.0;
+                let g = vec2(relief_depth(p + vec2(e, 0.0)) - d0, relief_depth(p + vec2(0.0, e)) - d0) / e;
+                // the ground is k * depth below the top, so it leans away from where depth grows
+                pbr_input.N = normalize(pbr_input.N + vec3(g.x, 0.0, g.y) * k);
+                // and dust settles in the hollows: up to 18% darker at the deepest (k / relief.x
+                // is this block's share of the world's deepest dip, faded and pinned)
+                let dark = 0.18 * d0 * k / relief.x;
+                pbr_input.material.base_color = vec4(pbr_input.material.base_color.rgb * (1.0 - dark), pbr_input.material.base_color.a);
+            }
+            if wet_dips {
+                // a puddle wherever the ground is deeper than the waterline: the deepest parts
+                // of the hollows first, spreading out as it fills. Most of a hollow is shallow
+                // (depth is a squared bowl), so the line starts at a third of the deepest dip:
+                // brimming dips cover every hollow, half-full ones the middles of the deeper
+                let puddle = smoothstep(0.0, 0.04, d0 - (1.0 - standing) * 0.35) * pin * far;
+                if puddle > 0.0 {
+                    var n = vec3(0.0, 1.0, 0.0);
+                    let frozen = water.z > 0.5;
+                    // rings are fine detail: they go where the relief's tilt does, before they
+                    // would sparkle on the mirror
+                    if !frozen && water.w > 0.05 && fade > 0.0 {
+                        let r = rain_rings(p, globals.time, water.w) * fade;
+                        n = normalize(vec3(r.x, 1.0, r.y));
+                    }
+                    pbr_input.N = normalize(mix(pbr_input.N, n, puddle));
+                    let bc = pbr_input.material.base_color;
+                    if frozen {
+                        // ice: pale and smooth, no rings
+                        pbr_input.material.base_color = vec4(mix(bc.rgb, vec3(0.78, 0.84, 0.88), puddle * 0.45), bc.a);
+                        pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.12, puddle);
+                    } else {
+                        // water: the ground seen darkly through it, and a mirror on top
+                        pbr_input.material.base_color = vec4(mix(bc.rgb, bc.rgb * 0.3, puddle), bc.a);
+                        pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.02, puddle);
+                        pbr_input.material.metallic = mix(pbr_input.material.metallic, 0.0, puddle);
+                    }
+                }
+            }
         }
     }
     }

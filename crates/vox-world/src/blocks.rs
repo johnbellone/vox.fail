@@ -69,7 +69,7 @@ pub struct BlockDef {
     /// `vox_core::relief::MAX_DIP`), where the world has relief (`docs/design/ground-relief.md`)
     #[serde(default)]
     pub relief: f32,
-    /// how much rain it drinks, 0-1 (for puddles; not drawn yet)
+    /// how much rain it drinks, 0-1: what it doesn't stands in puddles in its dips
     #[serde(default)]
     pub soak: f32,
 }
@@ -205,7 +205,10 @@ pub fn build_atlas(pal: &Palette, tiles: &[(String, TilePixels)]) -> Atlas {
         let def = owner(pal, name);
         let bump = def.map(|d| d.bump).unwrap_or(1.0);
         // relief belongs to tops: the block whose top this tile is
-        let relief = pal.defs.iter().find(|d| d.top == *name).map_or(0.0, |d| d.relief.clamp(0.0, 1.0));
+        let top_of = pal.defs.iter().find(|d| d.top == *name);
+        let relief = top_of.map_or(0.0, |d| d.relief.clamp(0.0, 1.0));
+        // what doesn't drink the rain stands in puddles (built things: all of it)
+        let soak = top_of.map_or(0.0, |d| d.soak.clamp(0.0, 1.0));
         let (rough, metal) = def.map(|d| (d.roughness, d.metallic)).unwrap_or((0.85, 0.0));
         let (cx, cy) = ((i % COLS) * CELL, (i / COLS) * CELL);
         let at = |x: isize, y: isize| -> usize { (y.rem_euclid(TILE as isize) as usize) * TILE + x.rem_euclid(TILE as isize) as usize };
@@ -230,8 +233,9 @@ pub fn build_atlas(pal: &Palette, tiles: &[(String, TilePixels)]) -> Atlas {
                 let g = t.glow[s];
                 glow[o] = [lin(p[0]) * g, lin(p[1]) * g, lin(p[2]) * g, 1.0];
                 // green: how deep this tile's parallax goes (its bump, capped); blue: how far the
-                // ground dips where this is a block's top (its relief)
-                height[o] = [t.height[s], (bump / 1.5).clamp(0.0, 1.0), relief, 1.0];
+                // ground dips where this is a block's top (its relief); alpha: how much rain it
+                // drinks (its soak)
+                height[o] = [t.height[s], (bump / 1.5).clamp(0.0, 1.0), relief, soak];
             }
         }
         let (u0, v0) = ((cx + PAD) as f32 + 0.5, (cy + PAD) as f32 + 0.5);
@@ -246,7 +250,7 @@ pub fn build_atlas(pal: &Palette, tiles: &[(String, TilePixels)]) -> Atlas {
         normal: mips(normal, w, h, |p| [unorm(p[0]), unorm(p[1]), unorm(p[2]), 255], true),
         rough: mips(mr, w, h, |p| [0, unorm(p[1]), unorm(p[2]), 255], false),
         glow: mips(glow, w, h, |p| [srgb(p[0]), srgb(p[1]), srgb(p[2]), 255], false),
-        heights: mips(height, w, h, |p| [unorm(p[0]), unorm(p[1]), unorm(p[2]), 255], false),
+        heights: mips(height, w, h, |p| [unorm(p[0]), unorm(p[1]), unorm(p[2]), unorm(p[3])], false),
         rects,
     }
 }
@@ -711,6 +715,7 @@ pub fn setup(
                     // none until a world asks for it (`outdoors::relief_to_blocks`)
                     relief: Vec4::new(0.0, pal.size, 0.0, 0.0),
                     relief_at: UVec4::ZERO,
+                    water: Vec4::ZERO,
                 },
             });
             let water = water_mats.add(WaterMaterial {
@@ -775,6 +780,10 @@ pub struct BlockExt {
     /// bits) and the function's version
     #[uniform(105)]
     pub relief_at: UVec4,
+    /// water on the ground where you are: how full the dips are, how wet the ground is, 1 when
+    /// frozen, the rain falling (mm/h)
+    #[uniform(106)]
+    pub water: Vec4,
 }
 
 impl bevy::pbr::MaterialExtension for BlockExt {
