@@ -358,7 +358,7 @@ pub fn gizmo(
         } else if d.now != d.start {
             // released: one Set, expecting the seq the page last saw, so a change made by
             // someone else in the meantime is refused rather than overwritten
-            send_edit(&w, &mut state, &mut outbox, &Command::Set { entity: d.entity.0, component: d.now, expect: Some(d.seq), r#ref: None });
+            send_edit(&w, &entities, &mut state, &mut outbox, &Command::Set { entity: d.entity.0, component: d.now, expect: Some(d.seq), r#ref: None });
         }
     } else if actions.just_pressed(Action::Break)
         && !state.pointer_claimed

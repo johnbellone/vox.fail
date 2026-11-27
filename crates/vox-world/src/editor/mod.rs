@@ -1,7 +1,7 @@
 //! The in-world editor: the edit mode a player turns on in a world they may change. It is
 //! made of the [`bridge`] (the messages between the page and the client), the [`camera`] (the
 //! edit flight and fly-to), picking, the ghosts and the gizmos (the handles that move, turn and
-//! resize the selection), and, in later steps, undo.
+//! resize the selection), and undo and redo of the author's own changes ([`undo`]).
 //!
 //! [`EditorPlugin`] is added only when the client starts in edit mode. Its systems take the
 //! page's commands from [`EditorInbox`], send the entity changes to the server, and put what
@@ -22,6 +22,7 @@ pub mod camera;
 pub mod gizmo;
 pub mod ghost;
 pub mod pick;
+pub mod undo;
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -84,8 +85,8 @@ pub struct EditorState {
     pub fly_to: Option<u32>,
     /// the id of the next Put or Remove sent (0 is never used: it stands for "no command")
     pub next_id: u32,
-    /// the commands not built yet were logged (once, not for each)
-    noted: bool,
+    /// the author's own changes as undo steps, and the undo or redo on its way
+    history: undo::History,
     /// the seq of each entity as the page last heard it
     sent: BTreeMap<EntityId, u64>,
     /// the world has said Ready: nothing is reported to the page before it, so the first report
@@ -108,6 +109,7 @@ impl EditorState {
     pub(crate) fn reset(&mut self) {
         self.sent.clear();
         self.tracked.clear();
+        self.history.clear();
         self.live = false;
         self.snapshot_due = false;
         // a block chosen in one world is not carried into another
@@ -157,6 +159,7 @@ impl EditorState {
     /// The event for a refusal of the edit numbered `id`. Unavailable keeps the edit tracked, so
     /// the page's retry reuses its number; any other reason ends it.
     pub(crate) fn refused(&mut self, id: u32, why: EntityWhy) -> Event {
+        self.history.refused(id, why);
         let mut page = None;
         if let Some(i) = self.tracked.iter().position(|t| t.id == id) {
             page = Some(self.tracked[i].page);
@@ -173,6 +176,7 @@ impl EditorState {
     /// a `ref` (an edit without one, or one forgotten, has nobody waiting). The edit is
     /// forgotten.
     pub(crate) fn done(&mut self, id: u32, entity: EntityId, seq: u64) -> Option<Event> {
+        self.history.done(id, entity, seq);
         let i = self.tracked.iter().position(|t| t.id == id)?;
         let t = self.tracked.remove(i)?;
         Some(Event::Done { r#ref: t.page, entity: entity.0, seq })
@@ -257,7 +261,12 @@ fn apply_commands(
     mut state: ResMut<EditorState>,
     mut outbox: ResMut<EditorOutbox>,
     w: ResMut<WorldClient>,
+    entities: Res<WorldEntities>,
 ) {
+    // a link that dropped takes its undo or redo on its way back: the answer will not come
+    if !w.linked() {
+        state.history.link_lost();
+    }
     for command in inbox.0.drain(..) {
         match &command {
             Command::Tool { tool } => {
@@ -292,11 +301,12 @@ fn apply_commands(
                 state.fly_to = Some(*entity);
                 continue;
             }
-            Command::Undo {} | Command::Redo {} => {
-                if !state.noted {
-                    state.noted = true;
-                    crate::note!("[editor] undo and redo are not in the editor yet");
-                }
+            Command::Undo {} => {
+                send_history(&w, &mut state, &mut outbox, true);
+                continue;
+            }
+            Command::Redo {} => {
+                send_history(&w, &mut state, &mut outbox, false);
                 continue;
             }
             Command::Build { .. } => {
@@ -310,15 +320,55 @@ fn apply_commands(
             }
             Command::Create { .. } | Command::Set { .. } | Command::Remove { .. } => {}
         }
-        send_edit(&w, &mut state, &mut outbox, &command);
+        send_edit(&w, &entities, &mut state, &mut outbox, &command);
+    }
+}
+
+/// Undoes (or redoes) the author's newest step: sends the change that reverts it, numbered
+/// with no `ref`. Refused as `Busy` while another undo or redo is on its way, and as `Nothing`
+/// when there is no step to take. The step is only taken once the link is up.
+fn send_history(w: &WorldClient, state: &mut EditorState, outbox: &mut EditorOutbox, undo: bool) {
+    if !w.linked() {
+        outbox.0.push(Event::Refused {
+            id: 0,
+            r#ref: None,
+            why: "Offline".into(),
+            text: "the world isn't connected right now".into(),
+        });
+        return;
+    }
+    if state.history.in_flight() {
+        outbox.0.push(Event::Refused {
+            id: 0,
+            r#ref: None,
+            why: "Busy".into(),
+            text: "an undo or redo is still on its way".into(),
+        });
+        return;
+    }
+    let id = state.fresh_id();
+    let Some(command) = state.history.take(id, undo) else {
+        let text = if undo { "nothing to undo" } else { "nothing to redo" };
+        outbox.0.push(Event::Refused { id: 0, r#ref: None, why: "Nothing".into(), text: text.into() });
+        return;
+    };
+    if let Some(msg) = to_server(&command, id) {
+        w.send_entity(&msg);
     }
 }
 
 /// Sends an entity command (`Create`, `Set` or `Remove`) to the server, numbered for its `ref`
 /// (see [`EditorState::slot`]). Without a link it is refused to the page as `Offline`; an edit
 /// whose `ref` is already in flight is not sent again. Used by the page's commands and by the
-/// ghost's click, so both take the same path.
-pub(crate) fn send_edit(w: &WorldClient, state: &mut EditorState, outbox: &mut EditorOutbox, command: &Command) {
+/// gizmo's drag, so both take the same path. `entities` is what the edit's `before` is read
+/// from, at the moment it is sent.
+pub(crate) fn send_edit(
+    w: &WorldClient,
+    entities: &WorldEntities,
+    state: &mut EditorState,
+    outbox: &mut EditorOutbox,
+    command: &Command,
+) {
     let page = command.page_ref();
     if !w.linked() {
         outbox.0.push(Event::Refused {
@@ -342,8 +392,33 @@ pub(crate) fn send_edit(w: &WorldClient, state: &mut EditorState, outbox: &mut E
             return;
         }
     };
-    if let Some(msg) = to_server(command, id) {
-        w.send_entity(&msg);
+    let Some(msg) = to_server(command, id) else { return };
+    let before = match command {
+        Command::Set { entity, .. } | Command::Remove { entity, .. } => {
+            entities.map.get(&EntityId(*entity)).map(|(_, c)| c.clone())
+        }
+        _ => None,
+    };
+    let after = match command {
+        Command::Create { component, .. } | Command::Set { component, .. } => Some(component.clone()),
+        _ => None,
+    };
+    if undoable(command, &before) {
+        state.history.sent_own(id, before, after);
+    }
+    w.send_entity(&msg);
+}
+
+/// Whether an own change can become an undo step. Undoing it names the state it started from,
+/// so a Set or Remove of an entity this client never saw (no `before`) is sent but not recorded:
+/// its undo would send a Remove or nothing at all. Nor is one sent without `expect`: the server
+/// applies it whatever the entity holds, so the `before` read here may not be what it replaced.
+/// A Create has no `before` by nature.
+fn undoable(command: &Command, before: &Option<Component>) -> bool {
+    match command {
+        Command::Create { .. } => before.is_none(),
+        Command::Set { expect, .. } | Command::Remove { expect, .. } => before.is_some() && expect.is_some(),
+        _ => false,
     }
 }
 
@@ -534,5 +609,18 @@ mod tests {
         assert_eq!(st.block, None);
         st.ready();
         assert!(st.snapshot_due && st.live);
+    }
+
+    #[test]
+    fn editor_undo_only_records_a_change_whose_before_is_known() {
+        let set = Command::Set { entity: 4, component: spawn(2.0), expect: Some(3), r#ref: None };
+        let remove = Command::Remove { entity: 4, expect: Some(3), r#ref: None };
+        let create = Command::Create { component: spawn(2.0), r#ref: None };
+        assert!(undoable(&set, &Some(spawn(1.0))));
+        assert!(!undoable(&set, &None));
+        assert!(undoable(&remove, &Some(spawn(1.0))));
+        assert!(!undoable(&remove, &None));
+        assert!(undoable(&create, &None));
+        assert!(!undoable(&Command::Tool { tool: Tool::Select }, &None));
     }
 }
