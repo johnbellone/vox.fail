@@ -120,8 +120,8 @@ def check(cid, body=None):
         bad.append("its data/characters.json entry has no 'about'")
     if not i["head_fit"]:
         bad.append("no entry in data/head_fit.json (hats won't sit on it)")
-    if not i["surfaces"]:
-        bad.append("no entry in data/surfaces.json")
+    if not i["surfaces"] and cid not in _surface_skip():
+        bad.append("no entry in data/surfaces.json (or the id in guess_surfaces.py's SKIP, with a reason)")
     manual = (ROOT / "docs/avatar/manual.md").read_text()
     if f"`{cid}.glb`" not in manual:
         bad.append(f"docs/avatar/manual.md doesn't list `{cid}.glb`")
