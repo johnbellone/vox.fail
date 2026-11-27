@@ -220,13 +220,13 @@ jobs:
           }
           # Checks one --check run: the version line, and that root: is under the package folder.
           function Assert-Check([string]$label, [string]$text, [string]$folder) {
-            if (-not $text.Contains("vox-client $env:VERSION")) { throw "$label: --check does not print 'vox-client $env:VERSION'" }
+            if (-not $text.Contains("vox-client $env:VERSION")) { throw "${label}: --check does not print 'vox-client $env:VERSION'" }
             $line = ($text -split "`r?`n" | Where-Object { $_.StartsWith('root: ') } | Select-Object -First 1)
-            if (-not $line) { throw "$label: --check printed no 'root:' line" }
+            if (-not $line) { throw "${label}: --check printed no 'root:' line" }
             $root = $line.Substring(6).Trim()
             if ($root.StartsWith('\\?\')) { $root = $root.Substring(4) }
             $expected = Get-LongPath $folder
-            if (-not $root.StartsWith($expected, [StringComparison]::OrdinalIgnoreCase)) { throw "$label: root '$root' is not under '$expected'" }
+            if (-not $root.StartsWith($expected, [StringComparison]::OrdinalIgnoreCase)) { throw "${label}: root '$root' is not under '$expected'" }
           }
           # (a) the portable zip
           $zipDir = Join-Path $env:RUNNER_TEMP 'zip-smoke'
