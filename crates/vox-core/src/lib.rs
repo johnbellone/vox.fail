@@ -19,6 +19,7 @@
 
 pub mod auth;
 pub mod body;
+pub mod edit;
 pub mod entitle;
 pub mod entity;
 pub mod level;
