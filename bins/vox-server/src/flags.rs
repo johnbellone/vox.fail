@@ -3,8 +3,10 @@
 //!
 //! `--directory-url` (with `VOX_WORLD_SECRET`), `--max-players`, `--max-watchers`,
 //! `--trust-moves`, `--voice-radius <blocks>`, `--directory-key <hex or file>` with `--guests`, `--no-snapshots`,
-//! `--oxen [<binary>]` (or `VOX_OXEN`), `--snapshot-every <seconds>`. Snapshots go next to the
-//! world's database (`<db>.snapshots/`) unless turned off or the world is in memory.
+//! `--oxen [<binary>]` (or `VOX_OXEN`), `--snapshot-every <seconds>`, and `--editors-all` (local play and tests
+//! only, refused with a directory: every signed-in player may make advanced edits, with no question to the
+//! directory). Snapshots go next to the world's database (`<db>.snapshots/`) unless turned off or the world is in
+//! memory.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -36,6 +38,12 @@ pub fn apply(cfg: &mut Config, args: &[String]) -> Result<(), String> {
     }
     // test and automation worlds: positions as players report them, unchecked
     cfg.trust_moves = has("--trust-moves");
+    // local play and tests only: every signed-in player is an editor (see `Config::editors_all`).
+    // With a directory it would make every account an editor, so the two are refused together.
+    cfg.editors_all = has("--editors-all");
+    if cfg.editors_all && (has("--directory-url") || has("--directory-key")) {
+        return Err("--editors-all is for local play and tests; not with a directory".into());
+    }
     // sign-in: the directory's public key (hex, or a file holding it)
     if let Some(k) = arg("--directory-key") {
         let hex = std::fs::read_to_string(&k).unwrap_or(k);
@@ -95,5 +103,19 @@ mod tests {
         assert_eq!(c.snapshots, None);
         let mut c = Config::new("a.db", vec![]);
         assert!(apply(&mut c, &args("x --directory-key abc")).is_err());
+    }
+
+    #[test]
+    fn editors_all_is_refused_with_a_directory() {
+        let mut c = Config::new("a.db", vec![]);
+        apply(&mut c, &args("x --editors-all")).unwrap();
+        assert!(c.editors_all);
+        let err = apply(&mut c, &args("x --editors-all --directory-url http://127.0.0.1:7700")).unwrap_err();
+        assert_eq!(err, "--editors-all is for local play and tests; not with a directory");
+        let mut c = Config::new("a.db", vec![]);
+        assert!(apply(&mut c, &args("x --editors-all --directory-key abc")).is_err());
+        // the refusal holds whichever order the flags come in
+        let mut c = Config::new("a.db", vec![]);
+        assert!(apply(&mut c, &args("x --directory-url http://127.0.0.1:7700 --editors-all")).is_err());
     }
 }

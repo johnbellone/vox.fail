@@ -60,6 +60,10 @@ pub struct Ctx<'a> {
     pub plots: &'a [PlotArea],
     /// Entities already in the target zone.
     pub zone_entities: usize,
+    /// An existing entity is moving into a zone other than its own. The server works the zones
+    /// out from the two positions (vox-core keeps no zone grid), and the target zone's cap then
+    /// applies as it does to a new entity.
+    pub moves_zone: bool,
     /// The player's portals already in the target plot.
     pub plot_portals: usize,
     /// Spawn points in the world now (the last one may not be removed).
@@ -161,6 +165,11 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
     let Some(account) = ctx.account else {
         return Err(EntityWhy::NotYours);
     };
+    // An entity keeps its kind: a settings entity is never made a spawn, nor a portal a spawn
+    // (which would drop the portal's key and dodge its charge).
+    if old.is_some_and(|o| std::mem::discriminant(o) != std::mem::discriminant(new)) {
+        return Err(EntityWhy::NotYours);
+    }
 
     if let Component::Portal(p) = new {
         // The key a portal keeps: an old portal's, or none for a new one.
@@ -227,7 +236,8 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
         check_position(ctx, at)?;
     }
 
-    if old.is_none() && ctx.zone_entities >= MAX_ZONE_ENTITIES {
+    // A new entity, or one moving into another zone, needs room in the zone it lands in.
+    if (old.is_none() || ctx.moves_zone) && ctx.zone_entities >= MAX_ZONE_ENTITIES {
         return Err(EntityWhy::TooMany);
     }
 
@@ -303,6 +313,7 @@ mod tests {
             bounds: Bounds::default(),
             plots,
             zone_entities: 0,
+            moves_zone: false,
             plot_portals: 0,
             spawns: 2,
             ground,
@@ -649,5 +660,47 @@ mod tests {
         let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
         let p = Component::Portal(portal([f32::NAN, 0.0, 5.5], world_dest()));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn settings_cannot_become_a_spawn() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([0.5, 0.0, 0.5]), &plots, &floor);
+        let old = Component::Settings(Settings { json: "{}".into() });
+        let new = Component::Spawn(Spawn { at: [0.5, 0.0, 0.5], yaw: 0.0 });
+        assert_eq!(check_put(&c, Some(&old), &new), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn last_spawn_cannot_become_a_portal() {
+        let plots: [PlotArea; 0] = [];
+        let mut c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        c.spawns = 1;
+        let old = Component::Spawn(Spawn { at: [5.5, 0.0, 5.5], yaw: 0.0 });
+        let new = Component::Portal(portal([5.5, 0.0, 5.5], url_dest(":7781")));
+        assert_eq!(check_put(&c, Some(&old), &new), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn keyed_portal_cannot_become_a_spawn() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let old = Component::Portal(keyed([5.5, 0.0, 5.5], world_dest(), 3));
+        let new = Component::Spawn(Spawn { at: [5.5, 0.0, 5.5], yaw: 0.0 });
+        assert_eq!(check_put(&c, Some(&old), &new), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn moving_into_a_full_zone_is_too_many() {
+        let plots: [PlotArea; 0] = [];
+        let mut c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        c.zone_entities = MAX_ZONE_ENTITIES;
+        let old = Component::Portal(keyed([5.5, 0.0, 5.5], world_dest(), 3));
+        let moved = Component::Portal(keyed([6.5, 0.0, 5.5], world_dest(), 3));
+        c.moves_zone = true;
+        assert_eq!(check_put(&c, Some(&old), &moved), Err(EntityWhy::TooMany));
+        // within its own zone, a full zone is no obstacle (the entity is already counted there)
+        c.moves_zone = false;
+        assert_eq!(check_put(&c, Some(&old), &moved), Ok(()));
     }
 }

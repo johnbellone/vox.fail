@@ -320,6 +320,36 @@ pub(super) async fn ticket_office(tx: mpsc::Sender<Event>, mut trips: mpsc::Rece
     }
 }
 
+/// Asking the directory whether an account may make advanced edits here. Each question runs on
+/// its own task, so one slow answer holds nobody else up. Any failure (no answer in five
+/// seconds, an error, a non-200) is `None`, which the world refuses the edit for: advanced
+/// rights fail closed.
+pub(super) async fn editor_office(tx: mpsc::Sender<Event>, mut asks: mpsc::Receiver<Asking>, url: String, secret: String, world: String) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(5)).build() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("no link to the directory for editors: {e}"),
+    };
+    while let Some(ask) = asks.recv().await {
+        let (http, tx, url, secret, world) = (http.clone(), tx.clone(), url.clone(), secret.clone(), world.clone());
+        tokio::spawn(async move {
+            // the account is a number the world holds, not text from a player
+            let got = http.get(format!("{url}/api/world/{world}/editor?account={}", ask.account)).bearer_auth(&secret).send().await;
+            let editor = match got {
+                Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok().and_then(|v| v["editor"].as_bool()),
+                Ok(r) => {
+                    eprintln!("the directory gave no editor answer ({})", r.status());
+                    None
+                }
+                Err(e) => {
+                    eprintln!("can't reach the directory for an editor check: {e}");
+                    None
+                }
+            };
+            let _ = tx.send(Event::Editor { conn: ask.conn, account: ask.account, editor }).await;
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_parties;

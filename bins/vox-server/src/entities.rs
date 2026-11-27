@@ -6,9 +6,6 @@
 //! Rows hold postcard data (`vox_core::wire`), the same encoding the wire and the zones use.
 //! Loading checks every row again, so a bad row is skipped rather than trusted.
 
-// `seq_of` has no caller until the entity edits (`ToServer::Put`, `Remove`) are handled
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, Transaction, params};
@@ -140,8 +137,9 @@ impl Entities {
         self.map.get(&id).map(|(seq, _)| *seq)
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.map.is_empty()
+    /// How many entities lie in `zone` (the rules' cap is per zone).
+    pub(crate) fn zone_count(&self, zone: vox_format::ZoneKey) -> usize {
+        self.map.values().filter(|(_, c)| zone_key(c) == zone).count()
     }
 
     /// The portals that carry a directory key, for the directory's list (`wanted`, one

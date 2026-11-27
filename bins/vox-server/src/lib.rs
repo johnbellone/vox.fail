@@ -53,6 +53,7 @@ use rusqlite::{Connection, params};
 use tokio::sync::{mpsc, oneshot};
 use vox_core::{
     Bounds, Chunk, ChunkKey, Why, World,
+    entity::{Component, EntityId},
     weather::{Climate, Weather},
     wire::{self, Applied, MAX_MESSAGE, PROTOCOL, ToClient, ToServer},
     world::Bucket,
@@ -71,10 +72,15 @@ const MAX_VOICE_PER_SECOND: f32 = 60.0;
 const VOICE_BURST: f32 = 100.0;
 /// How long a new connection has to say hello.
 const HELLO_WITHIN: Duration = Duration::from_secs(10);
-/// How far (in blocks, from the eyes) a player may edit.
-pub const REACH: f32 = 16.0;
-/// Eye height above the feet, in blocks.
-const EYES: f32 = 3.2;
+/// Entity edits (`Put`, `Remove`) per second per player, and the burst allowed.
+const EDIT_RATE: f32 = 10.0;
+/// How long a directory answer on advanced rights (world editors) is kept. Negative answers
+/// are kept as long as positive ones: a newly granted editor waits up to this long for
+/// advanced edits, and a revoked one keeps them up to this long. Failures (no answer, a non-200,
+/// a timeout) are not kept at all, so the next edit asks again.
+const EDITOR_CACHE: Duration = Duration::from_secs(5);
+/// Rights questions waiting for the directory at most; past this an edit is refused.
+const ASKS_QUEUED: usize = 256;
 
 #[derive(Clone)]
 pub struct Config {
@@ -122,6 +128,9 @@ pub struct Config {
     pub world_secret: Option<String>,
     pub report_every: Duration,
     pub rules_every: Duration,
+    /// every signed-in player is an editor (advanced edits), with no question to the directory.
+    /// For local play and tests only: a live world asks the directory who may edit.
+    pub editors_all: bool,
 }
 
 impl Config {
@@ -151,6 +160,7 @@ impl Config {
             world_secret: None,
             report_every: Duration::from_secs(60),
             rules_every: Duration::from_secs(30),
+            editors_all: false,
         }
     }
 }
@@ -185,7 +195,34 @@ enum Event {
     Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>),
     /// the directory's answer for a trip: where to go, and the ticket (if it gave one)
     Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3] },
+    /// the directory's answer on whether an account may make advanced edits (None: no answer,
+    /// which refuses the edit)
+    Editor { conn: u64, account: u64, editor: Option<bool> },
     Shutdown,
+}
+
+/// A player's entity edit waiting for the directory to say whether they may make advanced
+/// edits.
+#[derive(Debug)]
+pub(crate) enum Edit {
+    /// place entity `entity` (None: a new one) as `component`
+    Put { entity: Option<EntityId>, expect: Option<u64>, component: Component },
+    /// remove entity `entity`
+    Remove { entity: EntityId, expect: Option<u64> },
+}
+
+/// An edit held while the directory answers, with the request id to refuse it under.
+#[derive(Debug)]
+pub(crate) struct Pending {
+    pub id: u32,
+    pub edit: Edit,
+}
+
+/// A question for the directory: may this account make advanced edits here? The answer comes
+/// back as [`Event::Editor`] for this connection.
+pub(crate) struct Asking {
+    pub conn: u64,
+    pub account: u64,
 }
 
 /// A trip through a portal to ask the directory a ticket for: who, where to (the portal's
@@ -211,6 +248,11 @@ pub struct Plot {
 }
 
 impl Plot {
+    /// The same area as vox-core's rules see it (for the entity checks).
+    fn area(&self) -> vox_core::edit::PlotArea {
+        vox_core::edit::PlotArea { x0: self.x0, z0: self.z0, x1: self.x1, z1: self.z1, builders: self.builders.clone() }
+    }
+
     fn from_json(v: &serde_json::Value) -> Option<Plot> {
         let i = |k: &str| v.get(k)?.as_i64().map(|n| n as i32);
         Some(Plot {
@@ -247,6 +289,7 @@ impl Server {
         };
         let (trip_tx, trip_rx) = mpsc::channel(TRIPS_QUEUED);
         let (goal_tx, goal_rx) = mpsc::channel(GOALS_QUEUED);
+        let (ask_tx, ask_rx) = mpsc::channel(ASKS_QUEUED);
         let link = match (&cfg.directory_url, &cfg.world_secret) {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone(), cfg.report_every, cfg.rules_every)),
             _ => None,
@@ -257,6 +300,7 @@ impl Server {
         if office.is_some() {
             state.trips = Some(trip_tx);
             state.goals = Some(goal_tx);
+            state.editors = Some(ask_tx);
         }
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
@@ -277,6 +321,7 @@ impl Server {
         }
         if let Some((url, secret, world)) = office {
             tokio::spawn(objective_reached(goal_rx, url.clone(), secret.clone(), world.clone()));
+            tokio::spawn(editor_office(tx.clone(), ask_rx, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(ticket_office(tx.clone(), trip_rx, url, secret, world));
         }
         Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)) })
@@ -342,6 +387,10 @@ struct Player {
     account: Option<u64>,
     /// blocks they placed since the last report
     placed: u32,
+    /// entity edits they may still make (a rate of their own, apart from block edits)
+    edits: Bucket,
+    /// the entity edit held while the directory answers on advanced rights (one at a time)
+    pending: Option<Pending>,
 }
 
 struct WorldState {
@@ -388,6 +437,10 @@ struct WorldState {
     goals: Option<mpsc::Sender<Vec<u64>>>,
     /// the world's entities (doorways, spawn, objective, settings), written with the blocks
     entities: entities::Entities,
+    /// where questions on advanced rights go (to the directory); None: no directory to ask
+    editors: Option<mpsc::Sender<Asking>>,
+    /// the directory's answers on advanced rights, by account, with when they came
+    editor_cache: HashMap<u64, (Instant, bool)>,
     /// the settings the ground, climate and sun were last built from
     applied: serde_json::Value,
     /// the settings moved on from what `meta('settings')` holds, so the next flush writes them

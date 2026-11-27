@@ -4,7 +4,8 @@
 #[allow(unused_imports)]
 use super::*;
 use crate::entities::{self, Entities};
-use vox_core::entity::{Component, Settings, Spawn};
+use vox_core::edit::{self, Ctx, EYES, PlotArea, REACH, Role};
+use vox_core::entity::{Component, EntityWhy, Portal, Settings, Spawn};
 use vox_core::portal::Door;
 use vox_core::wire::EntityChange;
 
@@ -129,6 +130,8 @@ impl WorldState {
             reached: false,
             goals: None,
             entities: ents,
+            editors: None,
+            editor_cache: HashMap::new(),
             applied: set,
             settings_unsaved: false,
         };
@@ -218,6 +221,7 @@ impl WorldState {
                         let _ = Self::send_to(&p.tx, &ToClient::Travel { url, ticket, arrive });
                     }
                 }
+                Event::Editor { conn, account, editor } => self.editor_answer(conn, account, editor),
                 Event::Shutdown => break,
             }
         }
@@ -338,13 +342,14 @@ impl WorldState {
         let at = now_unix();
         let mut changes = Vec::new();
         for id in stale {
-            self.seq += 1;
-            // the zone it leaves is changed for the next snapshot
-            if let Some((_, old)) = self.entities.map.get(&id) {
-                self.snap_changed.insert(entities::zone_key(old));
-            }
-            if self.entities.remove(self.seq, at, "directory".into(), id).is_some() {
-                changes.push(EntityChange { seq: self.seq, entity: id, component: None });
+            // the edit number is taken only once the change is made, so none is skipped
+            let seq = self.seq + 1;
+            let left = self.entities.map.get(&id).map(|(_, old)| entities::zone_key(old));
+            if self.entities.remove(seq, at, "directory".into(), id).is_some() {
+                self.seq = seq;
+                // the zone it leaves is changed for the next snapshot
+                self.snap_changed.extend(left);
+                changes.push(EntityChange { seq, entity: id, component: None });
             }
         }
         for (key, c) in wanted {
@@ -352,15 +357,15 @@ impl WorldState {
             if held.and_then(|id| self.entities.map.get(&id)).is_some_and(|(_, old)| *old == c) {
                 continue;
             }
-            self.seq += 1;
+            let seq = self.seq + 1;
             // the zones it leaves and enters are changed for the next snapshot
-            if let Some((_, old)) = held.and_then(|id| self.entities.map.get(&id)) {
-                self.snap_changed.insert(entities::zone_key(old));
-            }
-            self.snap_changed.insert(entities::zone_key(&c));
+            let left = held.and_then(|id| self.entities.map.get(&id)).map(|(_, old)| entities::zone_key(old));
             // None only when the id counter is spent: this portal is then not placed
-            if let Some(id) = self.entities.put(self.seq, at, "directory".into(), held, c.clone()) {
-                changes.push(EntityChange { seq: self.seq, entity: id, component: Some(c) });
+            if let Some(id) = self.entities.put(seq, at, "directory".into(), held, c.clone()) {
+                self.seq = seq;
+                self.snap_changed.extend(left);
+                self.snap_changed.insert(entities::zone_key(&c));
+                changes.push(EntityChange { seq, entity: id, component: Some(c) });
             }
         }
         // the entities changed: an Objective or Settings is taken up here too (the editor's Put
@@ -511,7 +516,8 @@ impl WorldState {
             moves.start(at, now);
         }
         let voice = Bucket::new(MAX_VOICE_PER_SECOND, VOICE_BURST);
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0 });
+        let edits = Bucket::new(EDIT_RATE, EDIT_RATE);
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None });
     }
 
     /// On to `url`, arriving at `arrive`: with a ticket from the directory when there is one to
@@ -618,16 +624,201 @@ impl WorldState {
         self.broadcast(&m, None);
     }
 
+    /// A player's `Put` or `Remove`: refused at once when they're over their edit rate or
+    /// already waiting on the directory, otherwise judged now, or, for advanced rights not yet
+    /// known, held while the directory answers (`editor_answer`).
+    fn entity_edit(&mut self, conn: u64, id: u32, edit: Edit) {
+        let now = self.started.elapsed().as_secs_f64();
+        let Some(p) = self.players.get_mut(&conn) else { return };
+        let (account, tx) = (p.account, p.tx.clone());
+        if !p.edits.take(now) || p.pending.is_some() {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::TooFast);
+        }
+        // a guest is judged as a builder, which the rules refuse
+        let Some(account) = account else {
+            return self.apply_entity_edit(conn, id, edit, Role::Builder);
+        };
+        if let Some(role) = self.role_of(account) {
+            return self.apply_entity_edit(conn, id, edit, role);
+        }
+        // advanced rights are asked of the directory; the edit waits for the answer
+        let asked = self.editors.as_ref().is_some_and(|asks| asks.try_send(Asking { conn, account }).is_ok());
+        if !asked {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
+        }
+        if let Some(p) = self.players.get_mut(&conn) {
+            p.pending = Some(Pending { id, edit });
+        }
+    }
+
+    /// What a signed-in account may do without asking: everyone (`--editors-all`), builders
+    /// (no directory to ask), or the answer kept for `EDITOR_CACHE`. None: ask the directory.
+    fn role_of(&self, account: u64) -> Option<Role> {
+        if self.cfg.editors_all {
+            return Some(Role::Editor);
+        }
+        if self.editors.is_none() {
+            return Some(Role::Builder);
+        }
+        self.editor_cache
+            .get(&account)
+            .filter(|(at, _)| at.elapsed() < EDITOR_CACHE)
+            .map(|(_, editor)| if *editor { Role::Editor } else { Role::Builder })
+    }
+
+    /// The directory answered whether `account` may make advanced edits (`None`: it did not
+    /// answer, which refuses the held edit). A held edit is then judged, as it would have been.
+    fn editor_answer(&mut self, conn: u64, account: u64, editor: Option<bool>) {
+        if let Some(e) = editor {
+            self.editor_cache.retain(|_, (at, _)| at.elapsed() < EDITOR_CACHE);
+            self.editor_cache.insert(account, (Instant::now(), e));
+        }
+        let Some(p) = self.players.get_mut(&conn) else { return };
+        let Some(pending) = p.pending.take() else { return };
+        let tx = p.tx.clone();
+        match editor {
+            None => self.refuse_entity(conn, &tx, pending.id, EntityWhy::Unavailable),
+            Some(true) => self.apply_entity_edit(conn, pending.id, pending.edit, Role::Editor),
+            Some(false) => self.apply_entity_edit(conn, pending.id, pending.edit, Role::Builder),
+        }
+    }
+
+    /// Tells the sender their edit was refused, and no one else.
+    fn refuse_entity(&mut self, conn: u64, tx: &mpsc::Sender<Message>, id: u32, why: EntityWhy) {
+        if !Self::send_to(tx, &ToClient::EntityRefused { id, why }) {
+            self.leave(conn);
+        }
+    }
+
+    /// Checks an edit against the rules, then makes it: a new edit number (taken only once the
+    /// change is made), the entity log, and the change to everyone. An Objective or Settings
+    /// change is taken up by the running world.
+    fn apply_entity_edit(&mut self, conn: u64, id: u32, edit: Edit, role: Role) {
+        let Some(p) = self.players.get(&conn) else { return };
+        let (account, at, name, tx) = (p.account, p.at, p.name.clone(), p.tx.clone());
+        if let Err(why) = self.judge(&edit, role, account, at) {
+            return self.refuse_entity(conn, &tx, id, why);
+        }
+        let seq = self.seq + 1;
+        let when = now_unix();
+        let (change, zones, touched) = match edit {
+            Edit::Put { entity, component, .. } => {
+                let old = entity.and_then(|e| self.entities.map.get(&e)).map(|(_, c)| c.clone());
+                let Some(eid) = self.entities.put(seq, when, name, entity, component.clone()) else {
+                    // no id left to give a new entity
+                    return self.refuse_entity(conn, &tx, id, EntityWhy::TooMany);
+                };
+                let mut zones = vec![entities::zone_key(&component)];
+                zones.extend(old.as_ref().map(entities::zone_key));
+                let touched = is_objective_or_settings(&component) || old.as_ref().is_some_and(is_objective_or_settings);
+                (EntityChange { seq, entity: eid, component: Some(component) }, zones, touched)
+            }
+            Edit::Remove { entity, .. } => {
+                let Some(old) = self.entities.remove(seq, when, name, entity) else {
+                    return self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
+                };
+                (EntityChange { seq, entity, component: None }, vec![entities::zone_key(&old)], is_objective_or_settings(&old))
+            }
+        };
+        self.seq = seq;
+        // the zones it was in and is in are changed for the next snapshot
+        self.snap_changed.extend(zones);
+        self.broadcast_entities(vec![change]);
+        if touched {
+            self.refresh_from_entities();
+        }
+    }
+
+    /// The entity the edit is about, as the sender last saw it: it must exist, and `expect` must
+    /// be the seq of its last change (`Changed` otherwise).
+    fn held(&self, id: EntityId, expect: Option<u64>) -> Result<&Component, EntityWhy> {
+        let seq = self.entities.seq_of(id).ok_or(EntityWhy::Changed)?;
+        if expect != Some(seq) {
+            return Err(EntityWhy::Changed);
+        }
+        self.entities.map.get(&id).map(|(_, c)| c).ok_or(EntityWhy::Changed)
+    }
+
+    /// The rules for an edit, in order: staleness, then `vox_core::edit`'s checks (rights,
+    /// destinations, place, caps), then the world's own: the old place is in reach too (so a
+    /// far entity cannot be dragged), and at most one Objective and one Settings.
+    fn judge(&self, edit: &Edit, role: Role, account: Option<u64>, at: Option<[f32; 3]>) -> Result<(), EntityWhy> {
+        let plots: Vec<PlotArea> = self.plots.iter().map(Plot::area).collect();
+        let ground = |c: [i32; 3]| self.world.get(c) != 0;
+        let spawns = self.entities.map.values().filter(|(_, c)| matches!(c, Component::Spawn(_))).count();
+        match edit {
+            Edit::Put { entity, expect, component } => {
+                // the values first: the zone and plot helpers below read the component's position
+                component.validate()?;
+                let old = match entity {
+                    None => None,
+                    Some(id) => Some(self.held(*id, *expect)?),
+                };
+                // a builder's new portal costs authority (phase 2's charge through the directory,
+                // not yet): refused until that lands, so no one places one for free
+                if role == Role::Builder && account.is_some() && old.is_none() && matches!(component, Component::Portal(_)) {
+                    return Err(EntityWhy::Unavailable);
+                }
+                let zone = entities::zone_key(component);
+                let ctx = Ctx {
+                    role,
+                    account,
+                    at,
+                    bounds: self.cfg.bounds,
+                    plots: &plots,
+                    zone_entities: self.entities.zone_count(zone),
+                    moves_zone: old.is_some_and(|o| entities::zone_key(o) != zone),
+                    plot_portals: plot_portals_at(&plots, component, &self.entities),
+                    spawns,
+                    ground: &ground,
+                };
+                edit::check_put(&ctx, old, component)?;
+                if let Some(from) = old.and_then(entities::position)
+                    && !within_reach(at, cell_of(from))
+                {
+                    return Err(EntityWhy::TooFar);
+                }
+                if is_objective_or_settings(component) {
+                    let kind = std::mem::discriminant(component);
+                    if self.entities.map.iter().any(|(&other, (_, c))| Some(other) != *entity && std::mem::discriminant(c) == kind) {
+                        return Err(EntityWhy::TooMany);
+                    }
+                }
+                Ok(())
+            }
+            Edit::Remove { entity, expect } => {
+                let old = self.held(*entity, *expect)?;
+                let ctx = Ctx {
+                    role,
+                    account,
+                    at,
+                    bounds: self.cfg.bounds,
+                    plots: &plots,
+                    zone_entities: 0,
+                    moves_zone: false,
+                    plot_portals: 0,
+                    spawns,
+                    ground: &ground,
+                };
+                edit::check_remove(&ctx, old)
+            }
+        }
+    }
+
     pub(super) fn message(&mut self, conn: u64, msg: ToServer) {
         let now = self.started.elapsed().as_secs_f64();
         let Some(p) = self.players.get_mut(&conn) else { return };
         match msg {
             ToServer::Hello { .. } | ToServer::Watch { .. } => {}
-            // entity edits arrive with protocol 9; until this world handles them (the editor's
-            // rights and rules), every one is refused so the sender isn't left waiting
-            ToServer::Put { id, .. } | ToServer::Remove { id, .. } | ToServer::Build { id, .. } => {
-                let why = vox_core::entity::EntityWhy::Unavailable;
-                Self::send_to(&p.tx, &ToClient::EntityRefused { id, why });
+            ToServer::Put { id, entity, expect, component } => {
+                self.entity_edit(conn, id, Edit::Put { entity, expect, component });
+            }
+            ToServer::Remove { id, entity, expect } => {
+                self.entity_edit(conn, id, Edit::Remove { entity, expect });
+            }
+            // building nodes (phase 5) is not yet handled: refused, so the sender isn't left waiting
+            ToServer::Build { id, .. } => {
+                Self::send_to(&p.tx, &ToClient::EntityRefused { id, why: EntityWhy::Unavailable });
             }
             ToServer::Through { portal, side } => {
                 if !p.bucket.take(now) {
@@ -781,6 +972,30 @@ pub(super) fn within_reach(at: Option<[f32; 3]>, cell: [i32; 3]) -> bool {
     let eye = [at[0], at[1] + EYES, at[2]];
     let d2: f32 = (0..3).map(|i| (cell[i] as f32 + 0.5 - eye[i]).powi(2)).sum();
     d2 <= REACH * REACH
+}
+
+/// The cell a position (feet, in blocks) stands in.
+fn cell_of(at: [f32; 3]) -> [i32; 3] {
+    [at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32]
+}
+
+/// Objective and Settings are the world's own: at most one of each, and a change to one is taken
+/// up by the running world (`refresh_from_entities`).
+fn is_objective_or_settings(c: &Component) -> bool {
+    matches!(c, Component::Objective(_) | Component::Settings(_))
+}
+
+/// The keyed portals (the directory's player portals) already in the plot a new component
+/// stands in: the cap a builder's new portal is checked against.
+fn plot_portals_at(plots: &[PlotArea], c: &Component, ents: &entities::Entities) -> usize {
+    let Some(at) = entities::position(c) else { return 0 };
+    let cell = cell_of(at);
+    let Some(plot) = plots.iter().find(|p| p.holds(cell[0], cell[2])) else { return 0 };
+    ents.map
+        .values()
+        .filter(|(_, c)| matches!(c, Component::Portal(Portal { key: Some(_), .. })))
+        .filter(|(_, c)| entities::position(c).is_some_and(|p| plot.holds(cell_of(p)[0], cell_of(p)[2])))
+        .count()
 }
 
 /// A joined player as voice routing sees them. `at` is NaN for someone who has not reported
