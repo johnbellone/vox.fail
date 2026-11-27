@@ -1,0 +1,436 @@
+//! Entities: the things placed in a world beside its blocks (doorways, spawn points, an
+//! objective, the world's settings). Each is a [`Component`]. They are written with postcard
+//! in zones and sent on the wire, so the variant order is part of the format: never reorder
+//! or remove a variant; add new ones at the end (Prop and Node come later).
+//!
+//! This module checks the values themselves (finite numbers, ranges, caps on text and size,
+//! no control characters in text). Whether a destination may be used is a rule for the edit
+//! that places it, not for the value.
+//!
+//! [`Component::validate`] is the gate: call it on anything that came from the network.
+//! [`Component::tidy`] is a convenience for authored input (level files, the editor's own
+//! values); it repairs what can be repaired and never replaces validate.
+
+use serde::{Deserialize, Serialize};
+
+/// Longest name, in characters.
+pub const MAX_NAME: usize = 32;
+/// Longest settings text, in bytes.
+pub const MAX_SETTINGS: usize = 16 * 1024;
+/// Longest URL, in characters.
+pub const MAX_URL: usize = 128;
+/// Longest world id, dungeon name or level name, in characters.
+pub const MAX_ID: usize = 64;
+/// Largest objective radius, in blocks.
+pub const MAX_RADIUS: f32 = 256.0;
+
+/// An entity's number within its world.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct EntityId(pub u32);
+
+/// The way a doorway is walked through: along x or along z.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum Axis {
+    X,
+    Z,
+}
+
+/// A doorway.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Portal {
+    pub name: String,
+    /// the middle of the sill, blocks
+    pub at: [f32; 3],
+    pub axis: Axis,
+    /// width and height, blocks
+    pub size: [f32; 2],
+    /// which way walking through faces there, degrees (as level files)
+    pub yaw: f32,
+    /// the level its echo shows
+    pub level: String,
+    pub to: Dest,
+    pub key: Option<i64>,
+}
+
+impl Portal {
+    pub const VERSION: u16 = 1;
+}
+
+/// Where a doorway leads.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum Dest {
+    /// somewhere else in this world, arriving at `arrive`
+    Here { arrive: [f32; 3] },
+    /// another world on this host, by its id
+    World { world: String },
+    /// the other half of a pair of doorways with this key
+    Pair { key: i64 },
+    /// the traveller's raid party's copy of a dungeon
+    Dungeon { name: String },
+    /// another host, at `url`, arriving at `arrive` there
+    Url { url: String, arrive: [f32; 3] },
+}
+
+/// Where players start in a world.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Spawn {
+    /// feet, blocks
+    pub at: [f32; 3],
+    /// degrees
+    pub yaw: f32,
+}
+
+impl Spawn {
+    pub const VERSION: u16 = 1;
+}
+
+/// A place to reach: a dungeon's objective.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Objective {
+    pub name: String,
+    /// feet, blocks
+    pub at: [f32; 3],
+    /// how near counts, blocks; more than zero
+    pub radius: f32,
+}
+
+impl Objective {
+    pub const VERSION: u16 = 1;
+}
+
+/// The level's `world` object as JSON text, without its `portals` and `objective` keys (those
+/// are entities now). Kept as text because postcard cannot carry a `serde_json::Value`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Settings {
+    pub json: String,
+}
+
+impl Settings {
+    pub const VERSION: u16 = 1;
+}
+
+/// One entity's data. Prop and Node are added later; never reorder or remove a variant.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum Component {
+    Portal(Portal),
+    Spawn(Spawn),
+    Objective(Objective),
+    Settings(Settings),
+}
+
+impl Component {
+    /// The component's stable name, as the format and the directory know it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Component::Portal(_) => "vox::Portal",
+            Component::Spawn(_) => "vox::Spawn",
+            Component::Objective(_) => "vox::Objective",
+            Component::Settings(_) => "vox::Settings",
+        }
+    }
+
+    /// The version of this component's data.
+    pub fn version(&self) -> u16 {
+        match self {
+            Component::Portal(_) => Portal::VERSION,
+            Component::Spawn(_) => Spawn::VERSION,
+            Component::Objective(_) => Objective::VERSION,
+            Component::Settings(_) => Settings::VERSION,
+        }
+    }
+
+    /// Tidies what can be fixed without refusing it: strips control characters from every
+    /// text field, and makes a doorway's size finite and in range (as `portal.rs` does). This
+    /// is for authored input only; it does not make a value safe, so call `validate` on
+    /// anything from the network.
+    pub fn tidy(&mut self) {
+        match self {
+            Component::Portal(p) => {
+                p.name = strip_control(&p.name);
+                p.level = strip_control(&p.level);
+                match &mut p.to {
+                    Dest::Here { .. } | Dest::Pair { .. } => {}
+                    Dest::World { world } => *world = strip_control(world),
+                    Dest::Dungeon { name } => *name = strip_control(name),
+                    Dest::Url { url, .. } => *url = strip_control(url),
+                }
+                p.size = [tidy_size(p.size[0], 4.0), tidy_size(p.size[1], 6.0)];
+            }
+            Component::Objective(o) => o.name = strip_control(&o.name),
+            Component::Spawn(_) | Component::Settings(_) => {}
+        }
+    }
+
+    /// Checks the values: numbers finite, sizes and radius in range, text within its caps and
+    /// free of control characters, settings within their cap. Destination rules are not
+    /// checked here. Call this on anything from the network.
+    pub fn validate(&self) -> Result<(), EntityWhy> {
+        match self {
+            Component::Portal(p) => {
+                finite(&p.at)?;
+                if !p.size.iter().all(|c| (1.0..=64.0).contains(c)) {
+                    return Err(EntityWhy::Invalid);
+                }
+                finite(&[p.yaw])?;
+                text(&p.name, MAX_NAME)?;
+                text(&p.level, MAX_ID)?;
+                match &p.to {
+                    Dest::Here { arrive } => finite(arrive),
+                    Dest::World { world } => text(world, MAX_ID),
+                    Dest::Pair { .. } => Ok(()),
+                    Dest::Dungeon { name } => text(name, MAX_ID),
+                    Dest::Url { url, arrive } => {
+                        text(url, MAX_URL)?;
+                        finite(arrive)
+                    }
+                }
+            }
+            Component::Spawn(s) => {
+                finite(&s.at)?;
+                finite(&[s.yaw])
+            }
+            Component::Objective(o) => {
+                text(&o.name, MAX_NAME)?;
+                finite(&o.at)?;
+                finite(&[o.radius])?;
+                if o.radius > 0.0 && o.radius <= MAX_RADIUS { Ok(()) } else { Err(EntityWhy::Invalid) }
+            }
+            Component::Settings(s) => {
+                if s.json.len() > MAX_SETTINGS {
+                    return Err(EntityWhy::TooBig);
+                }
+                match serde_json::from_str::<serde_json::Value>(&s.json) {
+                    Ok(serde_json::Value::Object(map)) => {
+                        if map.contains_key("portals") || map.contains_key("objective") {
+                            Err(EntityWhy::Invalid)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    _ => Err(EntityWhy::Invalid),
+                }
+            }
+        }
+    }
+}
+
+/// Why an entity wasn't placed or changed.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityWhy {
+    /// it's someone else's
+    NotYours,
+    /// outside the world
+    Outside,
+    /// further than a player can reach
+    TooFar,
+    /// too many of these here
+    TooMany,
+    /// too long or too much
+    TooBig,
+    /// something is in the way
+    Blocked,
+    /// that doorway can't lead there
+    BadDest,
+    /// no such prop
+    NoSuchProp,
+    /// not enough to pay for it
+    CantAfford,
+    /// too many changes too fast
+    TooFast,
+    /// it changed since you last looked
+    Changed,
+    /// not available right now
+    Unavailable,
+    /// a malformed value: a number that isn't finite, bad JSON
+    Invalid,
+}
+
+impl std::fmt::Display for EntityWhy {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(match self {
+            EntityWhy::NotYours => "that's not yours",
+            EntityWhy::Outside => "that's outside the world",
+            EntityWhy::TooFar => "that's out of reach",
+            EntityWhy::TooMany => "there are too many of those here",
+            EntityWhy::TooBig => "that's too big",
+            EntityWhy::Blocked => "something is in the way",
+            EntityWhy::BadDest => "that doorway can't lead there",
+            EntityWhy::NoSuchProp => "there's no such prop",
+            EntityWhy::CantAfford => "that costs more than you have",
+            EntityWhy::TooFast => "slow down",
+            EntityWhy::Changed => "that changed since you looked",
+            EntityWhy::Unavailable => "that's not available right now",
+            EntityWhy::Invalid => "that isn't a valid value",
+        })
+    }
+}
+
+fn finite<const N: usize>(v: &[f32; N]) -> Result<(), EntityWhy> {
+    if v.iter().all(|c| c.is_finite()) { Ok(()) } else { Err(EntityWhy::Invalid) }
+}
+
+fn text(s: &str, max: usize) -> Result<(), EntityWhy> {
+    if s.chars().count() > max {
+        return Err(EntityWhy::TooBig);
+    }
+    if s.chars().any(char::is_control) { Err(EntityWhy::Invalid) } else { Ok(()) }
+}
+
+/// A doorway's size component: a number that isn't finite becomes the default `parse()` uses,
+/// then it is clamped. Clamping first would leave NaN as NaN.
+fn tidy_size(c: f32, default: f32) -> f32 {
+    let c = if c.is_finite() { c } else { default };
+    c.clamp(1.0, 64.0)
+}
+
+fn strip_control(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{decode, encode};
+
+    fn portal(to: Dest) -> Portal {
+        Portal {
+            name: "void".into(),
+            at: [0.0, 0.0, 11.5],
+            axis: Axis::Z,
+            size: [8.0, 16.0],
+            yaw: 0.0,
+            level: "void".into(),
+            to,
+            key: None,
+        }
+    }
+
+    fn settings(json: &str) -> Component {
+        Component::Settings(Settings { json: json.into() })
+    }
+
+    #[test]
+    fn postcard_round_trip_of_every_variant() {
+        let all = vec![
+            Component::Portal(portal(Dest::Here { arrive: [0.0, 0.0, -39.5] })),
+            Component::Portal(portal(Dest::World { world: "yard".into() })),
+            Component::Portal(Portal { key: Some(7), ..portal(Dest::Pair { key: 7 }) }),
+            Component::Portal(portal(Dest::Dungeon { name: "crypt".into() })),
+            Component::Portal(portal(Dest::Url { url: ":7781".into(), arrive: [1.0, 0.0, 2.0] })),
+            Component::Spawn(Spawn { at: [1.0, 2.0, 3.0], yaw: 90.0 }),
+            Component::Objective(Objective { name: "the altar".into(), at: [0.0, 0.0, -9.0], radius: 3.0 }),
+            settings(r#"{"sky":"earth","time":16.5}"#),
+        ];
+        for c in all {
+            let back: Component = decode(&encode(&c)).expect("decodes");
+            assert_eq!(back, c);
+        }
+    }
+
+    #[test]
+    fn names_and_versions() {
+        let p = Component::Portal(portal(Dest::Here { arrive: [0.0; 3] }));
+        assert_eq!(p.name(), "vox::Portal");
+        assert_eq!(p.version(), 1);
+        assert_eq!(settings("{}").name(), "vox::Settings");
+    }
+
+    #[test]
+    fn non_finite_numbers_are_refused() {
+        let mut p = portal(Dest::Here { arrive: [0.0; 3] });
+        p.at[1] = f32::NAN;
+        assert_eq!(Component::Portal(p).validate(), Err(EntityWhy::Invalid));
+
+        let s = Component::Spawn(Spawn { at: [0.0; 3], yaw: f32::INFINITY });
+        assert_eq!(s.validate(), Err(EntityWhy::Invalid));
+
+        let o = Component::Objective(Objective { name: "x".into(), at: [0.0; 3], radius: 0.0 });
+        assert_eq!(o.validate(), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn over_long_text_is_refused() {
+        let long = "a".repeat(MAX_NAME + 1);
+        let mut p = portal(Dest::Here { arrive: [0.0; 3] });
+        p.name = long.clone();
+        assert_eq!(Component::Portal(p).validate(), Err(EntityWhy::TooBig));
+
+        let url = "u".repeat(MAX_URL + 1);
+        let u = portal(Dest::Url { url, arrive: [0.0; 3] });
+        assert_eq!(Component::Portal(u).validate(), Err(EntityWhy::TooBig));
+
+        let big = format!("{{\"sky\":\"{}\"}}", "x".repeat(MAX_SETTINGS));
+        assert_eq!(settings(&big).validate(), Err(EntityWhy::TooBig));
+    }
+
+    #[test]
+    fn tidy_strips_control_characters_and_clamps_size() {
+        let mut p = portal(Dest::Here { arrive: [0.0; 3] });
+        p.name = "ya\u{7}rd\n".into();
+        p.size = [0.0, 200.0];
+        let mut c = Component::Portal(p);
+        c.tidy();
+        let Component::Portal(p) = c else { panic!("still a portal") };
+        assert_eq!(p.name, "yard");
+        assert_eq!(p.size, [1.0, 64.0]);
+
+        let mut o = Component::Objective(Objective { name: "\u{1b}altar".into(), at: [0.0; 3], radius: 3.0 });
+        o.tidy();
+        let Component::Objective(o) = o else { panic!("still an objective") };
+        assert_eq!(o.name, "altar");
+    }
+
+    #[test]
+    fn settings_with_portals_or_objective_are_refused() {
+        assert_eq!(settings(r#"{"sky":"earth"}"#).validate(), Ok(()));
+        assert_eq!(settings(r#"{"portals":[]}"#).validate(), Err(EntityWhy::Invalid));
+        assert_eq!(settings(r#"{"objective":{}}"#).validate(), Err(EntityWhy::Invalid));
+        assert_eq!(settings("[1,2]").validate(), Err(EntityWhy::Invalid));
+        assert_eq!(settings("{not json").validate(), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn control_characters_are_refused_in_text() {
+        let url = portal(Dest::Url { url: "\u{7}:7781".into(), arrive: [0.0; 3] });
+        assert_eq!(Component::Portal(url).validate(), Err(EntityWhy::Invalid));
+
+        let mut level = portal(Dest::Here { arrive: [0.0; 3] });
+        level.level = "vo\nid".into();
+        assert_eq!(Component::Portal(level).validate(), Err(EntityWhy::Invalid));
+
+        let dungeon = portal(Dest::Dungeon { name: "cr\u{1b}ypt".into() });
+        assert_eq!(Component::Portal(dungeon).validate(), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn doorway_size_outside_one_to_sixty_four_is_refused() {
+        let mut small = portal(Dest::Here { arrive: [0.0; 3] });
+        small.size = [0.5, 6.0];
+        assert_eq!(Component::Portal(small).validate(), Err(EntityWhy::Invalid));
+
+        let mut big = portal(Dest::Here { arrive: [0.0; 3] });
+        big.size = [4.0, 65.0];
+        assert_eq!(Component::Portal(big).validate(), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn objective_radius_above_the_cap_is_refused() {
+        let far = Component::Objective(Objective { name: "altar".into(), at: [0.0; 3], radius: 300.0 });
+        assert_eq!(far.validate(), Err(EntityWhy::Invalid));
+
+        let edge = Component::Objective(Objective { name: "altar".into(), at: [0.0; 3], radius: MAX_RADIUS });
+        assert_eq!(edge.validate(), Ok(()));
+    }
+
+    #[test]
+    fn tidy_replaces_a_non_finite_size_with_the_default() {
+        let mut p = portal(Dest::Dungeon { name: "cr\u{1b}ypt".into() });
+        p.size = [f32::NAN, f32::INFINITY];
+        let mut c = Component::Portal(p);
+        c.tidy();
+        let Component::Portal(p) = c else { panic!("still a portal") };
+        assert_eq!(p.size, [4.0, 6.0]);
+        assert_eq!(p.to, Dest::Dungeon { name: "crypt".into() });
+        assert_eq!(Component::Portal(p).validate(), Ok(()));
+    }
+}

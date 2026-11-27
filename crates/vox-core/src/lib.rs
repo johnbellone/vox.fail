@@ -10,6 +10,7 @@
 //! - [`terrain`]: generated ground for an atlas (a big map of tiles), the same on every machine.
 //! - [`relief`]: the shallow dips in natural ground, from a seed, the same on every machine.
 //! - [`portal`]: doorways to other places: where they are and where going through takes you.
+//! - [`entity`]: the things placed in a world beside its blocks (doorways, spawns, settings).
 //! - [`predict`]: a player's view of the world: confirmed blocks plus their own edits that
 //!   the server hasn't answered yet.
 //!
@@ -19,6 +20,7 @@
 pub mod auth;
 pub mod body;
 pub mod entitle;
+pub mod entity;
 pub mod level;
 pub mod moves;
 pub mod portal;
