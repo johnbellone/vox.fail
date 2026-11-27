@@ -1273,6 +1273,19 @@ impl WorldState {
                 u.left += 1;
                 continue;
             }
+            // nor does a build or its undo put a solid block where a prop has come to stand, as an
+            // ordinary edit may not (Why::Blocked)
+            if block != 0
+                && self.props.covers_cell(cell, |id| match self.entities.map.get(&id) {
+                    Some((_, Component::Prop(q))) => Some(q),
+                    _ => None,
+                })
+            {
+                if let Some(u) = job.undo.as_mut() {
+                    u.left += 1;
+                }
+                continue;
+            }
             // a block already there is no change, as an ordinary edit refuses it
             let Ok(old) = self.world.edit(cell, block) else { continue };
             match job.undo.as_mut() {

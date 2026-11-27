@@ -22,8 +22,10 @@ Basic lets you change your own plot. A plot is a square of 16 × 16 blocks you h
 - **Portal** marks a spot in your plot; a form opens there. A portal is 4 to 8 blocks wide and
   6 to 16 blocks tall. A plot holds two of your portals at most, and each portal costs 30
   Authority.
-- **Prop** shows the prop catalogue while it is held. Choose a prop, then mark a spot. A plot
-  holds 64 props. If the catalogue is empty, the world accepts no props yet.
+- **Prop** shows the prop catalogue while it is held. Choose a prop, then mark a spot. A prop
+  needs something to stand on (the floor, or a wall, a ceiling, water or a table, as the prop
+  allows), and nobody can put a block where a prop stands; if what holds a prop up is broken, the
+  prop goes. A plot holds 64 props. If the catalogue is empty, the world accepts no props yet.
 
 ### Pairing portals
 
@@ -64,7 +66,7 @@ Advanced is for the world's owner and its editors (the owner may add up to 32 ed
 - **Add node**: a graph node, with its kind, size, recipe and seed, and a **Build** button that
   asks the server to build it. Nodes show as outlines, and the selected one as a preview of what
   it builds, with its block count. Undo takes a build back too, block by block, leaving any block
-  someone has changed since.
+  someone has changed since; a message in the world says how many were left.
 
 Advanced does not change a player's own portal, which is read-only there. The world's settings
 cannot be removed, and the last spawn cannot be removed.
