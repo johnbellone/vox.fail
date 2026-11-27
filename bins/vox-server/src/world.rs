@@ -113,7 +113,7 @@ impl WorldState {
             _ => Climate::from_settings(set.get("weather"), ground),
         };
         let weather = weather_from(climate, &set, name_seed(&cfg.name));
-        let build_palette = build_palette(&cfg.palette);
+        let build_palette = vox_graph::entity::build_palette(&cfg.palette);
         let mut s = WorldState {
             cfg,
             db,
@@ -1089,24 +1089,9 @@ impl WorldState {
     fn expand_node(&self, node: EntityId, account: Option<u64>) -> Result<Vec<([i32; 3], u16)>, EntityWhy> {
         let Some((_, Component::Node(n))) = self.entities.map.get(&node) else { return Err(EntityWhy::Changed) };
         let Some((palette, ids)) = &self.build_palette else { return Err(EntityWhy::Unavailable) };
-        let kind = serde_json::from_value::<vox_graph::Kind>(serde_json::Value::String(n.kind.clone())).map_err(|_| EntityWhy::Invalid)?;
-        let detail = [
-            vox_graph::Detail::Intent,
-            vox_graph::Detail::Layout,
-            vox_graph::Detail::Massing,
-            vox_graph::Detail::Structure,
-            vox_graph::Detail::Dressing,
-        ]
-        .get(usize::from(n.detail))
-        .copied()
-        .ok_or(EntityWhy::Invalid)?;
-        let mut graph = vox_graph::Node::new(node.0, kind, vox_graph::Footprint::new(n.at, n.size));
-        graph.detail = detail;
-        graph.parent = n.parent.map(|p| p.0);
-        graph.recipe = n.recipe.clone();
-        graph.seed = n.seed;
+        let graph = vox_graph::entity::from_entity(node.0, n).map_err(|_| EntityWhy::Invalid)?;
         let cells = vox_graph::expand(&graph, palette).map_err(|error| match error {
-            vox_graph::ExpandError::TooBig => EntityWhy::TooBig,
+            vox_graph::ExpandError::TooBig { .. } => EntityWhy::TooBig,
             vox_graph::ExpandError::Invalid(_) => EntityWhy::Invalid,
         })?;
         let mut blocks = Vec::with_capacity(cells.len());
@@ -1463,17 +1448,6 @@ impl WorldState {
 /// The body of a directory `Make` call for a new portal: where, which way, how big, and where it
 /// leads (a world by id, or a pair's key). Other destinations never reach here: the rules refuse
 /// them for a builder first.
-/// The world's palette as a vox-art palette (one colour per block, since a build only names
-/// blocks) and each block's id: its place in the palette plus one, 0 being air. None when vox-art
-/// refuses the palette (a name too long or repeated, or more blocks than it takes).
-fn build_palette(names: &[String]) -> Option<(vox_art::Palette, HashMap<String, u16>)> {
-    let materials: Vec<serde_json::Value> = names.iter().map(|n| serde_json::json!({ "name": n, "colours": [[128, 128, 128, 255]] })).collect();
-    let json = serde_json::json!({ "version": 1, "materials": materials }).to_string();
-    let palette = vox_art::Palette::from_json(&json).ok()?;
-    let ids = names.iter().enumerate().filter_map(|(i, n)| u16::try_from(i + 1).ok().map(|id| (n.clone(), id))).collect();
-    Some((palette, ids))
-}
-
 fn make_body(p: &Portal) -> serde_json::Value {
     let mut body = serde_json::json!({ "at": p.at, "axis": axis_name(p.axis), "size": p.size, "yaw": p.yaw });
     match &p.to {

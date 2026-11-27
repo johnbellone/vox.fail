@@ -21,6 +21,7 @@ pub mod bridge;
 pub mod camera;
 pub mod gizmo;
 pub mod ghost;
+pub mod node;
 pub mod pick;
 pub mod undo;
 
@@ -87,6 +88,8 @@ pub struct EditorState {
     pub next_id: u32,
     /// the author's own changes as undo steps, and the undo or redo on its way
     history: undo::History,
+    /// the selected node's preview (see [`node`])
+    pub(crate) preview: node::Preview,
     /// the seq of each entity as the page last heard it
     sent: BTreeMap<EntityId, u64>,
     /// the world has said Ready: nothing is reported to the page before it, so the first report
@@ -110,6 +113,7 @@ impl EditorState {
         self.sent.clear();
         self.tracked.clear();
         self.history.clear();
+        self.preview.clear();
         self.live = false;
         self.snapshot_due = false;
         // a block chosen in one world is not carried into another
@@ -204,7 +208,8 @@ impl Plugin for EditorPlugin {
             // gizmos before the pick, so a press on a handle claims the click and is not a pick
             .add_systems(Update, gizmo::gizmo.after(EditorSystems).after(crate::client::controls).before(pick::select))
             .add_systems(Update, pick::select.after(EditorSystems).after(crate::client::controls))
-            .add_systems(Update, ghost::ghost.after(EditorSystems).after(crate::client::controls));
+            .add_systems(Update, ghost::ghost.after(EditorSystems).after(crate::client::controls))
+            .add_systems(Update, (node::outlines, node::node_preview).after(EditorSystems));
     }
 }
 
@@ -214,7 +219,8 @@ fn shown(name: &str) -> String {
     name.chars().filter(|c| !c.is_control()).take(32).collect()
 }
 
-/// The server message a command makes, if it changes an entity: `Create`, `Set` or `Remove`.
+/// The server message a command makes, if it changes an entity: `Create`, `Set` or `Remove`,
+/// or builds one: `Build`.
 /// `id` is the client's number for the message, echoed back on a refusal.
 pub fn to_server(command: &Command, id: u32) -> Option<ToServer> {
     match command {
@@ -227,6 +233,7 @@ pub fn to_server(command: &Command, id: u32) -> Option<ToServer> {
         Command::Remove { entity, expect, .. } => {
             Some(ToServer::Remove { id, entity: EntityId(*entity), expect: *expect })
         }
+        Command::Build { node } => Some(ToServer::Build { id, node: EntityId(*node) }),
         _ => None,
     }
 }
@@ -254,8 +261,8 @@ pub fn diff_entities(sent: &mut BTreeMap<EntityId, u64>, now: &BTreeMap<EntityId
 
 /// Acts on the page's commands in the order it sent them. Tool, block, selection and the
 /// camera request are kept for the steps that use them; entity changes go to the server, or
-/// are refused to the page when there is no link to send them on (`Offline`). Build is not in
-/// the editor until phase 5 and is refused (`NotYet`).
+/// are refused to the page when there is no link to send them on (`Offline`). A Build goes the
+/// same way, unless the client's preview of the node is over the cap (`TooBig`, not sent).
 fn apply_commands(
     mut inbox: ResMut<EditorInbox>,
     mut state: ResMut<EditorState>,
@@ -309,14 +316,12 @@ fn apply_commands(
                 send_history(&w, &mut state, &mut outbox, false);
                 continue;
             }
-            Command::Build { .. } => {
-                outbox.0.push(Event::Refused {
-                    id: 0,
-                    r#ref: None,
-                    why: "NotYet".into(),
-                    text: "building nodes is not in the editor yet".into(),
-                });
-                continue;
+            Command::Build { node } => {
+                // over the cap by the client's own preview: refused here, nothing is sent
+                if let Some(refusal) = node::refuse_build(&state, &w, &entities, *node) {
+                    outbox.0.push(refusal);
+                    continue;
+                }
             }
             Command::Create { .. } | Command::Set { .. } | Command::Remove { .. } => {}
         }
@@ -357,7 +362,7 @@ fn send_history(w: &WorldClient, state: &mut EditorState, outbox: &mut EditorOut
     }
 }
 
-/// Sends an entity command (`Create`, `Set` or `Remove`) to the server, numbered for its `ref`
+/// Sends an entity command (`Create`, `Set`, `Remove` or `Build`) to the server, numbered for its `ref`
 /// (see [`EditorState::slot`]). Without a link it is refused to the page as `Offline`; an edit
 /// whose `ref` is already in flight is not sent again. Used by the page's commands and by the
 /// gizmo's drag, so both take the same path. `entities` is what the edit's `before` is read
@@ -502,6 +507,14 @@ mod tests {
         }
         assert!(to_server(&Command::Tool { tool: Tool::Select }, 1).is_none());
         assert!(to_server(&Command::Undo {}, 1).is_none());
+    }
+
+    #[test]
+    fn editor_build_becomes_a_build_message() {
+        match to_server(&Command::Build { node: 8 }, 6) {
+            Some(ToServer::Build { id, node }) => assert_eq!((id, node), (6, EntityId(8))),
+            other => panic!("expected a Build, got {other:?}"),
+        }
     }
 
     #[test]

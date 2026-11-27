@@ -27,7 +27,7 @@ const TOOLS: { tool: Tool; label: string; soon?: boolean; advancedOnly?: boolean
   { tool: "blocks", label: "Blocks" },
   { tool: "portal", label: "Portal" },
   { tool: "prop", label: "Prop" },
-  { tool: "node", label: "Node", soon: true, advancedOnly: true },
+  // nodes are added with Add node (Advanced) and drawn as outlines; there is no Node tool to hold
 ];
 
 export function ToolRail({ active, onTool, advanced, palette, block, onBlock, prop, onProp, catalogue }: Props) {

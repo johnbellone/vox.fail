@@ -131,6 +131,13 @@ export interface Change {
   component: Component | null;
 }
 
+/** What the client says a selected node would build: its block count (null when it does not build) and whether that is over the build cap. */
+export interface NodePreview {
+  node: number;
+  blocks: number | null;
+  tooBig: boolean;
+}
+
 /** What the editor tells the page (`vox-world::editor::bridge::Event`). */
 export type Event =
   | { type: "ready"; world: string; palette: string[] }
@@ -141,7 +148,9 @@ export type Event =
   | { type: "picked"; cell: [number, number, number] }
   | { type: "spot"; at: Vec3; axis: Axis; size: [number, number] }
   | { type: "prop_spot"; prop: string; at: [number, number, number]; yaw: number }
-  | { type: "here"; players: string[] };
+  | { type: "here"; players: string[] }
+  /** the selected node's preview: blocks its recipe builds (null: it does not build), and over the cap */
+  | { type: "node_preview"; node: number; blocks: number | null; too_big: boolean };
 
 type Obj = Record<string, unknown>;
 
@@ -496,6 +505,10 @@ export function readEvent(v: unknown): Event | null {
         : null;
     case "here":
       return has(v, ["players"]) && isStrs(v.players) ? { type: "here", players: v.players } : null;
+    case "node_preview":
+      return has(v, ["node", "blocks", "too_big"]) && isU32(v.node) && isOpt(v.blocks, isU32) && typeof v.too_big === "boolean"
+        ? { type: "node_preview", node: v.node, blocks: v.blocks, too_big: v.too_big }
+        : null;
     default:
       return null;
   }

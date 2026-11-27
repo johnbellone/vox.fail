@@ -27,7 +27,7 @@ describe("editor samples", () => {
       ["block", "build", "create", "fly_to", "prop", "redo", "remove", "select", "set", "tool", "undo"],
     );
     expect([...types(samples.events)].sort()).toEqual(
-      ["done", "entities", "here", "picked", "prop_spot", "ready", "refused", "selected", "spot"],
+      ["done", "entities", "here", "node_preview", "picked", "prop_spot", "ready", "refused", "selected", "spot"],
     );
   });
 });
@@ -87,6 +87,23 @@ describe("command guards", () => {
 });
 
 describe("event guards", () => {
+  test("a node preview carries its block count, null, or the cap", () => {
+    expect(readEvent({ type: "node_preview", node: 4, blocks: 482, too_big: false })).toEqual({
+      type: "node_preview",
+      node: 4,
+      blocks: 482,
+      too_big: false,
+    });
+    expect(readEvent({ type: "node_preview", node: 4, blocks: null, too_big: true })).toEqual({
+      type: "node_preview",
+      node: 4,
+      blocks: null,
+      too_big: true,
+    });
+    expect(isEvent({ type: "node_preview", node: 4, blocks: "x", too_big: false })).toBe(false);
+    expect(isEvent({ type: "node_preview", node: 4, blocks: 1 })).toBe(false);
+  });
+
   test("an unknown event or a wrong type is refused", () => {
     expect(isEvent({ type: "explode" })).toBe(false);
     expect(isEvent({ type: "selected", entity: "3" })).toBe(false);

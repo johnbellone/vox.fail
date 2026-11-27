@@ -3,7 +3,7 @@
 
 import { Code, Stack, Text } from "@mantine/core";
 import type { Item, WorldEntry } from "../../api/types";
-import type { Command } from "../../game/editor";
+import type { Command, NodePreview } from "../../game/editor";
 import { NodeInspector } from "./NodeInspector";
 import { PortalInspector } from "./PortalInspector";
 import { PropInspector } from "./PropInspector";
@@ -11,6 +11,8 @@ import { type Edits, labelOf, type PropEntry, propNameOf, type Row } from "./sta
 
 interface Props {
   row: Row | undefined;
+  /** the client's preview of the selected node, if it has sent one */
+  nodePreview?: NodePreview;
   /** the catalogue's props, for a prop's name */
   catalogue: readonly PropEntry[];
   advanced: boolean;
@@ -23,7 +25,7 @@ interface Props {
   forget: (ref: number) => void;
 }
 
-export function Inspector({ row, catalogue, advanced, worlds, items, itemsError, edits, submit, retry, forget }: Props) {
+export function Inspector({ row, nodePreview, catalogue, advanced, worlds, items, itemsError, edits, submit, retry, forget }: Props) {
   return (
     <Stack gap="xs" p="sm" w={{ base: "100%", md: 280 }} style={{ flexShrink: 0 }}>
       <Text fw={700} fz="sm">
@@ -63,6 +65,8 @@ export function Inspector({ row, catalogue, advanced, worlds, items, itemsError,
           entity={row.entity}
           seq={row.seq}
           node={row.component.Node}
+          blocks={nodePreview?.node === row.entity ? (nodePreview.blocks ?? undefined) : undefined}
+          tooBig={nodePreview?.node === row.entity && nodePreview.tooBig}
           edits={edits}
           submit={submit}
           retry={retry}

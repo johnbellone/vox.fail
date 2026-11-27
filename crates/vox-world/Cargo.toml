@@ -9,6 +9,7 @@ bevy.workspace = true
 vox-core.workspace = true
 vox-format.workspace = true
 vox-art = { path = "../vox-art" }
+vox-graph = { path = "../vox-graph" }
 serde.workspace = true
 serde_json.workspace = true
 postcard.workspace = true

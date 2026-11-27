@@ -9,10 +9,11 @@ use vox_art::{Palette, export::level::{LevelError, level_cells}};
 use crate::node::{MAX_SIDE, Node};
 
 /// Why a node cannot be expanded: `TooBig` when the build is over the cap (the caller refuses it
-/// as too big), `Invalid` with a message for each problem otherwise.
+/// as too big, and can say how many blocks it would build), `Invalid` with a message for each
+/// problem otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpandError {
-    TooBig,
+    TooBig { cells: usize },
     Invalid(Vec<String>),
 }
 
@@ -55,7 +56,7 @@ pub fn expand(node: &Node, palette: &Palette) -> Result<Vec<([i32; 3], String)>,
         ExpandError::Invalid(errors.iter().map(ToString::to_string).collect())
     })?;
     level_cells(&built, palette, node.footprint.at).map_err(|error| match error {
-        LevelError::TooBig { .. } => ExpandError::TooBig,
+        LevelError::TooBig { cells } => ExpandError::TooBig { cells },
         other => invalid(other.to_string()),
     })
 }
@@ -188,6 +189,6 @@ mod tests {
             "ops":[{"box":{"from":[0,0,0],"to":[39,39,39],"mat":"brick","tone":0,"hollow":false}}]}"#;
         let mut node = house_node(recipe);
         node.footprint.size = [40, 40, 40];
-        assert_eq!(expand(&node, &palette()), Err(ExpandError::TooBig));
+        assert_eq!(expand(&node, &palette()), Err(ExpandError::TooBig { cells: 64_000 }));
     }
 }

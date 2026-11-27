@@ -16,6 +16,12 @@ import { type Edits, type NodeForm, nodeFormOf, nodeOf, removeEntity, setEntity 
 /** How far a node may be refined, 0 to 4, as select options. */
 const DETAILS = ["0", "1", "2", "3", "4"].map((d) => ({ value: d, label: d }));
 
+/** The Build button's label: the block count when the client has it, with the cap warning when over. */
+function buildLabel(tooBig: boolean | undefined, blocks: number | undefined): string {
+  if (tooBig) return blocks === undefined ? "Build (too big)" : `Build (too big: ${blocks} blocks)`;
+  return blocks === undefined ? "Build" : `Build (${blocks} blocks)`;
+}
+
 interface Props {
   entity: number;
   /** the seq the page holds for this node now: what a reload takes */
@@ -23,13 +29,15 @@ interface Props {
   node: Node;
   /** the block count the client reports for this node, once it does; until then Build says just Build */
   blocks?: number;
+  /** the preview is over the build cap: Build will be refused */
+  tooBig?: boolean;
   edits: Edits;
   submit: Submit;
   retry: (ref: number) => void;
   forget: (ref: number) => void;
 }
 
-export function NodeInspector({ entity, seq, node, blocks, edits, submit, retry, forget }: Props) {
+export function NodeInspector({ entity, seq, node, blocks, tooBig, edits, submit, retry, forget }: Props) {
   const [form, setForm] = useState<NodeForm>(() => nodeFormOf(node));
   // the seq this form expects: what Apply and Remove send (see PropInspector)
   const [expectSeq, setExpectSeq] = useState<number>(seq);
@@ -144,7 +152,7 @@ export function NodeInspector({ entity, seq, node, blocks, edits, submit, retry,
           {busy ? "Sending…" : "Apply"}
         </Button>
         <Button size="sm" variant="default" onClick={build} disabled={busy}>
-          {blocks === undefined ? "Build" : `Build (${blocks} blocks)`}
+          {buildLabel(tooBig, blocks)}
         </Button>
         <Button size="sm" variant="default" color="ember" onClick={remove} disabled={busy}>
           Remove

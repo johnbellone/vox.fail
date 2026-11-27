@@ -136,6 +136,10 @@ pub enum Event {
     Spot { at: [f32; 3], axis: Axis, size: [f32; 2] },
     /// who else is in the world
     Here { players: Vec<String> },
+    /// the preview of a node the editor is showing: how many blocks its recipe builds, null when
+    /// it does not build (no valid recipe), and whether it is over the build cap (no ghost, and
+    /// a Build is refused)
+    NodePreview { node: u32, blocks: Option<u32>, too_big: bool },
 }
 
 /// Parses a command from the page. Refuses it over [`MAX_COMMAND_BYTES`] before reading it,
@@ -264,6 +268,8 @@ mod tests {
             Event::Picked { cell: [1, -2, 30] },
             Event::Spot { at: [4.5, 3.0, -2.5], axis: Axis::X, size: [4.0, 6.0] },
             Event::Here { players: vec!["Sam".into()] },
+            Event::NodePreview { node: 4, blocks: Some(482), too_big: false },
+            Event::NodePreview { node: 4, blocks: None, too_big: true },
         ]
     }
 

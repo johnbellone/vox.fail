@@ -7083,6 +7083,7 @@ dependencies = [
  "serde",
  "serde_json",
  "vox-art",
+ "vox-core",
 ]
 
 [[package]]
@@ -7157,6 +7158,7 @@ dependencies = [
  "vox-art",
  "vox-core",
  "vox-format",
+ "vox-graph",
  "vox-link",
  "vox-voice",
  "wasm-bindgen",

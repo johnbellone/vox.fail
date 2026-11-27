@@ -9,7 +9,7 @@ import { api, ApiError, messageOf, post, worldUrl } from "../../api/client";
 import { useApi } from "../../api/hooks";
 import type { Inventory, Me, Token, WorldEntry, Worlds } from "../../api/types";
 import { loadClient } from "../../game/wasm";
-import { type Command, type Tool, onEvent, sendCommand } from "../../game/editor";
+import { type Command, type NodePreview, type Tool, onEvent, sendCommand } from "../../game/editor";
 import { chooseBlock } from "./BlockPalette";
 import { EditorHeader, type Mode } from "./EditorHeader";
 import { EntityList } from "./EntityList";
@@ -60,6 +60,8 @@ export function EditorPage() {
   const [entities, setEntities] = useState<Entities>(cleared);
   const [selected, setSelected] = useState<number | null>(null);
   const [here, setHere] = useState(0);
+  /** what the client says the selected node would build */
+  const [nodePreview, setNodePreview] = useState<NodePreview>();
   // the world's block names (from `ready`) and the one the page has chosen to paint with
   const [palette, setPalette] = useState<string[]>([]);
   const [block, setBlock] = useState<string>();
@@ -112,6 +114,7 @@ export function EditorPage() {
           setPropSpot(undefined);
           setPanelOpen(undefined);
           setNodeOpen(false);
+          setNodePreview(undefined);
           setPalette(e.palette);
           setBlock(undefined);
           setProp(undefined);
@@ -156,6 +159,9 @@ export function EditorPage() {
           break;
         case "here":
           setHere(e.players.length);
+          break;
+        case "node_preview":
+          setNodePreview({ node: e.node, blocks: e.blocks, tooBig: e.too_big });
           break;
         default:
           break;
@@ -466,6 +472,7 @@ export function EditorPage() {
         ) : (
           <Inspector
             row={selectedRow}
+            nodePreview={nodePreview}
             catalogue={catalogue.entries ?? []}
             advanced={isAdvanced}
             worlds={worlds}
