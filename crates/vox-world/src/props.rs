@@ -11,7 +11,9 @@
 //! standard material with per-vertex colours. Coplanar faces of the same colour are merged into
 //! one quad per slice (greedy meshing), and faces that touch another filled voxel are left out.
 //! A prop whose mesh would have too many quads is refused. Static props are not merged per chunk
-//! yet, and colours come from a fixed fallback ramp until the palette file exists (vox-tol.4.14).
+//! yet. Colours come from the palette file (`data/props/palette.json`) that a prop's
+//! `palette_version` names; a fixed fallback ramp colours it while that palette is missing
+//! (vox-tol.4.19).
 //!
 //! The behaviours that look (`light` and `motion`, `docs/design/props.md`) are read here too. A
 //! prop's lights are handed to `outdoors` to join the nearest lamps, and its motions move the
@@ -34,7 +36,7 @@ use bevy::{
     time::{Real, Time},
 };
 use vox_art::{
-    VoxelGrid,
+    Palette, VoxelGrid,
     prop::{Behaviour, Collide, MotionKind, PropDef, When},
 };
 use vox_core::body::Occupancy;
@@ -59,6 +61,10 @@ const MAX_TRIES: u8 = 3;
 const MAX_MESHES: usize = 256;
 /// Most quads one prop's mesh may have. A prop with more is refused (its blob is bad or too busy).
 const MAX_QUADS: usize = 50_000;
+/// Largest `palette.json` read, in bytes. Each palette in it is capped by `vox_art` on its own.
+const MAX_PALETTE_FILE: usize = 1 << 20;
+/// Most palettes `palette.json` may hold.
+const MAX_PALETTES: usize = 64;
 /// How long decoding and meshing may take each frame. At least one blob goes each frame. (Same
 /// budget as the chunks, see `client::chunks`.)
 #[cfg(not(target_arch = "wasm32"))]
@@ -70,8 +76,9 @@ const BUILD_BUDGET: Duration = Duration::from_millis(3);
 /// of new props does not cost one frame a long stall.
 const SPAWN_CAP: usize = 64;
 
-/// Colours for voxels, by palette index, until the project palette file exists (vox-tol.4.14
-/// will read the palette the blob's `palette_version` names). Index 0 is empty and never stored.
+/// Colours for voxels, by palette index, used only while a prop's palette is missing (not read
+/// yet, absent, or no palette of its `palette_version`; vox-tol.4.19). Index 0 is empty and never
+/// stored.
 const FALLBACK_RAMP: [[u8; 3]; 8] = [
     [196, 160, 120],
     [150, 110, 80],
@@ -100,8 +107,10 @@ enum Entry {
     Asked { since: f64, tries: u8 },
     /// arrived, waiting in the build queue
     Queued,
-    /// `seen` is the last [`PropCache::tick`] it was shown at
-    Ready { mesh: Handle<Mesh>, info: Arc<PropInfo>, seen: u64 },
+    /// `seen` is the last [`PropCache::tick`] it was shown at; `coloured` is whether its palette
+    /// was there when it was meshed (without one it has the fallback colours, and is meshed again
+    /// when the palette arrives)
+    Ready { mesh: Handle<Mesh>, info: Arc<PropInfo>, seen: u64, coloured: bool },
     /// a failed fetch or read; asked again after `retry_at`, until `MAX_TRIES`
     Failed { tries: u8, retry_at: f64 },
 }
@@ -194,6 +203,11 @@ struct PropWatch {
     accepted: Option<HashSet<[u8; 16]>>,
     /// the catalogue was asked for in this world
     catalogue_asked: bool,
+    /// the palettes `palette.json` holds, by version, once it is read; until then props use the
+    /// fallback colours
+    palettes: Option<BTreeMap<u16, Palette>>,
+    /// the palette file was asked for in this world
+    palette_asked: bool,
 }
 
 pub struct PropPlugin;
@@ -222,6 +236,85 @@ pub(crate) fn blob_path(hash: [u8; 16]) -> std::path::PathBuf {
 /// Where a world's catalogue of accepted props is (the props folder the server reads too).
 fn catalogue_path() -> std::path::PathBuf {
     files::base().join("data/props/catalogue.json")
+}
+
+/// Where a world's palettes are (`palette.json`, written by `vox-props` beside the catalogue).
+fn palette_path() -> std::path::PathBuf {
+    files::base().join("data/props/palette.json")
+}
+
+/// The palettes in a `palette.json`: each is checked by `vox_art` (its caps), and its version must
+/// be the one its key names.
+fn decode_palettes(bytes: &[u8]) -> Result<BTreeMap<u16, Palette>, String> {
+    if bytes.len() > MAX_PALETTE_FILE {
+        return Err(format!("the file is over {MAX_PALETTE_FILE} bytes"));
+    }
+    let raw: BTreeMap<u16, serde_json::Value> = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if raw.len() > MAX_PALETTES {
+        return Err(format!("more than {MAX_PALETTES} palettes"));
+    }
+    let mut palettes = BTreeMap::new();
+    for (version, value) in raw {
+        let palette = Palette::from_json(&value.to_string())?;
+        if palette.version != version {
+            return Err(format!("palette {version} says it is version {}", palette.version));
+        }
+        palettes.insert(version, palette);
+    }
+    Ok(palettes)
+}
+
+/// The palettes of a `palette.json` that does not decode is none: props keep the fallback colours.
+fn palettes_of(bytes: &[u8]) -> BTreeMap<u16, Palette> {
+    match decode_palettes(bytes) {
+        Ok(palettes) => palettes,
+        Err(why) => {
+            crate::note!("[props] palette: {why}");
+            BTreeMap::new()
+        }
+    }
+}
+
+/// The palettes once `palette.json` can be read. It is asked for once per world and read each
+/// frame until it is here; on the desktop a missing file stays missing, so there are none. `None`
+/// while it is still on its way (or already read).
+fn read_palettes(watch: &mut PropWatch) -> Option<BTreeMap<u16, Palette>> {
+    if watch.palettes.is_some() {
+        return None;
+    }
+    let path = palette_path();
+    match files::read(&path) {
+        Some(bytes) => Some(palettes_of(&bytes)),
+        None => {
+            if !watch.palette_asked {
+                files::want(&path);
+                watch.palette_asked = true;
+            }
+            (!cfg!(target_arch = "wasm32")).then(BTreeMap::new)
+        }
+    }
+}
+
+/// The palette has arrived: each prop meshed without it is taken out of the cache, and the props
+/// on screen that use it go in `dirty`, so they are asked for and meshed again in colour.
+fn recolour(entries: &mut HashMap<[u8; 16], Entry>, watch: &mut PropWatch, entities: &WorldEntities) {
+    let stale: HashSet<[u8; 16]> = entries
+        .iter()
+        .filter_map(|(hash, e)| matches!(e, Entry::Ready { coloured: false, .. }).then_some(*hash))
+        .collect();
+    if stale.is_empty() {
+        return;
+    }
+    for hash in &stale {
+        entries.remove(hash);
+    }
+    for (id, (_, c)) in &entities.map {
+        if let Component::Prop(p) = c
+            && stale.contains(&p.prop)
+        {
+            watch.dirty.insert(*id);
+        }
+    }
 }
 
 /// The hashes a catalogue accepts. A catalogue that does not decode (or is empty, as a failed
@@ -409,6 +502,13 @@ fn fetch_props(entities: Res<WorldEntities>, time: Res<Time<Real>>, mut cache: R
         let entries = &cache.entries;
         sync_watch(&mut watch, &entities, false, |h| matches!(entries.get(h), Some(Entry::Ready { .. })));
     }
+    // the palettes, once they are here: the props meshed without them are meshed again now
+    if let Some(palettes) = read_palettes(&mut watch) {
+        watch.palettes = Some(palettes);
+        recolour(&mut cache.entries, &mut watch, &entities);
+        let entries = &cache.entries;
+        sync_watch(&mut watch, &entities, false, |h| matches!(entries.get(h), Some(Entry::Ready { .. })));
+    }
     let PropWatch { waiting, asked, .. } = &mut *watch;
 
     // arrivals and timeouts first, so the ones still waiting count against the limit
@@ -457,15 +557,15 @@ fn fetch_props(entities: Res<WorldEntities>, time: Res<Time<Real>>, mut cache: R
 }
 
 /// Decodes and meshes the queued blobs in arrival order, within [`BUILD_BUDGET`] a frame.
-fn build_props(mut cache: ResMut<PropCache>, mut meshes: ResMut<Assets<Mesh>>) {
+fn build_props(mut cache: ResMut<PropCache>, mut meshes: ResMut<Assets<Mesh>>, watch: Res<PropWatch>) {
     if cache.queue.is_empty() {
         return;
     }
     let started = Instant::now();
     while let Some((hash, bytes)) = cache.queue.pop_front() {
         let tick = cache.tick;
-        let entry = match load(&bytes, hash) {
-            Ok((mesh, info)) => Entry::Ready { mesh: meshes.add(mesh), info: Arc::new(info), seen: tick },
+        let entry = match load(&bytes, hash, watch.palettes.as_ref()) {
+            Ok((mesh, info, coloured)) => Entry::Ready { mesh: meshes.add(mesh), info: Arc::new(info), seen: tick, coloured },
             Err(why) => {
                 crate::note!("[props] {}: {why}", Hash(hash).hex());
                 Entry::Failed { tries: MAX_TRIES, retry_at: f64::INFINITY }
@@ -479,11 +579,13 @@ fn build_props(mut cache: ResMut<PropCache>, mut meshes: ResMut<Assets<Mesh>>) {
     }
 }
 
-/// Decodes a blob under the hash it was asked for, and makes its mesh.
-fn load(bytes: &[u8], hash: [u8; 16]) -> Result<(Mesh, PropInfo), String> {
+/// Decodes a blob under the hash it was asked for, and makes its mesh in the colours of the palette
+/// its def's `palette_version` names. Also says whether that palette was there.
+fn load(bytes: &[u8], hash: [u8; 16], palettes: Option<&BTreeMap<u16, Palette>>) -> Result<(Mesh, PropInfo, bool), String> {
     let blob = PropBlob::decode_named(bytes, &Hash(hash)).map_err(|e| e.to_string())?;
     let voxel = blob.def.scale.scale().voxel_size();
-    let parts = mesh_parts(&blob.grid, blob.def.pivot, voxel)?;
+    let palette = palettes.and_then(|p| p.get(&blob.def.palette_version));
+    let parts = mesh_parts_with(&blob.grid, blob.def.pivot, voxel, palette)?;
     let info = PropInfo {
         footprint: blob.def.place.footprint.clone(),
         height: blob.def.place.height,
@@ -492,7 +594,7 @@ fn load(bytes: &[u8], hash: [u8; 16]) -> Result<(Mesh, PropInfo), String> {
         lights: socket_lights(&blob.def, voxel),
         motions: blob.def.behaviours.iter().filter_map(|b| if let Behaviour::Motion(m) = b { Some(m.kind) } else { None }).collect(),
     };
-    Ok((parts.into_mesh(), info))
+    Ok((parts.into_mesh(), info, palette.is_some()))
 }
 
 /// Adds a prop's footprint cells to the occupancy. The caller decides whether it takes cells.
@@ -568,7 +670,7 @@ fn show_props(
             continue;
         }
         let Some((_, Component::Prop(p))) = entities.map.get(&id) else { continue };
-        let Some(Entry::Ready { mesh, info, seen }) = cache.entries.get_mut(&p.prop) else {
+        let Some(Entry::Ready { mesh, info, seen, .. }) = cache.entries.get_mut(&p.prop) else {
             waiting.insert(id);
             continue;
         };
@@ -828,6 +930,12 @@ impl MeshParts {
 }
 
 pub fn mesh_parts(grid: &VoxelGrid, pivot: [u16; 3], voxel: f32) -> Result<MeshParts, String> {
+    mesh_parts_with(grid, pivot, voxel, None)
+}
+
+/// [`mesh_parts`], each face coloured by its voxel's index in `palette`, or by the fallback ramp
+/// where there is no palette (or the palette has no such index).
+pub fn mesh_parts_with(grid: &VoxelGrid, pivot: [u16; 3], voxel: f32, palette: Option<&Palette>) -> Result<MeshParts, String> {
     let size = grid.size().map(usize::from);
     // dense occupancy: the palette index of each voxel, 0 where it is empty (never stored)
     let mut occ = vec![0u8; size[0] * size[1] * size[2]];
@@ -880,7 +988,7 @@ pub fn mesh_parts(grid: &VoxelGrid, pivot: [u16; 3], voxel: f32) -> Result<MeshP
                     let quad = [corner(0, 0), corner(w, 0), corner(w, h), corner(0, h)];
                     let mut normal = [0.0f32; 3];
                     normal[d] = sign as f32;
-                    push_quad(&mut out, quad, normal, fallback_colour(colour));
+                    push_quad(&mut out, quad, normal, colour_of(palette, colour));
                 });
             }
             if out.quads() > MAX_QUADS {
@@ -933,6 +1041,14 @@ fn push_quad(out: &mut MeshParts, quad: [[f32; 3]; 4], normal: [f32; 3], colour:
     out.nrm.extend([normal; 4]);
     out.col.extend([colour; 4]);
     out.idx.extend(order.map(|i| start + i));
+}
+
+/// The colour of a voxel's palette index: the palette's colour for it, else the fallback ramp's.
+fn colour_of(palette: Option<&Palette>, index: u8) -> [f32; 4] {
+    match palette.and_then(|p| p.colour(index)) {
+        Some([r, g, b, a]) => [f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, f32::from(a) / 255.0],
+        None => fallback_colour(index),
+    }
 }
 
 fn fallback_colour(index: u8) -> [f32; 4] {
@@ -1284,5 +1400,63 @@ mod tests {
         }
         assert_eq!(frames, vec![64, 64, 22]);
         assert_eq!(got, (0..150).map(EntityId).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_voxel_takes_its_colour_from_its_palette_or_the_fallback_ramp() {
+        let palette = Palette::from_json(r#"{"version":1,"materials":[{"name":"wood","colours":[[10,20,30,255]]}]}"#).unwrap();
+        // every voxel is palette index 1
+        let solid = grid([1, 1, 1], |_| true);
+        let coloured = mesh_parts_with(&solid, [0, 0, 0], 0.1, Some(&palette)).unwrap();
+        assert_eq!(coloured.col.len(), 24);
+        for c in &coloured.col {
+            assert_eq!(*c, [10.0f32 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 1.0]);
+        }
+
+        // no palette: the fallback ramp, the same as `mesh_parts`
+        let [r, g, b] = FALLBACK_RAMP[1];
+        let fallback = [f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, 1.0];
+        for parts in [mesh_parts(&solid, [0, 0, 0], 0.1).unwrap(), mesh_parts_with(&solid, [0, 0, 0], 0.1, None).unwrap()] {
+            assert!(parts.col.iter().all(|c| *c == fallback));
+        }
+        // a palette that has no colour for the index: the fallback for that voxel
+        let empty = Palette::from_json(r#"{"version":1,"materials":[]}"#).unwrap();
+        let no_index = mesh_parts_with(&solid, [0, 0, 0], 0.1, Some(&empty)).unwrap();
+        assert!(no_index.col.iter().all(|c| *c == fallback));
+    }
+
+    #[test]
+    fn the_palette_file_decodes_and_each_palette_is_checked() {
+        let committed = include_str!("../../../data/props/palette.json");
+        let palettes = decode_palettes(committed.as_bytes()).unwrap();
+        assert_eq!(palettes.keys().copied().collect::<Vec<_>>(), vec![1]);
+        // index 1 is wood's darkest colour
+        assert_eq!(palettes[&1].colour(1), Some([90, 50, 20, 255]));
+
+        // a palette must be the version its key names, and the file is capped
+        assert!(decode_palettes(br#"{"2":{"version":1,"materials":[]}}"#).is_err());
+        assert!(decode_palettes(&vec![b' '; MAX_PALETTE_FILE + 1]).is_err());
+        // a file that does not decode is no palettes at all
+        assert!(palettes_of(b"not json").is_empty());
+    }
+
+    #[test]
+    fn a_palette_that_arrives_remeshes_the_props_meshed_without_it() {
+        let (mut watch, mut ents) = (PropWatch::default(), WorldEntities::default());
+        let mut entries = HashMap::new();
+        let ready = |coloured| Entry::Ready { mesh: Handle::default(), info: info(true), seen: 0, coloured };
+        entries.insert([7u8; 16], ready(false));
+        entries.insert([8u8; 16], ready(true));
+        let other = Prop { prop: [8; 16], ..prop_at([0, 0, 0], 0) };
+        ents.apply(&[change(1, 1, Some(prop_at([0, 0, 0], 0))), change(2, 2, Some(other))]);
+        sync_watch(&mut watch, &ents, true, |_| true);
+        watch.dirty.clear();
+
+        recolour(&mut entries, &mut watch, &ents);
+        // the mesh made without the palette is gone; the one made with it stays
+        assert!(!entries.contains_key(&[7u8; 16]));
+        assert!(entries.contains_key(&[8u8; 16]));
+        // only the prop that uses the stale mesh goes back to be shown again
+        assert_eq!(watch.dirty.iter().copied().collect::<Vec<_>>(), vec![EntityId(1)]);
     }
 }

@@ -7,6 +7,10 @@
 //! The output is a `catalogue.json`, a `<hash>.voxp` blob and a `<hash>.png` thumbnail per prop
 //! (lowercase hex hash), the folder `vox-server --props` reads. Output is deterministic: the
 //! same sources give the same bytes.
+//!
+//! It also writes `palette.json`: an object keyed by palette version (`"1": {...}`), each value
+//! the `vox_art::Palette` as it serialises. It holds the palette of every `palette_version` the
+//! props use, so the client can colour each prop from the palette its def names (vox-tol.4.19).
 
 use std::{
     collections::BTreeMap,
@@ -88,6 +92,8 @@ pub fn build(source: &Path, out: &Path) -> Result<Report, String> {
 
     let mut report = Report::default();
     let mut catalogue = Catalogue::default();
+    // the palette of each palette_version the props use
+    let mut palettes: BTreeMap<u16, Palette> = BTreeMap::new();
     // file name -> bytes, written only once everything passed
     let mut outputs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for path in &files {
@@ -104,6 +110,14 @@ pub fn build(source: &Path, out: &Path) -> Result<Report, String> {
             RecipeScale::World => return Err(format!("{shown}: a prop's recipe must be prop or fine scale")),
         };
         let d = src.def;
+        // the voxels hold indices into the source palette, so a prop can only name its version
+        if d.palette_version != palette.version {
+            return Err(format!(
+                "{shown}: palette_version {} is not the source palette's version {}",
+                d.palette_version, palette.version
+            ));
+        }
+        palettes.entry(d.palette_version).or_insert_with(|| palette.clone());
         let def = PropDef {
             id: d.id.clone(),
             name: d.name.clone(),
@@ -147,6 +161,7 @@ pub fn build(source: &Path, out: &Path) -> Result<Report, String> {
         report.props += 1;
     }
     outputs.insert("catalogue.json".into(), catalogue.encode().map_err(|e| e.to_string())?);
+    outputs.insert("palette.json".into(), encode_palettes(&palettes)?);
 
     fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     for (name, bytes) in &outputs {
@@ -158,6 +173,14 @@ pub fn build(source: &Path, out: &Path) -> Result<Report, String> {
         fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     Ok(report)
+}
+
+/// The palettes as `palette.json`: an object keyed by version, with a final newline. The keys are
+/// in order, so the same palettes always give the same bytes.
+fn encode_palettes(palettes: &BTreeMap<u16, Palette>) -> Result<Vec<u8>, String> {
+    let mut json = serde_json::to_vec_pretty(palettes).map_err(|e| format!("palette.json: {e}"))?;
+    json.push(b'\n');
+    Ok(json)
 }
 
 /// An isometric picture, as big as fits in [`THUMB_WIDTH`] pixels across.
