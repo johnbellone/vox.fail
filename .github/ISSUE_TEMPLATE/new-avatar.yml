@@ -1,0 +1,48 @@
+name: New avatar
+description: Ask for a new avatar (an animal or creature) with its own poses, faces and props.
+title: "Avatar: "
+labels: ["avatar-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A maintainer reads each request; adding the `avatar-go` label starts the avatar bot, which
+        builds it, renders it and opens a pull request for review (docs/avatar/avatar-workflow.md).
+        Original designs only: no real people, no trademarked characters.
+  - type: input
+    id: name
+    attributes:
+      label: What is it?
+      description: The creature, and a name if it has one.
+      placeholder: "A red panda"
+    validations:
+      required: true
+  - type: textarea
+    id: look
+    attributes:
+      label: How it looks
+      description: Colours, markings, shape, anything it wears.
+      placeholder: "Rust-red fur, a white face with red tear marks, a ringed bushy tail, a green scarf."
+    validations:
+      required: true
+  - type: textarea
+    id: poses
+    attributes:
+      label: Its own poses (up to 5)
+      description: One per line, and what its face does in each. The first four go on F9-F12.
+      placeholder: |
+        Bamboo snack: chews a bamboo stalk, eyes shut, happy
+        Tail curl: wraps its tail round itself, sleepy
+        Stand tall: stands on its back legs to look big, surprised
+    validations:
+      required: true
+  - type: textarea
+    id: props
+    attributes:
+      label: Props (optional, up to 3)
+      description: Things it holds or wears in some poses, and which.
+      placeholder: "A bamboo stalk in Bamboo snack."
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

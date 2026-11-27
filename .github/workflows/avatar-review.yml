@@ -1,0 +1,122 @@
+name: Avatar review
+
+# The avatar review bot (docs/avatar/avatar-workflow.md). On a pull request labelled `avatar`, it
+# finds the avatar it adds (assets/models/<id>.glb), checks its files, its model and the pull
+# request's description against the avatar format (tools/review/avatar_pr.py), renders the
+# close-up sheet as an artifact, and posts (or updates) one comment with the result. When
+# everything passes it marks the pull request ready and asks the repository's owner to review.
+# The avatar request bot (avatar-request.yml) calls it for the pull requests it opens.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, ready_for_review]
+  workflow_call:
+    inputs:
+      pr:
+        description: "The pull request to review"
+        type: number
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: avatar-review-${{ inputs.pr || github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: inputs.pr || contains(github.event.pull_request.labels.*.name, 'avatar')
+    runs-on: ubuntu-24.04
+    env:
+      PR: ${{ inputs.pr || github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ inputs.pr || github.event.pull_request.number }}/head
+          persist-credentials: false
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-numpy python3-pil
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Review tools
+        working-directory: tools/review
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Which avatar
+        id: avatar
+        run: |
+          ids=$(gh api "repos/$GH_REPO/pulls/$PR/files" --paginate -q '.[].filename' | sed -n 's#^assets/models/\([a-z][a-z0-9_]*\)\.glb$#\1#p' | sort -u)
+          if [ "$(echo "$ids" | grep -c .)" -ne 1 ]; then
+            echo "::error::an avatar pull request adds exactly one assets/models/<id>.glb (found: ${ids:-none})"
+            echo "id=" >> "$GITHUB_OUTPUT"
+          else
+            echo "id=$ids" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check
+        id: check
+        if: steps.avatar.outputs.id != ''
+        run: |
+          gh api "repos/$GH_REPO/pulls/$PR" -q '.body // ""' > "$RUNNER_TEMP/body.md"
+          if python3 tools/review/avatar_pr.py check "${{ steps.avatar.outputs.id }}" --body "$RUNNER_TEMP/body.md" > "$RUNNER_TEMP/check.txt"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$RUNNER_TEMP/check.txt"
+      - name: Render the close-up sheet
+        id: render
+        if: steps.avatar.outputs.id != ''
+        continue-on-error: true
+        run: node tools/review/render_sheet.mjs "${{ steps.avatar.outputs.id }}" "$RUNNER_TEMP/sheet/${{ steps.avatar.outputs.id }}-poses.png"
+      - uses: actions/upload-artifact@v4
+        if: steps.avatar.outputs.id != ''
+        with:
+          name: avatar-review-${{ steps.avatar.outputs.id }}
+          path: ${{ runner.temp }}/sheet/
+          if-no-files-found: ignore
+      - name: Comment
+        if: always()
+        run: |
+          marker='<!-- avatar-review-bot -->'
+          id='${{ steps.avatar.outputs.id }}'
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          {
+            echo "$marker"
+            if [ -z "$id" ]; then
+              echo "**Avatar review:** this pull request doesn't add exactly one \`assets/models/<id>.glb\`, so there's no avatar to check."
+            elif [ "${{ steps.check.outputs.ok }}" = "true" ] && [ "${{ steps.render.outcome }}" = "success" ]; then
+              echo "**Avatar review: \`$id\` passes.** Its files, model and this description match the avatar format, and its close-up sheet renders ([artifact]($run_url)). Ready for a person's review: the checklist is in \`.agents/skills/new-avatar/SKILL.md\` (\"Reviewing an avatar pull request\")."
+            else
+              echo "**Avatar review: \`$id\` isn't ready yet.**"
+              echo
+              grep '^- ' "$RUNNER_TEMP/check.txt" 2>/dev/null || true
+              [ "${{ steps.render.outcome }}" = "success" ] || echo "- the close-up sheet didn't render (see [the run]($run_url))"
+              echo
+              echo "Fix these and push, or edit the description; this comment updates itself. The format: \`docs/avatar/avatar-workflow.md\`."
+            fi
+          } > "$RUNNER_TEMP/comment.md"
+          existing=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate -q ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GH_REPO/issues/comments/$existing" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          else
+            gh api "repos/$GH_REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          fi
+      - name: Submit for review
+        if: steps.check.outputs.ok == 'true' && steps.render.outcome == 'success'
+        run: |
+          # (marking ready has no REST call: gh pr ready uses GraphQL)
+          if [ "$(gh api "repos/$GH_REPO/pulls/$PR" -q .draft)" = "true" ]; then gh pr ready "$PR"; fi
+          author=$(gh api "repos/$GH_REPO/pulls/$PR" -q .user.login)
+          owner='${{ github.repository_owner }}'
+          if [ "$author" != "$owner" ]; then gh api "repos/$GH_REPO/pulls/$PR/requested_reviewers" -f "reviewers[]=$owner" > /dev/null; fi
+      - name: Fail when not ready
+        if: steps.avatar.outputs.id == '' || steps.check.outputs.ok != 'true' || steps.render.outcome != 'success'
+        run: exit 1
