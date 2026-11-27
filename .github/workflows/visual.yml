@@ -26,7 +26,7 @@ jobs:
       - name: System packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
             mesa-vulkan-drivers xvfb python3-pil
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
