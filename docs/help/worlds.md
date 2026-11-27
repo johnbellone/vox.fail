@@ -5,14 +5,14 @@ worlds through portals.
 
 ## The Void
 
-The Void is the first world. It is an ethereal, flat, luminous space: a pale polished floor
-that goes on into bright fog, with three moons faint in the light. You arrive in a circle of
-pale pillars with glowing tops.
+The Void is the first world. It is an ethereal, flat, luminous space: a pale polished floor,
+25 km across, going on into a bright haze, with three moons faint in the light. There is room
+to build almost anywhere. You arrive in a circle of pale pillars with glowing tops.
 
 - To the north stands the **First Gate**, a lone doorway. It leads to the yard.
 - To the west is the black **Ember Door**. It leads to the islands.
 
-Far off in the fog there is a stair to nowhere, some monoliths and empty doorframes.
+Far off in the haze there is a stair to nowhere, some monoliths and empty doorframes.
 
 ## The yard
 
@@ -56,7 +56,7 @@ Commands:
 ## Plots, authority and raids
 
 Authority is the currency every world shares. You start with 25, and you earn more by staying
-in worlds and building. A plot (20 authority) is 16 × 16 blocks, which only you, or a group you
+in worlds and building. A plot (20 authority) is 64 × 64 blocks, which only you, or a group you
 share it with, can build in. A raid is for a raid party: its leader pays 10 authority; when two or more party members spend
 ten minutes in a world together within the hour, each member who is there gets a trophy and 15
 authority (up to twice a day).

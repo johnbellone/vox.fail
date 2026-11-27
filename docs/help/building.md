@@ -1,6 +1,6 @@
 # Building
 
-You build with blocks. Each block is a cube, 0.5 metres on a side.
+You build with blocks. Each block is a cube, a quarter of a metre (0.25 m) on a side.
 
 ## Breaking and placing
 
@@ -32,12 +32,12 @@ Pick puts the block you aim at into your hand.
 
 ## Blocks
 
-Every block is 0.5 m. These are the blocks in the game:
+Every block is 0.25 m. These are the blocks in the game:
 
 grass, dirt, stone, cobblestone, bricks, planks, log, sand, gravel, snow, leaves, glass,
 concrete, metal, tile, lamp, water, obsidian, basalt, magma, ash, crystal, fire, pearl, lumen
 
 ## Where you can build
 
-A **plot** is a square of 16 × 16 blocks. You claim one for 20 authority. Only you, or a group
-you share it with, can build on it.
+A **plot** is a square of 64 × 64 blocks (16 × 16 m). You claim one for 20 authority, and you
+can hold up to six in each world. Only you, or a group you share it with, can build on it.
