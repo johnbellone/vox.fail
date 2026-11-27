@@ -12,14 +12,24 @@
 //! Voice ([`VoicePacket`], protocol 6) is one short ADPCM packet of speech, sent by a player
 //! and passed on by the server to the players who may hear it. The server does not decode it.
 //! Its messages are the last variants of [`ToServer`] and [`ToClient`].
+//!
+//! Entities ([`crate::entity`]) are the things placed in a world beside its blocks. Right
+//! after [`ToClient::Ready`] the server sends every entity in [`ToClient::Entities`] batches
+//! of at most [`ENTITIES_PER_MESSAGE`]. A change to an entity (placed, changed or removed)
+//! takes the next edit number, so it shares `seq` with the edits and arrives in the same order
+//! for everyone. A refused [`ToServer::Put`], [`ToServer::Remove`] or [`ToServer::Build`] is
+//! answered with [`ToClient::EntityRefused`] to its sender only.
 
+use crate::entity::{Component, EntityId, EntityWhy};
 use crate::world::{Bounds, Cell, ChunkKey, Why};
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever these messages change in a way old players can't read. 6: travel by the
 /// server (`Through`, `Travel`; `Notice` came after it); 7: voice (`ToServer::Voice`,
-/// `ToClient::Voice`); 8: the ground's water in weather keyframes (`Keyframe::ground`).
-pub const PROTOCOL: u32 = 8;
+/// `ToClient::Voice`); 8: the ground's water in weather keyframes (`Keyframe::ground`); 9:
+/// world entities (`ToServer::Put`, `Remove`, `Build`, `ToClient::Entities`,
+/// `ToClient::EntityRefused`).
+pub const PROTOCOL: u32 = 9;
 
 /// Voice channel: heard by players near the speaker.
 pub const VOICE_NEARBY: u8 = 0;
@@ -29,6 +39,12 @@ pub const VOICE_PARTY: u8 = 1;
 pub const VOICE_SAMPLES: u16 = 320;
 /// Bytes of ADPCM data in one voice packet (4 bits per sample).
 pub const VOICE_BYTES: usize = 160;
+/// Most entities in one [`ToClient::Entities`] message.
+pub const ENTITIES_PER_MESSAGE: usize = 512;
+/// Largest frame the world server accepts: `bins/vox-server` sets its WebSocket
+/// `max_message_size` to this and refuses bigger frames. Senders batch to stay under it: the
+/// server splits entities so that no [`ToClient::Entities`] goes over this.
+pub const MAX_MESSAGE: usize = 64 * 1024;
 
 /// One packet of speech: 320 samples of 4-bit ADPCM, with the decoder's starting state.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -86,6 +102,16 @@ pub enum ToServer {
     Through { portal: String, side: i8 },
     /// A packet of speech from this player. Added last, so older messages keep their numbers.
     Voice(VoicePacket),
+    /// Place entity `entity` (None: a new one) with `component`, or change it. `expect` is the
+    /// seq of the last change to that entity the sender saw; an older one is refused as
+    /// [`EntityWhy::Changed`]. Added last, so older messages keep their numbers.
+    Put { id: u32, entity: Option<EntityId>, expect: Option<u64>, component: Component },
+    /// Remove entity `entity`; `expect` as for [`ToServer::Put`]. Added last, so older messages
+    /// keep their numbers.
+    Remove { id: u32, entity: EntityId, expect: Option<u64> },
+    /// Build the node `node` (the editor's build step). Added last, so older messages keep
+    /// their numbers.
+    Build { id: u32, node: EntityId },
 }
 
 /// An edit the server made.
@@ -141,6 +167,21 @@ pub enum ToClient {
     /// Speech from `player`, passed on by the server. Added last, so older messages keep
     /// their numbers.
     Voice { player: u32, packet: VoicePacket },
+    /// Changes to the world's entities, in `seq` order, at most [`ENTITIES_PER_MESSAGE`] to a
+    /// message. Added last, so older messages keep their numbers.
+    Entities(Vec<EntityChange>),
+    /// A [`ToServer::Put`], [`ToServer::Remove`] or [`ToServer::Build`] that was refused; sent
+    /// to its sender only. Added last, so older messages keep their numbers.
+    EntityRefused { id: u32, why: EntityWhy },
+}
+
+/// A change to one entity: its new component, or `None` when it was removed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EntityChange {
+    /// the world's edit number for this change (shared with the edits)
+    pub seq: u64,
+    pub entity: EntityId,
+    pub component: Option<Component>,
 }
 
 impl ToClient {
@@ -162,6 +203,11 @@ pub fn decode<'a, T: Deserialize<'a>>(b: &'a [u8]) -> Result<T, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entity::{Axis, Dest, Portal, Spawn};
+
+    fn spawn() -> Component {
+        Component::Spawn(Spawn { at: [1.0, 2.0, 3.0], yaw: 90.0 })
+    }
 
     #[test]
     fn round_trips() {
@@ -187,6 +233,11 @@ mod tests {
             ToClient::Correct { at: [1.0, 2.0, 3.0] },
             ToClient::Travel { url: ":7781".into(), ticket: Some("t1.a.b".into()), arrive: [0.0, 0.0, 11.5] },
             ToClient::Notice { text: "The altar: reached".into() },
+            ToClient::Entities(vec![
+                EntityChange { seq: 1 << 40, entity: EntityId(3), component: Some(spawn()) },
+                EntityChange { seq: (1 << 40) | 1, entity: EntityId(4), component: None },
+            ]),
+            ToClient::EntityRefused { id: 5, why: EntityWhy::Changed },
         ];
         for m in msgs {
             let back: ToClient = decode(&encode(&m)).unwrap();
@@ -200,6 +251,36 @@ mod tests {
         assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
         // an edit is small
         assert!(encode(&m).len() < 12);
+
+        let msgs = vec![
+            ToServer::Put { id: 1, entity: None, expect: None, component: spawn() },
+            ToServer::Put { id: 2, entity: Some(EntityId(3)), expect: Some(1 << 40), component: spawn() },
+            ToServer::Remove { id: 3, entity: EntityId(3), expect: None },
+            ToServer::Build { id: 4, node: EntityId(9) },
+        ];
+        for m in msgs {
+            assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
+        }
+    }
+
+    #[test]
+    fn a_full_batch_of_typical_portals_fits_one_message() {
+        let portal = Component::Portal(Portal {
+            name: "yard gate".into(),
+            at: [0.0, 0.0, 11.5],
+            axis: Axis::Z,
+            size: [8.0, 16.0],
+            yaw: 180.0,
+            level: "void".into(),
+            to: Dest::Url { url: ":7781".into(), arrive: [0.0, 0.0, -39.5] },
+            key: Some(-1_234_567_890),
+        });
+        let batch: Vec<EntityChange> = (0..ENTITIES_PER_MESSAGE as u32)
+            .map(|i| EntityChange { seq: (1 << 40) | i as u64, entity: EntityId(i), component: Some(portal.clone()) })
+            .collect();
+        let bytes = encode(&ToClient::Entities(batch.clone()));
+        assert!(bytes.len() < MAX_MESSAGE, "a batch is {} bytes", bytes.len());
+        assert_eq!(decode::<ToClient>(&bytes).unwrap(), ToClient::Entities(batch));
     }
 
     fn voice() -> VoicePacket {
@@ -257,6 +338,11 @@ mod tests {
         assert_eq!(encode(&ToClient::Travel { url: String::new(), ticket: None, arrive: [0.0; 3] })[0], 11);
         assert_eq!(encode(&ToClient::Notice { text: String::new() })[0], 12);
         assert_eq!(encode(&ToClient::Voice { player: 0, packet: voice() })[0], 13);
+        assert_eq!(encode(&ToServer::Put { id: 0, entity: None, expect: None, component: spawn() })[0], 7);
+        assert_eq!(encode(&ToServer::Remove { id: 0, entity: EntityId(0), expect: None })[0], 8);
+        assert_eq!(encode(&ToServer::Build { id: 0, node: EntityId(0) })[0], 9);
+        assert_eq!(encode(&ToClient::Entities(vec![]))[0], 14);
+        assert_eq!(encode(&ToClient::EntityRefused { id: 0, why: EntityWhy::Invalid })[0], 15);
     }
 
     #[test]

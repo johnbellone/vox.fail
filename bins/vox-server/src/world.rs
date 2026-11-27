@@ -485,6 +485,12 @@ impl WorldState {
         let Some(p) = self.players.get_mut(&conn) else { return };
         match msg {
             ToServer::Hello { .. } | ToServer::Watch { .. } => {}
+            // entity edits arrive with protocol 9; until this world handles them (the editor's
+            // rights and rules), every one is refused so the sender isn't left waiting
+            ToServer::Put { id, .. } | ToServer::Remove { id, .. } | ToServer::Build { id, .. } => {
+                let why = vox_core::entity::EntityWhy::Unavailable;
+                Self::send_to(&p.tx, &ToClient::EntityRefused { id, why });
+            }
             ToServer::Through { portal, side } => {
                 if !p.bucket.take(now) {
                     return;

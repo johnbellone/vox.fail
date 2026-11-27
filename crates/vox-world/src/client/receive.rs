@@ -233,6 +233,9 @@ pub fn receive(
                         w.ready = false;
                     }
                     ToClient::Travel { url, ticket, arrive } => w.travelled(&url, ticket, arrive),
+                    // world entities (protocol 9): drawn from in a later step of the editor work;
+                    // until then the portals still come from the settings in Welcome
+                    ToClient::Entities(_) | ToClient::EntityRefused { .. } => {}
                     ToClient::Notice { text } => {
                         // from the server, so plain text only, and short
                         let text: String = text.chars().filter(|c| !c.is_control()).take(120).collect();
