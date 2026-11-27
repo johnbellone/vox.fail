@@ -8,12 +8,55 @@
 //!
 //! Poses are opaque to the server (the app's own pose format), apart from where the player
 //! is, which edits are checked against.
+//!
+//! Voice ([`VoicePacket`], protocol 6) is one short ADPCM packet of speech, sent by a player
+//! and passed on by the server to the players who may hear it. The server does not decode it.
+//! Its messages are the last variants of [`ToServer`] and [`ToClient`].
 
 use crate::world::{Bounds, Cell, ChunkKey, Why};
 use serde::{Deserialize, Serialize};
 
-/// Bumped whenever these messages change in a way old players can't read.
-pub const PROTOCOL: u32 = 6;
+/// Bumped whenever these messages change in a way old players can't read. 6: travel by the
+/// server (`Through`, `Travel`; `Notice` came after it); 7: voice (`ToServer::Voice`,
+/// `ToClient::Voice`).
+pub const PROTOCOL: u32 = 7;
+
+/// Voice channel: heard by players near the speaker.
+pub const VOICE_NEARBY: u8 = 0;
+/// Voice channel: heard by the speaker's raid party.
+pub const VOICE_PARTY: u8 = 1;
+/// Samples in one voice packet (20 ms at 16 kHz).
+pub const VOICE_SAMPLES: u16 = 320;
+/// Bytes of ADPCM data in one voice packet (4 bits per sample).
+pub const VOICE_BYTES: usize = 160;
+
+/// One packet of speech: 320 samples of 4-bit ADPCM, with the decoder's starting state.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct VoicePacket {
+    /// [`VOICE_NEARBY`] or [`VOICE_PARTY`]
+    pub channel: u8,
+    /// the speaker's packet number, so the listener can spot gaps
+    pub seq: u32,
+    /// samples in this packet; must be [`VOICE_SAMPLES`]
+    pub samples: u16,
+    /// the predictor the decoder starts from
+    pub pred: i16,
+    /// the step index the decoder starts from (0..=88)
+    pub index: u8,
+    /// the 4-bit codes, two per byte; must be [`VOICE_BYTES`] long
+    pub data: Vec<u8>,
+}
+
+impl VoicePacket {
+    /// Checks the sizes and ranges a packet from the network must have. Decoding and
+    /// playing a packet that fails this is never safe, so reject it first.
+    pub fn valid(&self) -> bool {
+        self.channel <= VOICE_PARTY
+            && self.samples == VOICE_SAMPLES
+            && self.data.len() == VOICE_BYTES
+            && self.index <= 88
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ToServer {
@@ -41,6 +84,8 @@ pub enum ToServer {
     /// side, -1 the other). The world checks you're there and answers [`ToClient::Travel`].
     /// Added last, so older messages keep their numbers.
     Through { portal: String, side: i8 },
+    /// A packet of speech from this player. Added last, so older messages keep their numbers.
+    Voice(VoicePacket),
 }
 
 /// An edit the server made.
@@ -93,13 +138,16 @@ pub enum ToClient {
     Travel { url: String, ticket: Option<String>, arrive: [f32; 3] },
     /// Something everyone here should know (a dungeon's objective reached), shown for a moment.
     Notice { text: String },
+    /// Speech from `player`, passed on by the server. Added last, so older messages keep
+    /// their numbers.
+    Voice { player: u32, packet: VoicePacket },
 }
 
 impl ToClient {
     /// May be dropped when a player can't keep up (a newer one will follow).
     pub fn droppable(&self) -> bool {
         // (a missed weather keyframe is made up by the next one)
-        matches!(self, ToClient::Pose { .. } | ToClient::Weather(_))
+        matches!(self, ToClient::Pose { .. } | ToClient::Weather(_) | ToClient::Voice { .. })
     }
 }
 
@@ -154,9 +202,89 @@ mod tests {
         assert!(encode(&m).len() < 12);
     }
 
+    fn voice() -> VoicePacket {
+        VoicePacket {
+            channel: VOICE_PARTY,
+            seq: 42,
+            samples: VOICE_SAMPLES,
+            pred: -300,
+            index: 88,
+            data: vec![0x5a; VOICE_BYTES],
+        }
+    }
+
+    #[test]
+    fn voice_round_trips_and_is_small() {
+        let m = ToServer::Voice(voice());
+        let bytes = encode(&m);
+        assert_eq!(decode::<ToServer>(&bytes).unwrap(), m);
+        assert!(bytes.len() < 200, "voice packet is {} bytes", bytes.len());
+
+        let m = ToClient::Voice { player: 9, packet: voice() };
+        let bytes = encode(&m);
+        assert_eq!(decode::<ToClient>(&bytes).unwrap(), m);
+        assert!(bytes.len() < 200, "voice packet is {} bytes", bytes.len());
+        assert!(m.droppable());
+    }
+
+    #[test]
+    fn voice_valid_rejects_bad_packets() {
+        assert!(voice().valid());
+        let mut p = voice();
+        p.channel = 2;
+        assert!(!p.valid());
+        let mut p = voice();
+        p.samples = VOICE_SAMPLES - 1;
+        assert!(!p.valid());
+        let mut p = voice();
+        p.data.pop();
+        assert!(!p.valid());
+        let mut p = voice();
+        p.index = 89;
+        assert!(!p.valid());
+    }
+
+    #[test]
+    fn old_variants_keep_their_first_byte() {
+        // the variant index is the first byte postcard writes; old players rely on it
+        assert_eq!(encode(&ToServer::Hello { protocol: PROTOCOL, name: String::new(), avatar: vec![], token: None })[0], 0);
+        assert_eq!(encode(&ToServer::Edit { id: 0, cell: [0, 0, 0], block: 0 })[0], 1);
+        assert_eq!(encode(&ToServer::Watch { protocol: PROTOCOL })[0], 4);
+        assert_eq!(encode(&ToServer::Through { portal: String::new(), side: 1 })[0], 5);
+        assert_eq!(encode(&ToServer::Voice(voice()))[0], 6);
+        assert_eq!(encode(&ToClient::Ready)[0], 2);
+        assert_eq!(encode(&ToClient::Correct { at: [0.0; 3] })[0], 10);
+        assert_eq!(encode(&ToClient::Travel { url: String::new(), ticket: None, arrive: [0.0; 3] })[0], 11);
+        assert_eq!(encode(&ToClient::Notice { text: String::new() })[0], 12);
+        assert_eq!(encode(&ToClient::Voice { player: 0, packet: voice() })[0], 13);
+    }
+
     #[test]
     fn garbage_is_an_error() {
         assert!(decode::<ToServer>(&[250, 1, 2]).is_err());
         assert!(decode::<ToClient>(&[]).is_err());
+    }
+
+    #[test]
+    fn truncated_voice_is_an_error() {
+        // a cut-off packet must fail to decode, not come out as a short packet
+        let bytes = encode(&ToServer::Voice(voice()));
+        assert!(bytes.len() > 50);
+        assert!(decode::<ToServer>(&bytes[..50]).is_err());
+
+        let bytes = encode(&ToClient::Voice { player: 9, packet: voice() });
+        assert!(bytes.len() > 50);
+        assert!(decode::<ToClient>(&bytes[..50]).is_err());
+    }
+
+    #[test]
+    fn voice_with_the_wrong_length_decodes_but_is_not_valid() {
+        // the length is checked after decoding: the packet itself is well formed
+        let mut p = voice();
+        p.data = vec![0x5a; VOICE_BYTES + 100];
+        let bytes = encode(&ToServer::Voice(p.clone()));
+        let back: ToServer = decode(&bytes).unwrap();
+        assert_eq!(back, ToServer::Voice(p.clone()));
+        assert!(!p.valid());
     }
 }

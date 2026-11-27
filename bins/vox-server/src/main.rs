@@ -1,5 +1,6 @@
 //! Run a world: `vox-server [--listen 127.0.0.1:7780] [--db world.db] [--name void]
 //! [--seed data/levels/void.json] [--blocks data/blocks.json] [--max-players 100] [--max-watchers 200] [--trust-moves]
+//! [--voice-radius <blocks, default 32>]
 //! [--directory-key <hex or file> [--guests]] [--directory-url http://127.0.0.1:7700]
 //! [--snapshots <dir> | --no-snapshots] [--snapshot-every <seconds>] [--oxen [<binary>]]`.
 //!

@@ -279,6 +279,39 @@ async fn friends_groups_and_raids() {
     let _ = d;
 }
 
+#[tokio::test]
+async fn raid_parties_in_rules() {
+    let (_d, base) = serve().await;
+    let ann = P::new(&base, "Ann").await;
+    let bob = P::new(&base, "Bob").await;
+    let cy = P::new(&base, "Cyd").await;
+    let dan = P::new(&base, "Dan").await;
+    let eve = P::new(&base, "Eve").await;
+    // invites need friends first
+    for (asker, who, asker_name, who_name) in [(&ann, &bob, "Ann", "Bob"), (&cy, &dan, "Cyd", "Dan"), (&ann, &cy, "Ann", "Cyd")] {
+        asker.post("/api/friends", json!({"name": who_name})).await;
+        assert_eq!(who.post("/api/friends/answer", json!({"name": asker_name, "accept": true})).await.0, 200);
+    }
+    // two parties of two, and one of only its leader, which the rules leave out
+    let (_, a) = ann.post("/api/crews", json!({"kind": "party", "name": "Night Owls"})).await;
+    ann.post("/api/crews/invite", json!({"crew": a["id"], "name": "Bob"})).await;
+    assert_eq!(bob.post("/api/crews/answer", json!({"crew": a["id"], "accept": true})).await.0, 200);
+    let (_, b) = cy.post("/api/crews", json!({"kind": "party", "name": "Dawn Patrol"})).await;
+    cy.post("/api/crews/invite", json!({"crew": b["id"], "name": "Dan"})).await;
+    assert_eq!(dan.post("/api/crews/answer", json!({"crew": b["id"], "accept": true})).await.0, 200);
+    eve.post("/api/crews", json!({"kind": "party", "name": "Alone"})).await;
+    // a group is not a party, even with two members
+    let (_, g) = ann.post("/api/crews", json!({"kind": "group", "name": "Builders"})).await;
+    ann.post("/api/crews/invite", json!({"crew": g["id"], "name": "Cyd"})).await;
+    cy.post("/api/crews/answer", json!({"crew": g["id"], "accept": true})).await;
+    let r = rules(&base, "void").await;
+    let mut parties: Vec<Vec<u64>> = r["parties"].as_array().unwrap().iter().map(|p| p.as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect()).collect();
+    parties.sort();
+    let mut want = vec![vec![ann.id, bob.id], vec![cy.id, dan.id]];
+    want.sort();
+    assert_eq!(parties, want);
+}
+
 #[test]
 fn world_ids() {
     assert_eq!(vox_directory::world_id("The Void"), "void");

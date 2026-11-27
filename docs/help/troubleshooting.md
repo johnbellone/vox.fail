@@ -58,3 +58,32 @@ Linux has no such queue.
 
 **Fix:** use OBS window capture to show the app. If you need a camera device, use OBS's own
 virtual camera.
+
+## Nobody hears me
+
+**Cause:** one of these:
+
+- Voice is off. It is off by default.
+- You are on the party channel, and the other player is not in your raid party in this world.
+  The party rules are read from the directory about every 30 seconds, so a new party can take
+  that long to count.
+- Push to talk is on and you are not holding B (or D-pad right on a controller).
+- You are too far away. On the nearby channel, the default distance is 32 blocks.
+- The other player is muted on your Voice screen, or has muted you (you cannot tell).
+
+**Fix:** press Esc, choose **Voice**, and check these in order: **Enable voice** says **On**;
+**Channel** matches who you want to reach; **Talk mode** is what you expect. Then hold B
+(or D-pad right) to talk, and walk closer. Check that no **Mute** row says **Muted**.
+
+## I hear an echo
+
+**Cause:** your microphone picks up the sound from your speakers, and sends it back.
+
+**Fix:** use headphones.
+
+## The microphone light stays on
+
+**Cause:** voice is on, so the microphone is open (push to talk only stops it from sending).
+Your operating system may show that as a microphone indicator.
+
+**Fix:** turn voice off with **Enable voice** on the Voice screen.

@@ -7,10 +7,12 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use vox_core::wire::VOICE_PARTY;
 
 use crate::{
     blocks::Blocks,
     client::{CamMode, WorldClient},
+    voice::plugin::{VoiceSettings, VoiceState},
     input::{
         Action, ActiveDevice, UiMode,
         hints::{Hint, HintStyle, hint_node},
@@ -427,6 +429,110 @@ pub fn pretty(name: &str) -> String {
     }
 }
 
+#[derive(Component)]
+struct VoiceMark;
+
+/// The text of the mic marker: what you are sending on, or nothing (voice off, or not sending).
+pub fn mic_text(enabled: bool, transmitting: bool, channel: u8) -> &'static str {
+    match (enabled && transmitting, channel == VOICE_PARTY) {
+        (false, _) => "",
+        (true, true) => "MIC Party",
+        (true, false) => "MIC Nearby",
+    }
+}
+
+/// How long after its last packet a player still counts as speaking, in seconds.
+const SPEAKING_FOR: f64 = 0.4;
+/// Most names the HUD lists under the mic marker.
+const SPEAKERS_MAX: usize = 4;
+
+/// The names to list under the mic marker: players heard within [`SPEAKING_FOR`] seconds, in the
+/// roster's order (by name), at most [`SPEAKERS_MAX`].
+pub fn speaker_names(roster: &[(u32, String)], speaking: &HashMap<u32, f64>, now: f64) -> Vec<String> {
+    roster
+        .iter()
+        .filter(|(id, _)| speaking.get(id).is_some_and(|&heard| now - heard < SPEAKING_FOR))
+        .take(SPEAKERS_MAX)
+        .map(|(_, name)| name.clone())
+        .collect()
+}
+
+/// The speaker list text: one "> Name" line each, or nothing.
+pub fn speaker_text(names: &[String]) -> String {
+    names.iter().map(|n| format!("> {n}")).collect::<Vec<_>>().join("\n")
+}
+
+#[derive(Component)]
+struct SpeakerMark;
+
+/// Puts `want` in a HUD text and shows the text only while it is not empty.
+fn show_text(text: &mut Text, vis: &mut Visibility, want: &str) {
+    let show = if want.is_empty() { Visibility::Hidden } else { Visibility::Inherited };
+    if *vis != show {
+        *vis = show;
+    }
+    if text.0 != want {
+        text.0 = want.into();
+    }
+}
+
+/// The voice corner, bottom left (the hotbar is bottom centre): the mic marker, and under it
+/// the names of players who are speaking. Each text hides itself while it is empty.
+fn spawn_voice_mark(mut commands: Commands, style: Res<HintStyle>) {
+    let label = || {
+        (
+            Text::new(""),
+            TextFont { font: style.font.clone().into(), font_size: bevy::text::FontSize::Px(12.0), ..default() },
+            TextColor(Color::srgb(0.98, 0.98, 1.0)),
+            crate::input::hints::pixel_shadow(),
+            Node {
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                border_radius: BorderRadius::all(Val::Px(4.0)),
+                ..default()
+            },
+            BackgroundColor(FRAME),
+            Pickable::IGNORE,
+            Visibility::Hidden,
+        )
+    };
+    commands
+        .spawn((
+            Node { position_type: PositionType::Absolute, bottom: Val::Px(14.0), left: Val::Px(14.0), flex_direction: FlexDirection::Column, row_gap: Val::Px(4.0), ..default() },
+            Pickable::IGNORE,
+        ))
+        .with_children(|corner| {
+            corner.spawn((label(), VoiceMark));
+            corner.spawn((label(), SpeakerMark));
+        });
+}
+
+// the two texts are told apart by their markers, which the filters spell out
+#[allow(clippy::type_complexity)]
+fn voice_mark(
+    settings: Option<Res<VoiceSettings>>,
+    state: Option<Res<VoiceState>>,
+    w: Res<WorldClient>,
+    mut mic: Query<(&mut Text, &mut Visibility), (With<VoiceMark>, Without<SpeakerMark>)>,
+    mut speakers: Query<(&mut Text, &mut Visibility), (With<SpeakerMark>, Without<VoiceMark>)>,
+) {
+    // without the voice plugin there is nothing to show
+    let (mic_want, speakers_want) = match (settings, state) {
+        (Some(s), Some(st)) => {
+            let mic_want = mic_text(s.enabled, st.transmitting, s.channel);
+            // the roster is only read while voice is on: it is a copy of the player list
+            let speakers_want = if s.enabled { speaker_text(&speaker_names(&w.others_named(), &st.speaking, w.now())) } else { String::new() };
+            (mic_want.to_string(), speakers_want)
+        }
+        _ => (String::new(), String::new()),
+    };
+    for (mut text, mut vis) in &mut mic {
+        show_text(&mut text, &mut vis, &mic_want);
+    }
+    for (mut text, mut vis) in &mut speakers {
+        show_text(&mut text, &mut vis, &speakers_want);
+    }
+}
+
 /// The pixel HUD: hotbar, block names, hints. Needs [`crate::input::InputPlugin`].
 pub struct HudPlugin;
 
@@ -436,8 +542,8 @@ impl Plugin for HudPlugin {
             .init_resource::<BlockIcons>()
             .init_resource::<HintStyle>()
             .init_resource::<QuickWheel>()
-            .add_systems(Startup, (spawn, spawn_wheel))
-            .add_systems(Update, (quick_wheel.before(crate::client::controls), update, draw_wheel));
+            .add_systems(Startup, (spawn, spawn_wheel, spawn_voice_mark))
+            .add_systems(Update, (quick_wheel.before(crate::client::controls), update, draw_wheel, voice_mark));
     }
 }
 
@@ -459,6 +565,35 @@ mod tests {
         let top = wheel_spot(0, 9);
         assert!(top.x.abs() < 1e-3 && top.y < 0.0, "slot 0 at the top: {top}");
         assert!((wheel_spot(3, 9).length() - WHEEL_RADIUS).abs() < 1e-3);
+    }
+
+    #[test]
+    fn mic_marker_shows_only_while_sending_with_voice_on() {
+        assert_eq!(mic_text(true, true, vox_core::wire::VOICE_NEARBY), "MIC Nearby");
+        assert_eq!(mic_text(true, true, VOICE_PARTY), "MIC Party");
+        assert_eq!(mic_text(false, true, VOICE_PARTY), "", "voice off shows nothing");
+        assert_eq!(mic_text(true, false, VOICE_PARTY), "", "silent shows nothing");
+    }
+
+    #[test]
+    fn speakers_are_heard_inside_the_window_in_roster_order_capped_at_four() {
+        let roster: Vec<(u32, String)> = (1..=6).map(|i| (i, format!("P{i}"))).collect();
+        let mut speaking = HashMap::new();
+        speaking.insert(1, 9.7); // 0.3 s ago: speaking
+        speaking.insert(2, 9.9);
+        speaking.insert(3, 9.6); // 0.4 s ago: quiet (the window is strict)
+        speaking.insert(4, 9.9);
+        speaking.insert(5, 9.8);
+        speaking.insert(6, 9.95);
+        assert_eq!(speaker_names(&roster, &speaking, 10.0), vec!["P1", "P2", "P4", "P5"], "four at most, roster order");
+        assert_eq!(speaker_names(&roster[2..3], &speaking, 10.0), Vec::<String>::new(), "a quiet player is not listed");
+        assert!(speaker_names(&roster, &HashMap::new(), 10.0).is_empty(), "nobody speaks");
+    }
+
+    #[test]
+    fn speaker_text_is_one_line_per_name_or_nothing() {
+        assert_eq!(speaker_text(&[]), "");
+        assert_eq!(speaker_text(&["Ann".into(), "Bo".into()]), "> Ann\n> Bo");
     }
 
     #[test]

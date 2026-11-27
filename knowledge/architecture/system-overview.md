@@ -3,7 +3,7 @@ type: Architecture
 title: System Overview and Crate Dependencies
 description: "The processes, ports and Rust crates of vox.fail and how they depend on each other."
 tags: [architecture, overview, crates, ports]
-generated: { by: agent/mcp, at: "2026-11-26T17:38:54Z" }
+generated: { by: agent/cli, at: "2026-11-26T23:26:41Z" }
 status: stable
 ---
 
@@ -42,6 +42,9 @@ flowchart TD
   block-avatar --> vox-core
   block-avatar --> vox-world
   block-avatar --> avatar-voice
+  block-avatar --> vox-voice
+  vox-world --> vox-voice
+  vox-world --> avatar-voice
   block-avatar --> vox-link
   vox-client --> vox-world
   vox-client --> vox-core
@@ -59,7 +62,8 @@ flowchart TD
 - **vox-world** (Bevy) draws a world and talks to a world server; shared by the app and the player client, native and WebAssembly.
 - **vox-format** stores worlds as region blobs and snapshots (server side; decodes in wasm too).
 - **vox-link** keeps a WebSocket open on its own thread with backoff (desktop only).
-- **avatar-voice** is the pure-Rust voice analysis used by the avatar app.
+- **avatar-voice** is the pure-Rust voice analysis (lip sync, pitch, formants) used by the avatar app and by `vox-world` for mouths.
+- **vox-voice** is the pure-Rust voice transport: IMA ADPCM, resampler, jitter buffer, packetizer. `vox-world` (world voice chat) and `block_avatar` use it; no engine, wasm-safe.
 - **vox-relay** knows nothing about Vox types; it forwards bytes and lists shows.
 - Services are small axum servers; each keeps state in SQLite (worlds also keep snapshot files).
 
@@ -90,7 +94,7 @@ See `architecture/avatar-app-runtime`, `architecture/vox-server`, `architecture/
 - [vox-client and the Web Front End](vox-client-and-web.md): player client and site
 - [Shows over the Network: Relay, Host, Guest and Viewers](show-networking.md): relay, host, guest, viewers
 - [Deployment: vox.fail on Cloudflare Tunnel, and Windows Packaging](deployment.md): how it is hosted and packaged
-- [World Wire Protocol (PROTOCOL = 5)](wire-protocol.md): the world protocol
+- [World Wire Protocol (PROTOCOL = 6)](wire-protocol.md): the world protocol
 - [Identity, Sessions and Signed Launch Tokens](identity-and-tokens.md): sign-in and tokens
 - [Asset Pipeline: MagicaVoxel to glTF](asset-pipeline.md): how assets are made
 - [Testing and Continuous Integration](testing-and-ci.md): tests and CI

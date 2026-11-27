@@ -244,6 +244,7 @@ pub fn receive(
                             w.goal = None;
                         }
                     }
+                    ToClient::Voice { player, packet } => w.push_voice(player, packet),
                 }
             }
         }

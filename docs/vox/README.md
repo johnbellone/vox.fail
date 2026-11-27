@@ -15,6 +15,10 @@ A Vox world is a shared block space that stays: what people build is kept.
    `http://<server>:7780/` says who's in.
 2. **Join:** `block_avatar --world ws://<server>:7780 --name Sam`.
 
+**Voice:** `--voice-radius <blocks>` (default 32) sets how far nearby voice carries. The server
+decides who hears each voice: players within that radius, and raid party members in the same
+world at any distance.
+
 ## Play Vox from a web page
 
 Players sign in on a web page, make their character there, and walk into the Void in the

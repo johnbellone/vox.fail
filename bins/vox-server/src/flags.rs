@@ -2,7 +2,7 @@
 //! (many worlds in one process), so the two can't drift apart.
 //!
 //! `--directory-url` (with `VOX_WORLD_SECRET`), `--max-players`, `--max-watchers`,
-//! `--trust-moves`, `--directory-key <hex or file>` with `--guests`, `--no-snapshots`,
+//! `--trust-moves`, `--voice-radius <blocks>`, `--directory-key <hex or file>` with `--guests`, `--no-snapshots`,
 //! `--oxen [<binary>]` (or `VOX_OXEN`), `--snapshot-every <seconds>`. Snapshots go next to the
 //! world's database (`<db>.snapshots/`) unless turned off or the world is in memory.
 
@@ -25,6 +25,14 @@ pub fn apply(cfg: &mut Config, args: &[String]) -> Result<(), String> {
     }
     if let Some(n) = arg("--max-watchers").and_then(|v| v.parse().ok()) {
         cfg.max_watchers = n;
+    }
+    // how far speech carries, in blocks (a NaN or zero radius would hear nobody or everybody)
+    if let Some(v) = arg("--voice-radius") {
+        cfg.voice_radius = v
+            .parse::<f32>()
+            .ok()
+            .filter(|r| r.is_finite() && *r > 0.0)
+            .ok_or_else(|| format!("--voice-radius takes a number of blocks above zero, not {v:?}"))?;
     }
     // test and automation worlds: positions as players report them, unchecked
     cfg.trust_moves = has("--trust-moves");
@@ -72,6 +80,10 @@ mod tests {
         assert_eq!(c.max_players, 8);
         assert!(c.trust_moves);
         assert_eq!(c.snapshot_every, Duration::from_secs(60));
+        apply(&mut c, &args("x --voice-radius 48")).unwrap();
+        assert_eq!(c.voice_radius, 48.0);
+        assert!(apply(&mut c, &args("x --voice-radius 0")).is_err());
+        assert!(apply(&mut c, &args("x --voice-radius NaN")).is_err());
         assert_eq!(c.snapshots, Some(PathBuf::from("/var/lib/vox/yard.db.snapshots")));
         assert!(c.directory.is_none());
 

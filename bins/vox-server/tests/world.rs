@@ -9,7 +9,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungsten
 use vox_core::{
     Chunk, Why, World,
     weather::{Climate, Weather},
-    wire::{self, PROTOCOL, ToClient, ToServer},
+    wire::{self, PROTOCOL, ToClient, ToServer, VOICE_BYTES, VOICE_NEARBY, VOICE_PARTY, VOICE_SAMPLES, VoicePacket},
 };
 use vox_server::{Config, Server};
 
@@ -71,8 +71,12 @@ struct Joined {
 }
 
 async fn join(url: &str, name: &str) -> Joined {
+    join_with(url, name, None).await
+}
+
+async fn join_with(url: &str, name: &str, token: Option<String>) -> Joined {
     let (mut ws, _) = connect_async(url).await.unwrap();
-    send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: name.as_bytes().to_vec(), token: None }).await;
+    send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: name.as_bytes().to_vec(), token }).await;
     let ToClient::Welcome { you, palette: p, bounds, spawn, world: w, settings, .. } = recv(&mut ws).await else { panic!("no welcome") };
     assert!(settings.contains(r#""sky":"void""#), "{settings}");
     assert_eq!(w, "test");
@@ -286,6 +290,19 @@ async fn wrong_version_full_and_no_hello() {
     let (mut ws, _) = connect_async(&url).await.unwrap();
     ws.send(Message::Binary(vec![255, 255, 255].into())).await.unwrap();
     assert!(matches!(recv(&mut ws).await, ToClient::Bye { .. }));
+}
+
+#[tokio::test]
+async fn older_versions_are_refused_for_hello_and_watch() {
+    let (_server, url) = serve(config(":memory:")).await;
+    let old = PROTOCOL - 1;
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+    send(&mut ws, &ToServer::Hello { protocol: old, name: "Old".into(), avatar: vec![], token: None }).await;
+    assert!(matches!(recv(&mut ws).await, ToClient::Bye { why } if why.contains("version")));
+
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+    send(&mut ws, &ToServer::Watch { protocol: old }).await;
+    assert!(matches!(recv(&mut ws).await, ToClient::Bye { why } if why.contains("version")));
 }
 
 #[tokio::test]
@@ -652,4 +669,230 @@ async fn snapshot_cycle(name: &str, oxen: Option<std::path::PathBuf>) {
         assert!(commits.len() >= after.len(), "a commit per snapshot: {} commits, {} snapshots", commits.len(), after.len());
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A voice packet that passes the checks; `seq` tells packets apart.
+fn packet(channel: u8, seq: u32) -> VoicePacket {
+    VoicePacket { channel, seq, samples: VOICE_SAMPLES, pred: 120, index: 7, data: vec![(seq % 256) as u8; VOICE_BYTES] }
+}
+
+/// How long to wait before believing that nothing more is coming. Relaying is immediate on
+/// localhost; this is slack for a busy CI machine, not a delay the server has.
+const QUIET: Duration = Duration::from_millis(300);
+
+/// Every voice packet that arrives within `for_`, with the player it came from. Anything else
+/// that arrives is skipped.
+async fn voice_within(ws: &mut Ws, for_: Duration) -> Vec<(u32, VoicePacket)> {
+    let mut got = Vec::new();
+    let end = tokio::time::Instant::now() + for_;
+    while let Ok(Some(Ok(Message::Binary(b)))) = tokio::time::timeout_at(end, ws.next()).await {
+        if let Ok(ToClient::Voice { player, packet }) = wire::decode::<ToClient>(&b) {
+            got.push((player, packet));
+        }
+    }
+    got
+}
+
+/// Each player sends a position, then waits until every other player has been told of it. So
+/// the server holds every position before any voice is sent.
+async fn place(players: &mut [&mut Joined], spots: &[[f32; 3]]) {
+    for (j, at) in players.iter_mut().zip(spots) {
+        send(&mut j.ws, &ToServer::Pose { at: *at, blob: vec![] }).await;
+    }
+    let ids: Vec<u32> = players.iter().map(|j| j.you).collect();
+    for j in players.iter_mut() {
+        let mut heard = Vec::new();
+        while heard.len() < ids.len() - 1 {
+            if let ToClient::Pose { player, .. } = recv(&mut j.ws).await
+                && player != j.you
+                && !heard.contains(&player)
+            {
+                heard.push(player);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn nearby_speech_reaches_the_near_and_no_one_else() {
+    let mut cfg = config(":memory:");
+    cfg.trust_moves = true;
+    let (_server, url) = serve(cfg).await;
+    let mut a = join(&url, "Ann").await;
+    let mut b = join(&url, "Ben").await;
+    let mut c = join(&url, "Cal").await;
+    // Ben is 10 blocks away (inside the 32 radius), Cal 100 (outside it)
+    place(&mut [&mut a, &mut b, &mut c], &[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [100.0, 0.0, 0.0]]).await;
+    let sent = packet(VOICE_NEARBY, 1);
+    send(&mut a.ws, &ToServer::Voice(sent.clone())).await;
+    assert_eq!(voice_within(&mut b.ws, QUIET).await, vec![(a.you, sent)], "Ben hears Ann, unchanged");
+    assert!(voice_within(&mut c.ws, QUIET).await.is_empty(), "Cal is too far away");
+    assert!(voice_within(&mut a.ws, QUIET).await.is_empty(), "Ann doesn't hear herself");
+}
+
+#[tokio::test]
+async fn invalid_voice_packets_are_dropped() {
+    let mut cfg = config(":memory:");
+    cfg.trust_moves = true;
+    let (_server, url) = serve(cfg).await;
+    let mut a = join(&url, "Ann").await;
+    let mut b = join(&url, "Ben").await;
+    place(&mut [&mut a, &mut b], &[[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]]).await;
+    let mut bad = Vec::new();
+    let mut p = packet(VOICE_NEARBY, 100);
+    p.channel = 2;
+    bad.push(p);
+    let mut p = packet(VOICE_NEARBY, 101);
+    p.samples = VOICE_SAMPLES - 1;
+    bad.push(p);
+    let mut p = packet(VOICE_NEARBY, 102);
+    p.data.pop();
+    bad.push(p);
+    let mut p = packet(VOICE_NEARBY, 103);
+    p.data.push(0);
+    bad.push(p);
+    let mut p = packet(VOICE_NEARBY, 104);
+    p.index = 200;
+    bad.push(p);
+    for p in bad {
+        send(&mut a.ws, &ToServer::Voice(p)).await;
+    }
+    // a good one after them: the connection is still fine, and only it gets through
+    send(&mut a.ws, &ToServer::Voice(packet(VOICE_NEARBY, 1))).await;
+    let heard: Vec<u32> = voice_within(&mut b.ws, QUIET).await.iter().map(|(_, p)| p.seq).collect();
+    assert_eq!(heard, vec![1]);
+}
+
+#[tokio::test]
+async fn watchers_never_hear_voice_and_cannot_send_it() {
+    let mut cfg = config(":memory:");
+    cfg.trust_moves = true;
+    let (server, url) = serve(cfg).await;
+    let mut a = join(&url, "Ann").await;
+    let mut b = join(&url, "Ben").await;
+    place(&mut [&mut a, &mut b], &[[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]]).await;
+    let (mut w, _) = connect_async(&url).await.unwrap();
+    send(&mut w, &ToServer::Watch { protocol: PROTOCOL }).await;
+    assert!(matches!(recv(&mut w).await, ToClient::Welcome { .. }));
+    loop {
+        if let ToClient::Ready = recv(&mut w).await {
+            break;
+        }
+    }
+    // Ann speaks; Ben hears her, the watcher doesn't
+    send(&mut a.ws, &ToServer::Voice(packet(VOICE_NEARBY, 1))).await;
+    assert_eq!(voice_within(&mut b.ws, QUIET).await.len(), 1);
+    assert!(voice_within(&mut w, QUIET).await.is_empty(), "a watcher heard voice");
+    // and a watcher that tries to speak is let go, as with any other message
+    send(&mut w, &ToServer::Voice(packet(VOICE_NEARBY, 2))).await;
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(Ok(m)) = w.next().await {
+            if matches!(m, Message::Close(_)) {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the watcher was let go");
+    assert_eq!(server.status().await.unwrap().players, vec!["Ann", "Ben"]);
+    assert!(voice_within(&mut b.ws, QUIET).await.is_empty(), "the watcher's packet got through");
+}
+
+#[tokio::test]
+async fn a_flood_of_voice_is_rate_limited() {
+    let mut cfg = config(":memory:");
+    cfg.trust_moves = true;
+    let (_server, url) = serve(cfg).await;
+    let mut a = join(&url, "Ann").await;
+    let mut b = join(&url, "Ben").await;
+    place(&mut [&mut a, &mut b], &[[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]]).await;
+    let start = std::time::Instant::now();
+    for seq in 0..500 {
+        send(&mut a.ws, &ToServer::Voice(packet(VOICE_NEARBY, seq))).await;
+    }
+    let sent = start.elapsed();
+    // the bucket keeps refilling while we listen, so the bound counts that time as well
+    let heard = voice_within(&mut b.ws, Duration::from_millis(1000)).await;
+    let elapsed = start.elapsed().as_secs_f64();
+    // a burst of 100, then 60 a second: no more than that gets through (with slack), and some must
+    let max = 100.0 + 60.0 * elapsed + 10.0;
+    assert!((heard.len() as f64) <= max, "{} got through in {elapsed:.2} s (sending took {sent:?})", heard.len());
+    assert!(heard.len() >= 50, "only {} got through", heard.len());
+    assert!(heard.iter().all(|(who, _)| *who == a.you));
+}
+
+#[tokio::test]
+async fn party_speech_with_no_party_reaches_nobody() {
+    let mut cfg = config(":memory:");
+    cfg.trust_moves = true;
+    let (_server, url) = serve(cfg).await;
+    let mut a = join(&url, "Ann").await;
+    let mut b = join(&url, "Ben").await;
+    let mut c = join(&url, "Cal").await;
+    place(&mut [&mut a, &mut b, &mut c], &[[0.0, 0.0, 0.0], [5.0, 0.0, 0.0], [100.0, 0.0, 0.0]]).await;
+    // guests have no party, so the party channel goes nowhere, near or far
+    send(&mut a.ws, &ToServer::Voice(packet(VOICE_PARTY, 1))).await;
+    assert!(voice_within(&mut b.ws, QUIET).await.is_empty());
+    assert!(voice_within(&mut c.ws, QUIET).await.is_empty());
+}
+
+#[tokio::test]
+async fn party_speech_reaches_the_party_at_any_distance() {
+    use vox_core::auth::{self, Character, Claims};
+    // a stand-in directory: accounts 1 and 2 are in one raid party, account 3 is in none
+    let dir = axum::Router::new().route(
+        "/api/world/test/rules",
+        axum::routing::get(|h: axum::http::HeaderMap| async move {
+            if h.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer s3cret") {
+                return axum::Json(serde_json::json!({}));
+            }
+            axum::Json(serde_json::json!({ "plots": [], "portals": [], "parties": [[1, 2]] }))
+        }),
+    );
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dir_url = format!("http://{}", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, dir).await.unwrap() });
+
+    let key = auth::key_from_seed([9; 32]);
+    let mut cfg = config(":memory:");
+    cfg.trust_moves = true;
+    cfg.directory = Some(key.verifying_key());
+    cfg.directory_url = Some(dir_url);
+    cfg.world_secret = Some("s3cret".into());
+    cfg.rules_every = Duration::from_millis(100);
+    cfg.report_every = Duration::from_secs(600);
+    let (_server, url) = serve(cfg).await;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let token = |account: u64, name: &str| {
+        auth::sign(&Claims { account, name: name.into(), character: Character::default(), issued: now, expires: now + 60 }, &key)
+    };
+    let mut a = join_with(&url, "Ann", Some(token(1, "Ann"))).await;
+    let mut b = join_with(&url, "Ben", Some(token(2, "Ben"))).await;
+    let mut c = join_with(&url, "Cal", Some(token(3, "Cal"))).await;
+    // Ben is 200 blocks away; Cal is next to Ann
+    place(&mut [&mut a, &mut b, &mut c], &[[0.0, 0.0, 0.0], [200.0, 0.0, 0.0], [4.0, 0.0, 0.0]]).await;
+
+    // party speech: Ben hears it from 200 blocks off; Cal, who is not in the party, doesn't.
+    // The rules are fetched on a timer and until they land the server drops party speech, so
+    // resend every 100 ms until Ben gets one (5 s at most).
+    let party = packet(VOICE_PARTY, 1);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut heard = Vec::new();
+    while heard.is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "the party's rules never reached the server");
+        send(&mut a.ws, &ToServer::Voice(party.clone())).await;
+        heard = voice_within(&mut b.ws, Duration::from_millis(100)).await;
+    }
+    assert!(heard.iter().all(|h| *h == (a.you, party.clone())), "{heard:?}");
+    // resends still in flight are the same packet; clear them before the nearby check
+    let extra = voice_within(&mut b.ws, QUIET).await;
+    assert!(extra.iter().all(|h| *h == (a.you, party.clone())), "{extra:?}");
+    assert!(voice_within(&mut c.ws, QUIET).await.is_empty(), "a non-member heard the party");
+    assert!(voice_within(&mut a.ws, QUIET).await.is_empty());
+
+    // nearby speech: Cal hears it, Ben (far off, and not what was asked) doesn't
+    let near = packet(VOICE_NEARBY, 2);
+    send(&mut a.ws, &ToServer::Voice(near.clone())).await;
+    assert_eq!(voice_within(&mut c.ws, QUIET).await, vec![(a.you, near)]);
+    assert!(voice_within(&mut b.ws, QUIET).await.is_empty(), "far nearby speech reached Ben");
 }

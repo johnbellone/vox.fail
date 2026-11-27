@@ -7,6 +7,8 @@
 //! mouse works on the same screens: hovering focuses, clicking chooses. While a menu is open
 //! [`UiMode::Menu`] tells the game to leave the input alone.
 
+use std::collections::HashSet;
+
 use bevy::{
     input::gamepad::Gamepad,
     input_focus::{FocusCause, InputFocus, InputFocusVisible, directional_navigation::DirectionalNavigationPlugin},
@@ -24,7 +26,9 @@ use crate::{
         bindings::{self, Bindings, Input},
         hints::{self, Hint, HintStyle, hint_node, pixel_shadow},
     },
+    voice::plugin::{VoiceSettings, next_channel},
 };
+use vox_core::wire::VOICE_PARTY;
 
 /// A screen of the menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +37,7 @@ pub enum Screen {
     Inventory,
     Controls,
     Settings,
+    Voice,
 }
 
 impl Screen {
@@ -42,6 +47,7 @@ impl Screen {
             Screen::Inventory => "Blocks",
             Screen::Controls => "Controls",
             Screen::Settings => "Settings",
+            Screen::Voice => "Voice",
         }
     }
 }
@@ -104,6 +110,12 @@ pub enum Choice {
     InvertY,
     Nintendo,
     Adjust(Setting, i8),
+    /// flip a voice setting (enable, talk mode, channel)
+    VoiceToggle(VoiceItem),
+    /// step a voice setting: device lists cycle, volumes move 10 percent
+    VoiceStep(VoiceItem, i8),
+    /// mute or hear one player (their number), by the Voice screen's rows
+    Mute(u32),
     /// put this block in your hand (the current hotbar slot)
     Block(u16),
     /// make this hotbar slot the current one
@@ -117,10 +129,30 @@ pub enum Setting {
     DeadZone,
 }
 
+/// The voice settings the Voice screen changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceItem {
+    Enable,
+    DeviceIn,
+    DeviceOut,
+    InGain,
+    OutGain,
+    Ptt,
+    Channel,
+}
+
 #[derive(Component)]
 struct MenuRoot;
 #[derive(Component)]
 struct CaptureNote;
+
+/// What the menu last drew, so it redraws only when something it shows has changed.
+#[derive(Default)]
+struct Seen {
+    device: Option<u32>,
+    /// the other players, on the Voice screen only
+    roster: Vec<(u32, String)>,
+}
 
 const PANEL: Color = Color::srgba(0.06, 0.07, 0.10, 0.92);
 const BUTTON: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
@@ -206,6 +238,7 @@ fn build(
     active: Res<ActiveDevice>,
     bindings: Res<Bindings>,
     settings: Res<InputSettings>,
+    voice: Option<Res<VoiceSettings>>,
     w: Res<WorldClient>,
     blocks: Res<Blocks>,
     assets: Res<AssetServer>,
@@ -213,12 +246,20 @@ fn build(
     mut focus: ResMut<InputFocus>,
     mut visible: ResMut<InputFocusVisible>,
     choices: Query<(Entity, &Choice)>,
-    mut seen_device: Local<Option<u32>>,
+    mut seen: Local<Seen>,
 ) {
     // the controls screen shows the device in use: redraw when it changes
-    let device_changed = *seen_device != Some(active.generation);
-    *seen_device = Some(active.generation);
+    let device_changed = seen.device != Some(active.generation);
+    seen.device = Some(active.generation);
+    // the Voice screen lists the other players: redraw when they come or go
+    let on_voice = menus.top() == Some(Screen::Voice);
+    let roster = if on_voice { w.others_named() } else { Vec::new() };
+    let roster_changed = on_voice && roster != seen.roster;
+    if roster_changed {
+        seen.roster = roster.clone();
+    }
     let redraw = menus.dirty
+        || roster_changed
         || (device_changed && menus.top() == Some(Screen::Controls) && menus.capture.is_none())
         || (bindings.is_changed() && menus.top() == Some(Screen::Controls))
         || (settings.is_changed() && menus.top() == Some(Screen::Settings));
@@ -289,6 +330,7 @@ fn build(
                         ("Resume", Choice::Resume),
                         ("Blocks", Choice::Open(Screen::Inventory)),
                         ("Controls", Choice::Open(Screen::Controls)),
+                        ("Voice", Choice::Open(Screen::Voice)),
                         ("Settings", Choice::Open(Screen::Settings)),
                         ("Leave world", Choice::Leave),
                     ] {
@@ -353,30 +395,42 @@ fn build(
                         .id();
                     note(e, Choice::ResetAll);
                 }
-                Screen::Settings => {
-                    let rows: [(&str, String, Vec<(Choice, String)>); 5] = [
-                        ("Invert look", String::new(), vec![(Choice::InvertY, if settings.invert_y { "On" } else { "Off" }.into())]),
+                Screen::Settings | Screen::Voice => {
+                    let rows: Vec<Row> = if screen == Screen::Voice {
+                        if let Some(line) = voice_browser_line(cfg!(target_arch = "wasm32")) {
+                            // the browser has no voice yet, so the line is all it shows
+                            panel.spawn(text(line, &style, 10.0, INK));
+                            Vec::new()
+                        } else {
+                            let mut rows = voice.as_deref().map(voice_rows).unwrap_or_default();
+                            rows.extend(voice.as_deref().map(|v| mute_rows(&roster, &v.muted)).unwrap_or_default());
+                            rows
+                        }
+                    } else {
+                        vec![
+                        ("Invert look".into(), String::new(), vec![(Choice::InvertY, if settings.invert_y { "On" } else { "Off" }.into())]),
                         (
-                            "Mouse look",
+                            "Mouse look".into(),
                             format!("{:.1}", settings.mouse_look * 1000.0),
                             vec![(Choice::Adjust(Setting::MouseLook, -1), "-".into()), (Choice::Adjust(Setting::MouseLook, 1), "+".into())],
                         ),
                         (
-                            "Stick look",
+                            "Stick look".into(),
                             format!("{:.1}", settings.stick_look),
                             vec![(Choice::Adjust(Setting::StickLook, -1), "-".into()), (Choice::Adjust(Setting::StickLook, 1), "+".into())],
                         ),
                         (
-                            "Stick dead zone",
+                            "Stick dead zone".into(),
                             format!("{:.2}", settings.dead_zone),
                             vec![(Choice::Adjust(Setting::DeadZone, -1), "-".into()), (Choice::Adjust(Setting::DeadZone, 1), "+".into())],
                         ),
                         (
-                            "Confirm on the right button (Nintendo)",
+                            "Confirm on the right button (Nintendo)".into(),
                             String::new(),
                             vec![(Choice::Nintendo, if settings.nintendo_confirm { "On" } else { "Off" }.into())],
                         ),
-                    ];
+                        ]
+                    };
                     for (label, value, buttons) in rows {
                         panel
                             .spawn(Node {
@@ -405,6 +459,9 @@ fn build(
                                         }
                                     });
                             });
+                    }
+                    if screen == Screen::Voice && roster.is_empty() && voice_browser_line(cfg!(target_arch = "wasm32")).is_none() {
+                        panel.spawn(text("Nobody else is here.", &style, 10.0, QUIET));
                     }
                 }
                 Screen::Inventory => {
@@ -481,6 +538,113 @@ fn build(
     }
 }
 
+// ---- voice
+
+type Row = (String, String, Vec<(Choice, String)>);
+
+/// What the Voice screen says in place of its rows on the browser, which has no voice yet.
+fn voice_browser_line(browser: bool) -> Option<&'static str> {
+    browser.then_some("Voice is not available in the browser yet.")
+}
+
+/// The Voice screen's rows: label, value, buttons (the same shape as the settings rows).
+fn voice_rows(v: &VoiceSettings) -> Vec<Row> {
+    let pair = |item: VoiceItem| -> Vec<(Choice, String)> {
+        vec![(Choice::VoiceStep(item, -1), "-".into()), (Choice::VoiceStep(item, 1), "+".into())]
+    };
+    vec![
+        ("Enable voice".into(), String::new(), vec![(Choice::VoiceToggle(VoiceItem::Enable), if v.enabled { "On" } else { "Off" }.into())]),
+        ("Input device".into(), device_label(v.device_in.as_deref()), pair(VoiceItem::DeviceIn)),
+        ("Output device".into(), device_label(v.device_out.as_deref()), pair(VoiceItem::DeviceOut)),
+        ("Input volume".into(), percent(v.in_gain), pair(VoiceItem::InGain)),
+        ("Output volume".into(), percent(v.out_gain), pair(VoiceItem::OutGain)),
+        ("Talk mode".into(), String::new(), vec![(Choice::VoiceToggle(VoiceItem::Ptt), if v.ptt { "Push-to-talk" } else { "Open mic" }.into())]),
+        ("Channel".into(), String::new(), vec![(Choice::VoiceToggle(VoiceItem::Channel), if v.channel == VOICE_PARTY { "Party" } else { "Nearby" }.into())]),
+    ]
+}
+
+/// Most players the Voice screen lists a mute row for; a crowd past this is not listed.
+const MUTE_ROWS_MAX: usize = 12;
+
+/// One "Mute <name>" row per other player (the roster is by name). The button says whether that
+/// player is muted or heard, as the Channel row does.
+fn mute_rows(roster: &[(u32, String)], muted: &HashSet<u32>) -> Vec<Row> {
+    roster
+        .iter()
+        .take(MUTE_ROWS_MAX)
+        .map(|(id, name)| {
+            let state = if muted.contains(id) { "Muted" } else { "Heard" };
+            (format!("Mute {name}"), String::new(), vec![(Choice::Mute(*id), state.into())])
+        })
+        .collect()
+}
+
+fn percent(gain: f32) -> String {
+    format!("{:.0}%", gain * 100.0)
+}
+
+fn device_label(name: Option<&str>) -> String {
+    match name {
+        None => "Default".into(),
+        Some(n) if n.chars().count() > 22 => format!("{}...", n.chars().take(22).collect::<String>()),
+        Some(n) => n.to_string(),
+    }
+}
+
+/// The microphones and speakers on this machine, "Default" not included. This only lists them;
+/// it opens nothing. The browser has none.
+fn device_names() -> (Vec<String>, Vec<String>) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        (crate::voice::capture::input_devices(), crate::voice::playback::output_devices())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        (Vec::new(), Vec::new())
+    }
+}
+
+/// The next device in the list, cycling through "Default" (`None`) first. A device that is no
+/// longer listed starts the cycle from the default.
+fn cycle_device(current: Option<&str>, names: &[String], d: i8) -> Option<String> {
+    let n = names.len() as i64 + 1;
+    let at = current.and_then(|c| names.iter().position(|x| x == c)).map_or(0, |i| i as i64 + 1);
+    let next = (at + d as i64).rem_euclid(n);
+    if next == 0 { None } else { Some(names[next as usize - 1].clone()) }
+}
+
+/// A volume moved by 10 percent, kept in 0..=`max` (a tenth at a time, so no drift).
+fn volume_step(v: f32, d: i8, max: f32) -> f32 {
+    (((v + d as f32 * 0.1) * 10.0).round() / 10.0).clamp(0.0, max)
+}
+
+/// Applies one voice choice to the settings. Input volume goes up to 2; output volume up to 1,
+/// the range the plugin keeps when it loads the file.
+fn apply_voice(c: Choice, v: &mut VoiceSettings, inputs: &[String], outputs: &[String]) {
+    match c {
+        Choice::VoiceToggle(item) => match item {
+            VoiceItem::Enable => v.enabled = !v.enabled,
+            VoiceItem::Ptt => v.ptt = !v.ptt,
+            VoiceItem::Channel => v.channel = next_channel(v.channel),
+            _ => {}
+        },
+        Choice::VoiceStep(item, d) => match item {
+            VoiceItem::DeviceIn => v.device_in = cycle_device(v.device_in.as_deref(), inputs, d),
+            VoiceItem::DeviceOut => v.device_out = cycle_device(v.device_out.as_deref(), outputs, d),
+            VoiceItem::InGain => v.in_gain = volume_step(v.in_gain, d, 2.0),
+            VoiceItem::OutGain => v.out_gain = volume_step(v.out_gain, d, 1.0),
+            _ => {}
+        },
+        Choice::Mute(id) => {
+            // insert says whether it was new: an old one is heard again
+            if !v.muted.insert(id) {
+                v.muted.remove(&id);
+            }
+        }
+        _ => {}
+    }
+}
+
 // ---- moving focus, choosing
 
 fn navigate(
@@ -516,6 +680,7 @@ fn choose(
     mut clicked: ResMut<Clicked>,
     mut bindings: ResMut<Bindings>,
     mut settings: ResMut<InputSettings>,
+    mut voice: Option<ResMut<VoiceSettings>>,
     mut w: ResMut<WorldClient>,
     active: Res<ActiveDevice>,
     time: Res<Time<Real>>,
@@ -565,6 +730,14 @@ fn choose(
                 Setting::DeadZone => settings.dead_zone = (settings.dead_zone + d * 0.02).clamp(0.02, 0.5),
             }
             bindings::save(&bindings, &settings);
+        }
+        Choice::VoiceToggle(_) | Choice::VoiceStep(..) | Choice::Mute(_) => {
+            if let Some(v) = voice.as_deref_mut() {
+                // (the plugin saves the change and opens or closes the devices)
+                let (inputs, outputs) = device_names();
+                apply_voice(c, v, &inputs, &outputs);
+                menus.dirty = true;
+            }
         }
         Choice::Block(id) => {
             let slot = w.slot;
@@ -761,6 +934,79 @@ mod tests {
         assert_eq!(top(&app), Some(Screen::Settings));
         press(&mut app, Action::TabPrev);
         assert_eq!(top(&app), Some(Screen::Controls));
+    }
+
+    #[test]
+    fn voice_enable_toggle_changes_the_setting() {
+        let mut v = VoiceSettings::default();
+        assert!(!v.enabled, "voice is off by default");
+        apply_voice(Choice::VoiceToggle(VoiceItem::Enable), &mut v, &[], &[]);
+        assert!(v.enabled);
+        apply_voice(Choice::VoiceToggle(VoiceItem::Enable), &mut v, &[], &[]);
+        assert!(!v.enabled);
+    }
+
+    #[test]
+    fn voice_device_lists_cycle_from_default() {
+        let names = vec!["A mic".to_string(), "B mic".to_string()];
+        assert_eq!(cycle_device(None, &names, 1), Some("A mic".into()));
+        assert_eq!(cycle_device(Some("A mic"), &names, 1), Some("B mic".into()));
+        assert_eq!(cycle_device(Some("B mic"), &names, 1), None, "wraps to Default");
+        assert_eq!(cycle_device(None, &names, -1), Some("B mic".into()));
+        assert_eq!(cycle_device(Some("gone"), &names, 1), Some("A mic".into()), "unplugged starts over");
+        assert_eq!(cycle_device(None, &[], 1), None, "no devices: stays on Default");
+    }
+
+    #[test]
+    fn voice_volumes_step_by_ten_percent_and_clamp() {
+        assert!((volume_step(0.5, 1, 2.0) - 0.6).abs() < 1e-6);
+        assert!((volume_step(0.0, -1, 2.0)).abs() < 1e-6, "not below zero");
+        assert!((volume_step(2.0, 1, 2.0) - 2.0).abs() < 1e-6, "input stops at 2");
+        assert!((volume_step(1.0, 1, 1.0) - 1.0).abs() < 1e-6, "output stops at 1");
+    }
+
+    #[test]
+    fn mute_choice_toggles_one_player_and_leaves_the_rest() {
+        let mut v = VoiceSettings::default();
+        apply_voice(Choice::Mute(7), &mut v, &[], &[]);
+        assert!(v.muted.contains(&7));
+        apply_voice(Choice::Mute(9), &mut v, &[], &[]);
+        apply_voice(Choice::Mute(7), &mut v, &[], &[]);
+        assert!(!v.muted.contains(&7), "a second choice hears them again");
+        assert!(v.muted.contains(&9), "other players keep their state");
+    }
+
+    #[test]
+    fn mute_rows_follow_the_roster_with_state_and_a_cap() {
+        let roster: Vec<(u32, String)> = (1..=13).map(|i| (i, format!("P{i}"))).collect();
+        let muted: HashSet<u32> = [2].into_iter().collect();
+        let rows = mute_rows(&roster, &muted);
+        assert_eq!(rows.len(), MUTE_ROWS_MAX, "capped at twelve");
+        assert_eq!(rows[0].0, "Mute P1");
+        assert_eq!(rows[0].2, vec![(Choice::Mute(1), "Heard".to_string())]);
+        assert_eq!(rows[1].2, vec![(Choice::Mute(2), "Muted".to_string())]);
+        assert!(mute_rows(&[], &muted).is_empty(), "nobody here: no rows");
+    }
+
+    #[test]
+    fn voice_browser_line_only_in_the_browser() {
+        assert_eq!(voice_browser_line(true), Some("Voice is not available in the browser yet."));
+        assert_eq!(voice_browser_line(false), None);
+    }
+
+    #[test]
+    fn voice_rows_reach_every_setting() {
+        let rows = voice_rows(&VoiceSettings::default());
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[0].0, "Enable voice");
+        let choices: Vec<Choice> = rows.iter().flat_map(|r| r.2.iter().map(|b| b.0)).collect();
+        assert!(choices.contains(&Choice::VoiceToggle(VoiceItem::Enable)));
+        assert!(choices.contains(&Choice::VoiceStep(VoiceItem::DeviceIn, 1)));
+        assert!(choices.contains(&Choice::VoiceStep(VoiceItem::DeviceOut, -1)));
+        assert!(choices.contains(&Choice::VoiceStep(VoiceItem::InGain, 1)));
+        assert!(choices.contains(&Choice::VoiceStep(VoiceItem::OutGain, -1)));
+        assert!(choices.contains(&Choice::VoiceToggle(VoiceItem::Ptt)));
+        assert!(choices.contains(&Choice::VoiceToggle(VoiceItem::Channel)));
     }
 
     #[test]

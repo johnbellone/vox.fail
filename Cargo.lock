@@ -2219,6 +2219,7 @@ dependencies = [
  "ureq",
  "vox-core",
  "vox-link",
+ "vox-voice",
  "vox-world",
  "whisper-rs",
  "windows-sys 0.59.0",
@@ -7102,6 +7103,7 @@ dependencies = [
 name = "vox-server"
 version = "0.1.0"
 dependencies = [
+ "avatar-voice",
  "axum",
  "futures-util",
  "reqwest",
@@ -7111,13 +7113,20 @@ dependencies = [
  "tokio-tungstenite 0.30.0",
  "vox-core",
  "vox-format",
+ "vox-voice",
 ]
+
+[[package]]
+name = "vox-voice"
+version = "0.1.0"
 
 [[package]]
 name = "vox-world"
 version = "0.1.0"
 dependencies = [
+ "avatar-voice",
  "bevy",
+ "cpal",
  "js-sys",
  "png",
  "postcard",
@@ -7125,6 +7134,7 @@ dependencies = [
  "serde_json",
  "vox-core",
  "vox-link",
+ "vox-voice",
  "wasm-bindgen",
  "web-sys",
 ]

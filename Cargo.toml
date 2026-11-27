@@ -14,6 +14,7 @@ edition = "2024"
 vox-core = { path = "crates/vox-core" }
 vox-world = { path = "crates/vox-world" }
 avatar-voice = { path = "crates/avatar-voice" }
+vox-voice = { path = "crates/vox-voice" }
 vox-link = { path = "crates/vox-link" }
 vox-format = { path = "crates/vox-format" }
 vox-server = { path = "bins/vox-server" }

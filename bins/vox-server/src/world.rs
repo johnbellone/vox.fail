@@ -101,6 +101,7 @@ impl WorldState {
             keyframe_at: Instant::now(),
             plots: Vec::new(),
             portals: Vec::new(),
+            party_of: HashMap::new(),
             snaps: None,
             snap_prev: None,
             snap_changed: HashSet::new(),
@@ -172,9 +173,18 @@ impl WorldState {
                         "world": self.cfg.name, "level": self.cfg.level, "spawn": self.spawn, "players": players,
                     }));
                 }
-                Event::Rules(plots, portals) => {
+                Event::Rules(plots, portals, parties) => {
                     self.plots = plots;
                     self.portals = portals;
+                    // rebuilt whole, so a party the directory dropped stops applying. Parties come
+                    // from the directory's rules, fetched every `rules_every` (default 30 s), so a
+                    // new party can take up to that long to be able to talk.
+                    self.party_of.clear();
+                    for (i, party) in parties.iter().enumerate() {
+                        for &account in party {
+                            self.party_of.entry(account).or_insert(i as u32);
+                        }
+                    }
                 }
                 Event::Ticket { conn, url, ticket, arrive } => {
                     if let Some(p) = self.players.get(&conn) {
@@ -361,7 +371,8 @@ impl WorldState {
         if let Some(at) = start {
             moves.start(at, now);
         }
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, account, placed: 0 });
+        let voice = Bucket::new(MAX_VOICE_PER_SECOND, VOICE_BURST);
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0 });
     }
 
     /// Someone stands at the objective: it's reached (once), everyone here is told, and the
@@ -495,6 +506,34 @@ impl WorldState {
                     }
                 }
             }
+            ToServer::Voice(packet) => {
+                // only joined players get here (watchers are not in `players`); the shape and
+                // the rate are checked before anything else is looked at
+                if !p.voice.take(now) || !packet.valid() {
+                    return;
+                }
+                let Some(at) = p.at else { return };
+                let sender = VoiceWho { id: p.id, at, account: p.account };
+                let others: Vec<VoiceWho> = self
+                    .players
+                    .iter()
+                    .filter(|(c, _)| **c != conn)
+                    .map(|(_, o)| VoiceWho { id: o.id, at: o.at.unwrap_or([f32::NAN; 3]), account: o.account })
+                    .collect();
+                let audience: HashSet<u32> = voice_audience(&sender, &others, self.cfg.voice_radius, &self.party_of, packet.channel).into_iter().collect();
+                if audience.is_empty() {
+                    return;
+                }
+                // relayed as they are: never kept, never logged. Encoded once; each recipient
+                // gets a cheap clone of the same frame.
+                let frame = Message::Binary(wire::encode(&ToClient::Voice { player: sender.id, packet }).into());
+                for (c, o) in &self.players {
+                    // a full queue drops the packet; speech is never worth waiting for
+                    if *c != conn && audience.contains(&o.id) {
+                        let _ = o.tx.try_send(frame.clone());
+                    }
+                }
+            }
             ToServer::Edit { id, cell, block } => {
                 let checked = if !p.bucket.take(now) {
                     Err(Why::TooFast)
@@ -540,4 +579,148 @@ pub(super) fn within_reach(at: Option<[f32; 3]>, cell: [i32; 3]) -> bool {
     let eye = [at[0], at[1] + EYES, at[2]];
     let d2: f32 = (0..3).map(|i| (cell[i] as f32 + 0.5 - eye[i]).powi(2)).sum();
     d2 <= REACH * REACH
+}
+
+/// A joined player as voice routing sees them. `at` is NaN for someone who has not reported
+/// a position yet: they can still hear a party, but not what is nearby.
+struct VoiceWho {
+    id: u32,
+    at: [f32; 3],
+    account: Option<u64>,
+}
+
+fn finite(p: [f32; 3]) -> bool {
+    p.iter().all(|v| v.is_finite())
+}
+
+/// Who hears a packet from `sender` on `channel`, as player ids. Nearby: everyone within
+/// `radius` blocks (3D, inclusive). Party: everyone whose account is in the sender's raid
+/// party, at any distance; a guest has no party, so a guest's party packet goes nowhere.
+/// The sender never hears their own packet, and an unknown channel reaches nobody.
+fn voice_audience(sender: &VoiceWho, others: &[VoiceWho], radius: f32, party_of: &HashMap<u64, u32>, channel: u8) -> Vec<u32> {
+    match channel {
+        wire::VOICE_NEARBY => {
+            if !finite(sender.at) {
+                return Vec::new();
+            }
+            let r2 = radius * radius;
+            others
+                .iter()
+                .filter(|o| o.id != sender.id && finite(o.at))
+                .filter(|o| {
+                    let d = [o.at[0] - sender.at[0], o.at[1] - sender.at[1], o.at[2] - sender.at[2]];
+                    d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= r2
+                })
+                .map(|o| o.id)
+                .collect()
+        }
+        wire::VOICE_PARTY => {
+            let Some(party) = sender.account.and_then(|a| party_of.get(&a)) else { return Vec::new() };
+            others
+                .iter()
+                .filter(|o| o.id != sender.id && o.account.and_then(|a| party_of.get(&a)) == Some(party))
+                .map(|o| o.id)
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::*;
+
+    fn who(id: u32, at: [f32; 3], account: Option<u64>) -> VoiceWho {
+        VoiceWho { id, at, account }
+    }
+
+    fn parties(list: &[(u64, u32)]) -> HashMap<u64, u32> {
+        list.iter().copied().collect()
+    }
+
+    #[test]
+    fn nearby_within_radius_only() {
+        let s = who(1, [0.0, 0.0, 0.0], None);
+        let others = [who(2, [10.0, 0.0, 0.0], None), who(3, [0.0, 0.0, 40.0], None)];
+        let none = HashMap::new();
+        assert_eq!(voice_audience(&s, &others, 32.0, &none, wire::VOICE_NEARBY), vec![2]);
+    }
+
+    #[test]
+    fn boundary_is_inclusive_in_3d() {
+        let s = who(1, [0.0, 0.0, 0.0], None);
+        let none = HashMap::new();
+        // exactly on the radius counts
+        let on = [who(2, [3.0, 0.0, 4.0], None)];
+        assert_eq!(voice_audience(&s, &on, 5.0, &none, wire::VOICE_NEARBY), vec![2]);
+        // a hair past it does not
+        let past = [who(2, [3.0, 0.0, 4.001], None)];
+        assert!(voice_audience(&s, &past, 5.0, &none, wire::VOICE_NEARBY).is_empty());
+        // height counts too
+        let up = [who(2, [0.0, 6.0, 0.0], None)];
+        assert!(voice_audience(&s, &up, 5.0, &none, wire::VOICE_NEARBY).is_empty());
+    }
+
+    #[test]
+    fn party_hears_at_any_distance() {
+        let p = parties(&[(100, 0), (200, 0), (300, 1)]);
+        let s = who(1, [0.0, 0.0, 0.0], Some(100));
+        let others = [
+            who(2, [5000.0, 0.0, 0.0], Some(200)),
+            who(3, [0.0, 0.0, 0.0], Some(300)),
+            who(4, [1.0, 0.0, 0.0], None),
+        ];
+        assert_eq!(voice_audience(&s, &others, 32.0, &p, wire::VOICE_PARTY), vec![2]);
+    }
+
+    #[test]
+    fn party_member_without_position_still_hears_party() {
+        let p = parties(&[(100, 0), (200, 0)]);
+        let s = who(1, [0.0, 0.0, 0.0], Some(100));
+        let others = [who(2, [f32::NAN; 3], Some(200))];
+        assert_eq!(voice_audience(&s, &others, 32.0, &p, wire::VOICE_PARTY), vec![2]);
+    }
+
+    #[test]
+    fn guest_has_no_party() {
+        let p = parties(&[(100, 0), (200, 0)]);
+        // a guest sends to party: nobody, even a party member nearby
+        let guest = who(1, [0.0, 0.0, 0.0], None);
+        let others = [who(2, [0.0, 0.0, 0.0], Some(100)), who(3, [0.0, 0.0, 0.0], Some(200))];
+        assert!(voice_audience(&guest, &others, 32.0, &p, wire::VOICE_PARTY).is_empty());
+        // a signed-in player with no party: nobody either
+        let loner = who(1, [0.0, 0.0, 0.0], Some(999));
+        assert!(voice_audience(&loner, &others, 32.0, &p, wire::VOICE_PARTY).is_empty());
+        // and a guest's nearby packet still reaches those nearby
+        assert_eq!(voice_audience(&guest, &others, 32.0, &p, wire::VOICE_NEARBY), vec![2, 3]);
+    }
+
+    #[test]
+    fn sender_never_hears_self() {
+        let p = parties(&[(100, 0)]);
+        let s = who(1, [0.0, 0.0, 0.0], Some(100));
+        let same = [who(1, [0.0, 0.0, 0.0], Some(100))];
+        assert!(voice_audience(&s, &same, 32.0, &p, wire::VOICE_NEARBY).is_empty());
+        assert!(voice_audience(&s, &same, 32.0, &p, wire::VOICE_PARTY).is_empty());
+    }
+
+    #[test]
+    fn non_finite_positions_hear_nothing_nearby() {
+        let none = HashMap::new();
+        let others = [who(2, [f32::NAN, 0.0, 0.0], None), who(3, [0.0, f32::INFINITY, 0.0], None)];
+        let s = who(1, [0.0, 0.0, 0.0], None);
+        assert!(voice_audience(&s, &others, 32.0, &none, wire::VOICE_NEARBY).is_empty());
+        // a sender with a non-finite position reaches nobody nearby
+        let bad = who(1, [f32::NAN, 0.0, 0.0], None);
+        let near = [who(2, [0.0, 0.0, 0.0], None)];
+        assert!(voice_audience(&bad, &near, 32.0, &none, wire::VOICE_NEARBY).is_empty());
+    }
+
+    #[test]
+    fn unknown_channel_reaches_nobody() {
+        let p = parties(&[(100, 0)]);
+        let s = who(1, [0.0, 0.0, 0.0], Some(100));
+        let others = [who(2, [0.0, 0.0, 0.0], Some(100))];
+        assert!(voice_audience(&s, &others, 32.0, &p, 7).is_empty());
+    }
 }

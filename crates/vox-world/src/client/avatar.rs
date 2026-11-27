@@ -40,6 +40,19 @@ pub fn attach(
     }
 }
 
+/// Your own mouth, from your microphone (see [`crate::voice::lipsync`]). It runs before the
+/// pose is sent, so the others see it.
+pub fn local_mouth(
+    w: Res<WorldClient>,
+    drivers: Res<crate::voice::lipsync::MouthDrivers>,
+    mut saved: Local<Vec<(Entity, Vec3)>>,
+    mut tf: Query<&mut Transform>,
+) {
+    let Some((_, rig)) = &w.rig else { return };
+    let mouth = drivers.shown_local(w.now());
+    crate::voice::lipsync::local_face(rig, mouth, &mut saved, &mut tf);
+}
+
 /// Send your pose 30 times a second: where you stand, which way you face, and the body.
 pub fn send_pose(mut w: ResMut<WorldClient>, tf: Query<&Transform>) {
     if !w.ready || w.link.is_none() || w.watch {
@@ -64,6 +77,7 @@ pub fn apply_others(
     mut w: ResMut<WorldClient>,
     time: Res<Time<Real>>,
     remotes: Query<&Remote>,
+    mouths: Option<Res<crate::voice::lipsync::MouthDrivers>>,
     mut tf: Query<&mut Transform, Without<crate::WorldCamera>>,
 ) {
     if !w.ready {
@@ -71,7 +85,7 @@ pub fn apply_others(
     }
     let now = w.now();
     let dt = time.delta_secs_f64();
-    for o in w.others.values_mut() {
+    for (id, o) in w.others.iter_mut() {
         let Some(e) = o.entity else { continue };
         let Some(t) = o.stream.clock.at(now, dt) else { continue };
         let tick = t * HZ;
@@ -89,6 +103,9 @@ pub fn apply_others(
         if let Ok(r) = remotes.get(e) {
             if let (Some(inner), Some(rig)) = (r.inner, &r.rig) {
                 net::put(rig, inner, &a, &b, s, &mut tf);
+                // the mouth from their voice goes on after the pose's own face mask
+                let mouth = mouths.as_ref().map_or(avatar_voice::lipsync::Mouth::Rest, |m| m.shown_remote(*id, now));
+                crate::voice::lipsync::set_face(rig, mouth, &mut tf);
             }
         }
     }

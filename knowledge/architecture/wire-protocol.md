@@ -1,9 +1,9 @@
 ---
 type: Architecture
-title: World Wire Protocol (PROTOCOL = 5)
+title: World Wire Protocol (PROTOCOL = 6)
 description: "The message set between a world server and its players, how it is encoded, and what each protocol version added."
 tags: [architecture, protocol, networking, postcard]
-generated: { by: agent/mcp, at: "2026-11-26T15:52:35Z" }
+generated: { by: agent/cli, at: "2026-11-26T23:26:41Z" }
 status: stable
 governance: constraint
 code_refs: [crates/vox-core/src/wire.rs, crates/vox-world/src/proto.rs]
@@ -11,12 +11,14 @@ code_refs: [crates/vox-core/src/wire.rs, crates/vox-world/src/proto.rs]
 
 # World Wire Protocol
 
-Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 5`). One WebSocket **binary** message per postcard-encoded value. Bump the constant whenever messages change in a way old players cannot read; the server refuses a wrong version.
+Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 6`). One WebSocket **binary** message per postcard-encoded value. Bump the constant whenever messages change in a way old players cannot read; the server refuses a wrong version.
 
 ## Messages
-**ToServer**: `Hello {protocol, name, avatar: Vec<u8>, token: Option<String>}`, `Edit {id, cell, block}`, `Pose {at, blob}`, weather change, leave.
-**ToClient**: `Welcome {you, world, palette, block_size, bounds, spawn, settings (JSON string), name}`, `Chunk {key, version, data}` (run-length encoded), `Ready`, `Joined {player, name, avatar}`, `Left`, `Edits(Vec<Applied{seq, player, id, cell, block}>)`, `Refused {id, why}`, `Pose`, `Weather`, `Bye {why}`, and (added last, so older clients ignore it) `Correct {at}`: the server's answer to an impossible position, telling the client to go back.
-`Pose` and `Weather` are *droppable* (a newer one follows); everything else is reliable.
+**ToServer**: `Hello {protocol, name, avatar: Vec<u8>, token: Option<String>}`, `Edit {id, cell, block}`, `Pose {at, blob}`, weather change, `Watch {protocol}`, and (added last in protocol 6) `Voice(VoicePacket)`.
+**ToClient**: `Welcome {you, world, palette, block_size, bounds, spawn, settings (JSON string), name}`, `Chunk {key, version, data}` (run-length encoded), `Ready`, `Joined {player, name, avatar}`, `Left`, `Edits(Vec<Applied{seq, player, id, cell, block}>)`, `Refused {id, why}`, `Pose`, `Weather`, `Bye {why}`, and (added last, so older clients ignore it) `Correct {at}`: the server's answer to an impossible position, telling the client to go back; and (added last in protocol 6) `Voice {player, packet}`.
+`Pose`, `Weather` and `Voice` are *droppable* (a newer one follows; a full queue drops them instead of disconnecting the player); everything else is reliable.
+
+**Voice (protocol 6).** `VoicePacket {channel (0 nearby, 1 party), seq, samples (320), pred, index (<= 88), data (160 bytes)}`: 20 ms of 16 kHz mono IMA ADPCM, about 190 bytes encoded. `VoicePacket::valid()` checks all four limits. The server decides who hears a packet (see `decisions/world-voice-chat`), watchers neither send nor receive it, and old clients are refused by the version check.
 
 ## Version history (from docs/PROJECT.md; v3 is not documented)
 | Version | Change |

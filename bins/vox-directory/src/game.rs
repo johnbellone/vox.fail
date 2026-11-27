@@ -907,7 +907,30 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
             }))
         })
         .collect();
-    Ok(Json(json!({ "plots": plots, "portals": portals })))
+    // Raid parties with two or more members, so a world can let them talk to each other. The
+    // caps keep one large or spammed table from making this response unbounded. Newest first
+    // (`c.id DESC`), so when there are more than the cap the newest parties are the ones kept.
+    // Finished parties are not filtered out: a finished party can still talk.
+    let mut st = db
+        .prepare(
+            "SELECT m.crew, m.account FROM crew_members m WHERE m.crew IN (
+                 SELECT c.id FROM crews c JOIN crew_members n ON n.crew = c.id
+                 WHERE c.kind = 'party' GROUP BY c.id HAVING COUNT(*) >= 2 ORDER BY c.id DESC LIMIT ?1)
+             ORDER BY m.crew, m.joined, m.account",
+        )
+        .map_err(oops)?;
+    let mut parties: Vec<Vec<i64>> = Vec::new();
+    let mut last = None;
+    for row in st.query_map(params![PARTIES_MAX as i64], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).map_err(oops)?.flatten() {
+        if last != Some(row.0) {
+            parties.push(Vec::new());
+            last = Some(row.0);
+        }
+        if let Some(p) = parties.last_mut().filter(|p| p.len() < PARTY_MEMBERS_MAX) {
+            p.push(row.1);
+        }
+    }
+    Ok(Json(json!({ "plots": plots, "portals": portals, "parties": parties })))
 }
 
 // ---- tickets
@@ -1071,3 +1094,6 @@ async fn instance_for(d: &Directory, account: u64, template: &str) -> Res<String
     }
     Ok(id)
 }
+/// Most raid parties a world's rules list, and most members shown for each.
+const PARTIES_MAX: usize = 500;
+const PARTY_MEMBERS_MAX: usize = 24;

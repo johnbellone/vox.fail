@@ -66,6 +66,10 @@ const MAX_MESSAGE: usize = 64 * 1024;
 const MAX_POSE_BLOB: usize = 32 * 1024;
 /// Poses per second one connection may send (a client sends about 20).
 const MAX_POSES_PER_SECOND: u32 = 60;
+/// Voice packets per second one player may send (a talking client sends about 50), and the
+/// burst allowed.
+const MAX_VOICE_PER_SECOND: f32 = 60.0;
+const VOICE_BURST: f32 = 100.0;
 /// How long a new connection has to say hello.
 const HELLO_WITHIN: Duration = Duration::from_secs(10);
 /// How far (in blocks, from the eyes) a player may edit.
@@ -100,6 +104,8 @@ pub struct Config {
     pub max_watchers: usize,
     /// edits per second per player (and the burst allowed)
     pub edit_rate: f32,
+    /// how far (blocks) speech carries to players nearby; must be finite and above zero
+    pub voice_radius: f32,
     pub flush_every: Duration,
     /// the directory's public key: players must bring a sign-in token it signed, and go by
     /// the name in it. None: anyone may join under any name (a private or test world).
@@ -133,6 +139,7 @@ impl Config {
             keep_snapshots: vox_format::store::KEEP_SECS,
             max_watchers: 200,
             edit_rate: 20.0,
+            voice_radius: 32.0,
             flush_every: Duration::from_secs(3),
             directory: None,
             guests: false,
@@ -171,8 +178,8 @@ enum Event {
     Status(oneshot::Sender<Status>),
     /// who's here for the directory (and start counting edits again)
     Report(oneshot::Sender<serde_json::Value>),
-    /// the directory's plots and portals
-    Rules(Vec<Plot>, Vec<serde_json::Value>),
+    /// the directory's plots, portals and raid parties (lists of account ids)
+    Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>),
     /// the directory's answer for a trip: where to go, and the ticket (if it gave one)
     Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3] },
     Shutdown,
@@ -326,6 +333,8 @@ struct Player {
     /// when they were last told to go back (at most twice a second)
     corrected_at: f64,
     bucket: Bucket,
+    /// voice packets they may still send
+    voice: Bucket,
     /// their directory account, when signed in
     account: Option<u64>,
     /// blocks they placed since the last report
@@ -356,6 +365,9 @@ struct WorldState {
     /// claimed plots and player-opened portals, from the directory
     plots: Vec<Plot>,
     portals: Vec<serde_json::Value>,
+    /// which raid party each signed-in account is in (index into the directory's list); an
+    /// account listed in two parties keeps the first
+    party_of: HashMap<u64, u32>,
     /// snapshots: the store, the last one taken, regions changed since, and whether the next
     /// one must hold every region (no usable last one)
     snaps: Option<vox_format::Snapshots<SnapStore>>,

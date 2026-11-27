@@ -21,6 +21,8 @@ them in the controls menu (press Esc to open the menu).
 | Inventory | E |
 | Change view (first person, behind the shoulder, from above) | F5 or V |
 | Menu (pause; also backs out of a menu) | Esc |
+| Push to talk (hold to send voice) | B |
+| Voice channel (switch between nearby and party) | N |
 
 You start in first person: look around with the mouse (the first click captures it). The mouse
 wheel cycles the hotbar.
@@ -58,6 +60,7 @@ Nintendo (B, A, Y, X; L, R, ZL, ZR), and Steam (A, B, X, Y). Other pads use the 
 | Change view | D-pad up |
 | Inventory | North (top face button) |
 | Menu (pause) | Start |
+| Push to talk (hold to send voice) | D-pad right |
 
 In menus, the face button South confirms, East backs out, and the bumpers switch tabs.
 

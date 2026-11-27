@@ -53,6 +53,8 @@ impl Default for Bindings {
             (TabPrev, &[K(KeyCode::KeyQ), K(KeyCode::PageUp)]),
             (Alternate, &[K(KeyCode::KeyX)]),
             (QuickWheel, &[K(KeyCode::Tab)]),
+            (PushToTalk, &[K(KeyCode::KeyB)]),
+            (VoiceChannel, &[K(KeyCode::KeyN)]),
         ];
         let pad: &[(Action, &[GamepadButton])] = &[
             (Jump, &[G::South]),
@@ -74,6 +76,7 @@ impl Default for Bindings {
             (TabPrev, &[G::LeftTrigger]),
             (Alternate, &[G::West]),
             (QuickWheel, &[G::DPadLeft]),
+            (PushToTalk, &[G::DPadRight]),
         ];
         Bindings {
             kbm: kbm.iter().map(|(a, i)| (*a, i.to_vec())).collect(),
@@ -368,7 +371,10 @@ mod tests {
         for a in Action::ALL {
             let moving = matches!(a, Action::Forward | Action::Backward | Action::Left | Action::Right);
             let wheel = matches!(a, Action::HotbarNext | Action::HotbarPrev);
-            assert!(moving || !b.pad(a).is_empty(), "{a:?} has no gamepad button");
+            // every nameable pad button already has a game action, so VoiceChannel is
+            // keyboard-only by default; rebind it from the controls screen if you want a pad key
+            let keyboard_only = matches!(a, Action::VoiceChannel);
+            assert!(moving || keyboard_only || !b.pad(a).is_empty(), "{a:?} has no gamepad button");
             assert!(wheel || !b.kbm(a).is_empty(), "{a:?} has no key");
         }
     }

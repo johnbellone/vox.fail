@@ -59,10 +59,11 @@ use vox_core::{
     predict::View,
     ray::{self, Hit},
     weather::{Air, Climate, Weather},
-    wire::{self, PROTOCOL, ToClient, ToServer},
+    wire::{self, PROTOCOL, ToClient, ToServer, VoicePacket},
 };
 
 use crate::pose::{self as net, Remote, Rig, Stream};
+use crate::voice;
 use crate::proto::{self, Pose};
 use crate::pose::HZ;
 
@@ -367,6 +368,8 @@ pub struct WorldClient {
     /// watching, not playing (the front page's live view): no avatar, no input, no HUD, and a
     /// camera that drifts round the spawn on its own
     pub watch: bool,
+    /// voice packets from the server, for the voice plugin to play (see [`crate::voice::plugin`])
+    pub(crate) voice_in: Vec<(u32, VoicePacket)>,
 }
 
 /// Coming out of a portal: where you stand (blocks) and which way you and the camera face.
@@ -454,6 +457,7 @@ impl Default for WorldClient {
             ticket: None,
             portal_go: None,
             watch: false,
+            voice_in: Vec::new(),
         }
     }
 }
@@ -496,6 +500,43 @@ impl WorldClient {
         if let Some(l) = &self.link {
             l.send(wire::encode(m));
         }
+    }
+
+    /// Sends one packet of your voice to the world (the caller checks [`Self::voice_ready`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn send_voice(&self, p: VoicePacket) {
+        self.send(&ToServer::Voice(p));
+    }
+
+    /// The link is up and you are in the world, so voice can be sent.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn voice_ready(&self) -> bool {
+        // (a watcher is not a player: the server would drop its voice and disconnect it)
+        self.ready && self.link.is_some() && !self.watch
+    }
+
+    /// Where you stand (blocks, feet) and which way the camera faces (`cam_yaw`, the
+    /// -Z-forward convention [`crate::voice::mix`] uses; the character's own `yaw` is the
+    /// model's +Z convention and lags the view in third person).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn listener(&self) -> ([f32; 3], f32) {
+        (self.body.pos, self.cam_yaw)
+    }
+
+    /// Where a player was last seen (blocks, feet), from their newest pose. Poses carry
+    /// metres, so this divides by the block size to match [`WorldClient::listener`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn place_of(&self, player: u32) -> Option<[f32; 3]> {
+        let size = if self.block_size > 0.0 { self.block_size } else { 0.5 };
+        self.others.get(&player)?.places.back().map(|(_, at, _)| (*at / size).to_array())
+    }
+
+    /// Queues a voice packet from the server. The oldest go first when the queue is full.
+    pub(crate) fn push_voice(&mut self, player: u32, packet: VoicePacket) {
+        if self.voice_in.len() >= voice::plugin::VOICE_QUEUE_MAX {
+            self.voice_in.remove(0);
+        }
+        self.voice_in.push((player, packet));
     }
 
     pub fn notice(&mut self, s: impl Into<String>) {
@@ -721,6 +762,14 @@ impl WorldClient {
         self.hotbar.get(self.slot).copied().unwrap_or(1)
     }
 
+    /// Everyone else in the world as (their number, their name), by name: for the voice HUD
+    /// (who is speaking) and the menu's per-player mute.
+    pub fn others_named(&self) -> Vec<(u32, String)> {
+        let mut v: Vec<(u32, String)> = self.others.iter().map(|(id, o)| (*id, o.name.clone())).collect();
+        v.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        v
+    }
+
     pub fn players(&self) -> Vec<String> {
         let mut v: Vec<String> = self.others.values().map(|o| o.name.clone()).collect();
         v.sort();
@@ -828,6 +877,26 @@ mod tests {
         let mut r = BuildRepeat::default();
         r.step((false, false), (false, false), 0.0, 0.0);
         r
+    }
+
+    /// Voice compares where you stand with where others were seen: both must be in blocks
+    /// (poses carry metres), and the listener faces where the camera faces.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn voice_positions_are_in_blocks_and_the_listener_follows_the_camera() {
+        let mut w = WorldClient::new(None, "Sam".into());
+        w.body.pos = [100.0, 0.0, 100.0];
+        w.cam_yaw = 1.25;
+        w.yaw = 3.0; // the character's own heading must not matter
+        let mut places = VecDeque::new();
+        // one block away from the listener: 50.5 m is block 101 at half a metre a block
+        places.push_back((1, Vec3::new(50.5, 0.0, 50.0), 0.0));
+        w.others.insert(7, Other { name: "Ann".into(), entity: None, stream: Stream::default(), places });
+        assert_eq!(w.place_of(7), Some([101.0, 0.0, 100.0]));
+        assert_eq!(w.place_of(8), None);
+        let (at, yaw) = w.listener();
+        assert_eq!(at, [100.0, 0.0, 100.0]);
+        assert_eq!(yaw, 1.25);
     }
 
     #[test]

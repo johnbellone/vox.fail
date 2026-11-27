@@ -4,6 +4,7 @@
 import readme from "../../../../../docs/help/README.md" with { type: "text" };
 import gettingStarted from "../../../../../docs/help/getting-started.md" with { type: "text" };
 import controls from "../../../../../docs/help/controls.md" with { type: "text" };
+import voice from "../../../../../docs/help/voice.md" with { type: "text" };
 import building from "../../../../../docs/help/building.md" with { type: "text" };
 import worlds from "../../../../../docs/help/worlds.md" with { type: "text" };
 import accounts from "../../../../../docs/help/accounts.md" with { type: "text" };
@@ -34,6 +35,7 @@ export const pages: HelpDoc[] = [
   index,
   doc("getting-started.md", "getting-started", gettingStarted),
   doc("controls.md", "controls", controls),
+  doc("voice.md", "voice", voice),
   doc("building.md", "building", building),
   doc("worlds.md", "worlds", worlds),
   doc("accounts.md", "accounts", accounts),

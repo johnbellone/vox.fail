@@ -25,6 +25,7 @@ pub mod outdoors;
 pub mod portals;
 pub mod pose;
 pub mod proto;
+pub mod voice;
 
 use bevy::{gltf::Gltf, prelude::*};
 

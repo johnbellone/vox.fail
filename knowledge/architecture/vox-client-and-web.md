@@ -3,7 +3,7 @@ type: Component
 title: vox-client and the Web Front End
 description: The player client (desktop and WebAssembly) and the plain HTML/JS pages that the directory serves around it.
 tags: [component, vox-client, web, wasm, webgpu]
-generated: { by: agent/mcp, at: "2026-11-26T17:38:54Z" }
+generated: { by: agent/cli, at: "2026-11-26T23:26:41Z" }
 status: stable
 code_refs: [bins/vox-client/src/, apps/site/, tools/dev/build_web.sh, tools/test/web_e2e.py]
 ---
@@ -27,3 +27,7 @@ Cloudflare must keep Rocket Loader and email obfuscation off (they break scripts
 # Related Concepts
 - [WebAssembly and WebGPU Browser Client](../technologies/webassembly-webgpu.md): how the browser build works
 - [Vox Online: Player Journey and Worlds](../project/vox-online.md): the player journey
+
+
+## Voice chat (desktop)
+`VoicePlugin` (`crates/vox-world/src/voice/plugin.rs`) is added by `vox-client`. Opt-in (off by default, settings in `voice.json`): the mic (cpal, `capture.rs`) feeds a `vox_voice::Packetizer`; push-to-talk (B / D-pad right) or open mic with a silence gate; N switches nearby/party. Received voices are mixed by `playback.rs` with distance falloff and panning from `mix.rs` (positions in blocks, camera yaw). The HUD shows a MIC marker and who is speaking; the pause menu has a Voice screen. Remote and local mouths follow the voice (`lipsync.rs`). **The browser build has no voice**: a stub drops incoming voice and the menu says it is not available. See `decisions/world-voice-chat`.

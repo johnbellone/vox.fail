@@ -67,10 +67,14 @@ pub enum Action {
     Alternate,
     /// hold for the quick wheel: point at a hotbar block (right stick or mouse), let go to take it
     QuickWheel,
+    /// hold to talk to the people you can hear (nearby, or your raid party)
+    PushToTalk,
+    /// cycle the voice channel: nearby or party
+    VoiceChannel,
 }
 
 impl Action {
-    pub const ALL: [Action; 23] = [
+    pub const ALL: [Action; 25] = [
         Action::Forward,
         Action::Backward,
         Action::Left,
@@ -94,6 +98,8 @@ impl Action {
         Action::TabPrev,
         Action::Alternate,
         Action::QuickWheel,
+        Action::PushToTalk,
+        Action::VoiceChannel,
     ];
 
     /// What it's called on the controls screen and in hints.
@@ -122,6 +128,8 @@ impl Action {
             Action::TabPrev => "Previous tab",
             Action::Alternate => "More",
             Action::QuickWheel => "Quick select",
+            Action::PushToTalk => "Push to talk",
+            Action::VoiceChannel => "Voice channel",
         }
     }
 

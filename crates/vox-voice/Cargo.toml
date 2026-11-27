@@ -1,0 +1,7 @@
+[package]
+name = "vox-voice"
+version.workspace = true
+edition.workspace = true
+description = "Voice codecs for Vox voice chat (IMA ADPCM). Pure Rust, no Bevy, no dependencies, so its tests build in seconds."
+
+[dependencies]

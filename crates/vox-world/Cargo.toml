@@ -11,9 +11,13 @@ serde.workspace = true
 serde_json.workspace = true
 postcard.workspace = true
 png.workspace = true
+vox-voice.workspace = true
+avatar-voice.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 vox-link.workspace = true
+# Same version as block_avatar, so both share one ALSA/CoreAudio/WASAPI backend.
+cpal = "0.17"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

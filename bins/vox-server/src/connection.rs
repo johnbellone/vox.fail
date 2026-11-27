@@ -147,8 +147,9 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
     if server.tx.send(Event::Join { conn, tx, protocol, name, avatar, account, arrive }).await.is_err() {
         return;
     }
-    // poses are the one message with no limit further on: cap them here, before they queue
-    let (mut window, mut poses) = (Instant::now(), 0u32);
+    // poses and voice have no limit further on: cap them here, before they queue. Each has its
+    // own count in the same one-second window.
+    let (mut window, mut poses, mut voices) = (Instant::now(), 0u32, 0u32);
     while let Some(Ok(m)) = stream.next().await {
         match m {
             Message::Binary(b) => match wire::decode::<ToServer>(&b) {
@@ -159,10 +160,23 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
                             break;
                         }
                         if window.elapsed() >= Duration::from_secs(1) {
-                            (window, poses) = (Instant::now(), 0);
+                            (window, poses, voices) = (Instant::now(), 0, 0);
                         }
                         poses += 1;
                         if poses > MAX_POSES_PER_SECOND {
+                            continue;
+                        }
+                    }
+                    if let ToServer::Voice(packet) = &msg {
+                        // a packet of any other size is dropped, not a reason to disconnect
+                        if packet.data.len() > wire::VOICE_BYTES {
+                            continue;
+                        }
+                        if window.elapsed() >= Duration::from_secs(1) {
+                            (window, poses, voices) = (Instant::now(), 0, 0);
+                        }
+                        voices += 1;
+                        if voices > MAX_VOICE_PER_SECOND {
                             continue;
                         }
                     }
@@ -180,6 +194,27 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
     }
     let _ = server.tx.send(Event::Leave { conn }).await;
     let _ = writer.await;
+}
+
+/// Voice packets per connection per second. Over this, packets are dropped here, before they
+/// reach the world thread.
+const MAX_VOICE_PER_SECOND: u32 = 120;
+
+/// Raid parties from the directory's rules: an array of arrays of account ids. A missing or
+/// malformed key is no parties; non-numeric members are skipped. Capped, because the list
+/// comes from over the network: at most 500 parties of 24 members each.
+fn parse_parties(v: &serde_json::Value) -> Vec<Vec<u64>> {
+    const MAX_PARTIES: usize = 500;
+    const MAX_MEMBERS: usize = 24;
+    let Some(parties) = v.as_array() else { return Vec::new() };
+    parties
+        .iter()
+        .take(MAX_PARTIES)
+        .filter_map(|p| {
+            let members: Vec<u64> = p.as_array()?.iter().filter_map(|m| m.as_u64()).take(MAX_MEMBERS).collect();
+            (!members.is_empty()).then_some(members)
+        })
+        .collect()
 }
 
 /// Talking to the directory: rules every `rules_every`, a report every `report_every`. A
@@ -201,7 +236,8 @@ pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world,
                     if let Ok(v) = r.json::<serde_json::Value>().await {
                         let plots = v["plots"].as_array().map(|a| a.iter().filter_map(Plot::from_json).collect()).unwrap_or_default();
                         let portals = v["portals"].as_array().cloned().unwrap_or_default();
-                        if tx.send(Event::Rules(plots, portals)).await.is_err() {
+                        let parties = parse_parties(&v["parties"]);
+                        if tx.send(Event::Rules(plots, portals, parties)).await.is_err() {
                             return;
                         }
                         said = false;
@@ -281,5 +317,41 @@ pub(super) async fn ticket_office(tx: mpsc::Sender<Event>, mut trips: mpsc::Rece
             let to = answer.as_ref().and_then(|a| a["url"].as_str()).map_or(trip.to, String::from);
             let _ = tx.send(Event::Ticket { conn: trip.conn, url: to, ticket, arrive: trip.arrive }).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_parties;
+    use serde_json::json;
+
+    #[test]
+    fn parses_parties() {
+        let v = json!([[1, 2, 3], [4]]);
+        assert_eq!(parse_parties(&v), vec![vec![1, 2, 3], vec![4]]);
+    }
+
+    #[test]
+    fn missing_or_wrong_shape_is_empty() {
+        assert!(parse_parties(&serde_json::Value::Null).is_empty());
+        assert!(parse_parties(&json!({ "a": 1 })).is_empty());
+        assert!(parse_parties(&json!("[1,2]")).is_empty());
+        assert!(parse_parties(&json!([])).is_empty());
+    }
+
+    #[test]
+    fn skips_non_numeric_members_and_empty_parties() {
+        let v = json!([[1, "x", -5, 2.5, null, 7], ["a"], [], 9, [8]]);
+        assert_eq!(parse_parties(&v), vec![vec![1, 7], vec![8]]);
+    }
+
+    #[test]
+    fn caps_parties_and_members() {
+        let many: Vec<Vec<u64>> = (0..600u64).map(|i| vec![i]).collect();
+        assert_eq!(parse_parties(&json!(many)).len(), 500);
+        let big = json!([(0..100u64).collect::<Vec<_>>()]);
+        let got = parse_parties(&big);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].len(), 24);
     }
 }

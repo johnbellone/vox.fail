@@ -3,7 +3,7 @@ type: Architecture
 title: "Shows over the Network: Relay, Host, Guest and Viewers"
 description: How the avatar app streams a live show through vox-relay so viewers and a remote guest see and hear the same scene.
 tags: [architecture, networking, relay, voice, protocol]
-generated: { by: agent/mcp, at: "2026-11-26T15:57:58Z" }
+generated: { by: agent/cli, at: "2026-11-26T23:26:41Z" }
 status: stable
 code_refs: [bins/vox-relay/src/, bins/block-avatar/src/network/net.rs, bins/block-avatar/src/sound/netvoice.rs, crates/vox-world/src/proto.rs, crates/vox-world/src/pose.rs]
 ---
@@ -41,3 +41,6 @@ See `architecture/wire-protocol` for the separate world protocol.
 # Related Concepts
 - [Decision: IMA ADPCM for Network Voice (Opus Later)](../decisions/adpcm-network-voice.md): why voice uses ADPCM
 - [World Wire Protocol (PROTOCOL = 5)](wire-protocol.md): the separate world protocol
+
+
+World voice chat (nearby and raid party, through vox-server) is separate from shows and uses `vox-voice` and wire protocol 6: see `decisions/world-voice-chat`.

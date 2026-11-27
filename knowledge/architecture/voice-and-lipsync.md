@@ -3,7 +3,7 @@ type: Architecture
 title: Voice Analysis and Lip Sync
 description: "How the microphone signal becomes mouth shapes, vowels, pitch-based body language and laugh/sing events, with measured accuracy."
 tags: [architecture, audio, dsp, lipsync, voice]
-generated: { by: agent/mcp, at: "2026-11-26T15:57:58Z" }
+generated: { by: agent/cli, at: "2026-11-26T23:26:41Z" }
 status: stable
 code_refs: [crates/avatar-voice/src/lipsync.rs, crates/avatar-voice/src/voice.rs, crates/avatar-voice/src/detect.rs, bins/block-avatar/src/sound/audio.rs, crates/avatar-voice/src/tests_real.rs]
 ---
@@ -46,3 +46,6 @@ Mouth lags the mic by about 50 ms at 60 fps (mic buffer plus one frame); the con
 
 # Related Concepts
 - [Audio and Speech Technology](../technologies/audio-and-speech.md): audio libraries and Whisper
+
+
+Since world voice chat, `vox-world` also uses `avatar-voice` lip sync to animate the mouths of remote players from the voice they send and of your own avatar from your mic (`crates/vox-world/src/voice/lipsync.rs`). See `decisions/world-voice-chat`.
