@@ -197,6 +197,7 @@ impl Plugin for WorldGlue {
         .add_systems(Update, (outdoors::update, outdoors::weather_look, outdoors::relief_to_blocks, world_out).chain().after(world::camera).after(lighting::update))
         .add_systems(Update, portals::update.after(world::camera).after(world::receive))
         .init_resource::<portals::Portals>()
+        .init_resource::<vox_world::entities::WorldEntities>()
         .add_systems(
             PostUpdate,
             (world::send_pose, world::apply_others)

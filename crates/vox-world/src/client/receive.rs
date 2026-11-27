@@ -9,6 +9,7 @@ pub fn receive(
     av: Res<crate::LocalAvatar>,
     blocks: Res<crate::blocks::Blocks>,
     assets: Res<AssetServer>,
+    mut entities: ResMut<crate::entities::WorldEntities>,
     mut commands: Commands,
 ) {
     if !w.active() {
@@ -95,7 +96,10 @@ pub fn receive(
                             }
                         }
                         w.focus = None;
-                        // its portals; and if you came through one, where you come out
+                        // the last world's entities are gone; this world's come in Entities
+                        entities.clear();
+                        // its portals (from the settings, until its entities say otherwise);
+                        // and if you came through one, where you come out
                         w.portals = crate::portals::parse(&set);
                         w.edges = set["atlas"]["edges"]
                             .as_array()
@@ -233,9 +237,10 @@ pub fn receive(
                         w.ready = false;
                     }
                     ToClient::Travel { url, ticket, arrive } => w.travelled(&url, ticket, arrive),
-                    // world entities (protocol 9): drawn from in a later step of the editor work;
-                    // until then the portals still come from the settings in Welcome
-                    ToClient::Entities(_) | ToClient::EntityRefused { .. } => {}
+                    // world entities (protocol 9); the portals are drawn from them in portals.rs
+                    ToClient::Entities(changes) => entities.apply(&changes),
+                    // the editor work uses these; nothing draws them yet
+                    ToClient::EntityRefused { .. } => {}
                     ToClient::Notice { text } => {
                         // from the server, so plain text only, and short
                         let text: String = text.chars().filter(|c| !c.is_control()).take(120).collect();

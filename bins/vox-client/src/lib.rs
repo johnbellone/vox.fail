@@ -132,6 +132,7 @@ pub fn app(start: Start, assets: String) -> App {
 
     .init_resource::<outdoors::Outdoors>()
     .init_resource::<portals::Portals>()
+    .init_resource::<vox_world::entities::WorldEntities>()
     .add_systems(Startup, (blocks::setup, setup, (spawn_fps, spawn_fade).run_if(playing)))
     .add_systems(
         Update,

@@ -243,6 +243,8 @@ struct Live {
 #[derive(Resource, Default)]
 pub struct Portals {
     built_for: u32,
+    /// this world's doorways came from its entities (not its settings)
+    from_entities: bool,
     live: Vec<Live>,
     scenes: Vec<Scene>,
     calm_until: f64,
@@ -312,6 +314,7 @@ fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Opti
 pub fn update(
     mut portals: ResMut<Portals>,
     mut w: ResMut<WorldClient>,
+    mut ents: ResMut<crate::entities::WorldEntities>,
     blocks: Res<Blocks>,
     studio: Res<crate::WorldRender>,
     real: Res<Time<Real>>,
@@ -345,8 +348,24 @@ pub fn update(
         .unwrap_or(UVec2::new(640, 360))
         .max(UVec2::splat(64));
 
-    // ---- a new world: its portals
+    // ---- a new world, or its entities changed: its portals
+    // only a portal entity rebuilds the doorways; a Spawn, Objective or Settings change does not
+    let entities_changed = std::mem::take(&mut ents.portals_changed);
     if p.built_for != w.portals_gen {
+        p.from_entities = false;
+    }
+    if entities_changed {
+        // Once a world has sent portal entities, they replace the portals its settings name,
+        // and removing them all leaves it with none (entities supersede settings). A world
+        // that never sent any keeps the portals from its settings, which are left untouched.
+        let was = p.from_entities;
+        let defs = ents.portal_defs();
+        p.from_entities = !defs.is_empty();
+        if p.from_entities || was {
+            w.portals = defs;
+        }
+    }
+    if p.built_for != w.portals_gen || entities_changed {
         p.built_for = w.portals_gen;
         p.calm_until = now + COOLDOWN;
         for l in p.live.drain(..) {
