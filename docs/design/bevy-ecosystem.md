@@ -1,6 +1,7 @@
 # Analysis: Bevy ecosystem crates for vox.fail
 
-Status: **analysis** · 2026-11-26 · checked against crates.io, docs.rs and each project's
+Status: **analysis** · 2026-11-26, **updated 2026-11-27: the workspace is now on Bevy 0.20.1** (the
+owner approved the upgrade after a trial; see *The upgrade question*) · checked against crates.io, docs.rs and each project's
 repository on this date, and against this repository's `Cargo.lock` and code. Nothing here is
 adopted yet; the verdicts are recommendations.
 
@@ -44,6 +45,20 @@ editor tools, UI, file formats and the ECS; GPU plumbing, geometry, noise and co
   server cannot use it and stay free of Bevy. The fix: our own small entity blob (below).
 
 ## The upgrade question
+
+**Done, 2026-11-27.** The owner said to upgrade; a trial branch measured it first, and it was
+smaller than the table below feared:
+
+- **Compile**: one line broke (the menus' `Button`). Everything else built.
+- **Menus**: moved off the deprecated `Interaction` to picking's `Hovered` and a click observer.
+- **Shaders**: the 9 became WESL; `alpha_discard` gained arguments; the water vertex shader
+  decompresses `Vertex`.
+- **Tonemapping**: `Tonemapping::None` became `Linear` to keep the look.
+
+The worlds screenshot the same as on 0.19.1, the avatar app passes all 12 visual tests against
+0.19.1 references, there are 290 tests and the same clippy warnings as before, and the browser
+client type-checks. The six crates below without 0.20 releases weren't adopted, so nothing was
+lost; adopting them now waits on their releases. The original analysis follows.
 
 | | Stay on 0.19.1 | Upgrade to 0.20.1 now |
 | --- | --- | --- |

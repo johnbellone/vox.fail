@@ -8,21 +8,21 @@
 // where they peak. Heights are worked out from world x and z alone, so neighbouring blocks,
 // chunks and the fragment shader all agree.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_functions,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    forward_io::{Vertex, VertexOutput, FragmentOutput},
+    forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
     mesh_view_bindings::globals,
     view_transformations::position_world_to_clip,
-}
+};
 
 // x: wave height, y: wave speed, z, w: the wind's direction (the main waves run with it)
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> waves: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> waves: vec4<f32>;
 // x: the swell's height (m, calm surface to the highest crest; 0: none), y: how pale the crests
 // go, z: how opaque the water is looking straight down (0-1), w: the block size (m), to find
 // the tops of pools
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> swell: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> swell: vec4<f32>;
 
 // The wind's direction, as a rotation taking the waves' own frame to the world's.
 fn wind_turn() -> mat2x2<f32> {
@@ -74,7 +74,9 @@ fn at_surface(y: f32) -> bool {
 }
 
 @vertex
-fn vertex(v: Vertex) -> VertexOutput {
+fn vertex(packed: Vertex) -> VertexOutput {
+    // Bevy may store a mesh's attributes compressed: unpack them as its own mesh shader does
+    let v = decompress_vertex(packed, packed.instance_index);
     var out: VertexOutput;
     let world_from_local = mesh_functions::get_world_from_local(v.instance_index);
     var wp = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(v.position, 1.0));
@@ -83,27 +85,20 @@ fn vertex(v: Vertex) -> VertexOutput {
     }
     out.world_position = wp;
     out.position = position_world_to_clip(wp.xyz);
-#ifdef VERTEX_NORMALS
+    @if(VERTEX_NORMALS)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(v.normal, v.instance_index);
-#endif
-#ifdef VERTEX_UVS_A
+    @if(VERTEX_UVS_A)
     out.uv = v.uv;
-#endif
-#ifdef VERTEX_UVS_B
+    @if(VERTEX_UVS_B)
     out.uv_b = v.uv_b;
-#endif
-#ifdef VERTEX_TANGENTS
+    @if(VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, v.tangent, v.instance_index);
-#endif
-#ifdef VERTEX_COLORS
+    @if(VERTEX_COLORS)
     out.color = v.color;
-#endif
-#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = v.instance_index;
-#endif
-#ifdef VISIBILITY_RANGE_DITHER
+    @if(VISIBILITY_RANGE_DITHER)
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(v.instance_index, world_from_local[3]);
-#endif
     return out;
 }
 

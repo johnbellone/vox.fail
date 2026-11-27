@@ -55,7 +55,7 @@ Your block-style characters as a live, mic-driven avatar for streams and videos,
 
 | Path | What |
 |---|---|
-| `bins/block-avatar/src/` | The avatar app (Bevy 0.19.1): lip sync, reactions, emotes, control page, webcam output |
+| `bins/block-avatar/src/` | The avatar app (Bevy 0.20.1): lip sync, reactions, emotes, control page, webcam output |
 | `assets/models/` | The 38 playable characters (Blue, the lead, 25 cast, 4 animals, peanut, 6 roasted peanuts); the app loads these |
 | `assets/models/variants/` | Lead without props, and the stepped-timing twins |
 | `assets/models/early/` | The first three voxel versions of the lead, before the rig |
@@ -975,6 +975,6 @@ dialogue lines (for the 2D speech bubbles) and whether it's a night scene.
 
 ## Versions
 
-Bevy 0.19.1 and cpal 0.17 (the same audio backend Bevy's own audio uses). Tested on Linux. The
+Bevy 0.20.1 and cpal 0.17 (the same audio backend Bevy's own audio uses). Tested on Linux. The
 webcam writer (`src/webcam.rs`) follows OBS's own `shared-memory-queue.c` byte for byte and is
 unit-tested against a port of OBS's reader, but hasn't been run on a Windows machine yet.

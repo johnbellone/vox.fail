@@ -763,7 +763,7 @@ pub fn update(
                 }
                 None => {
                     commands.entity(e).insert((
-                        Tonemapping::None,
+                        Tonemapping::Linear,
                         bevy::render::view::ColorGrading::default(),
                     ));
                 }

@@ -1,7 +1,7 @@
 // Retro sprite mode: shows the small render of the avatar with big square pixels, every pixel
 // snapped to the character's palette (three shades per colour), plus a one-pixel dark outline
 // around the silhouette. See src/stage.rs.
-#import bevy_ui::ui_vertex_output::UiVertexOutput
+import bevy_ui_render::ui_vertex_output::UiVertexOutput;
 
 struct RetroParams {
     palette: array<vec4<f32>, 256>,
