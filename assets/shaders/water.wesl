@@ -7,6 +7,11 @@
 // lift and drop the surface (the vertex shader moves the top of every pool), with pale crests
 // where they peak. Heights are worked out from world x and z alone, so neighbouring blocks,
 // chunks and the fragment shader all agree.
+//
+// Noise keeps the sea from repeating: big waves come in sets that drift downwind (each wave's
+// height rises and falls over a few of its lengths, moving at half its speed, as wave groups
+// do), crests bend instead of running in straight lines, and patches of rougher water (gusts
+// on the surface) pass across it.
 
 import bevy_pbr::render::{
     mesh_functions,
@@ -23,6 +28,20 @@ import bevy_pbr::render::{
 // go, z: how opaque the water is looking straight down (0-1), w: the block size (m), to find
 // the tops of pools
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> swell: vec4<f32>;
+
+fn hash2(p: vec2<f32>) -> f32 {
+    let q = fract(p * vec2(127.1, 311.7));
+    let r = q + dot(q, q + 34.53);
+    return fract(r.x * r.y);
+}
+
+// Smooth value noise, 0-1.
+fn vnoise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), u.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), u.x), u.y);
+}
 
 // The wind's direction, as a rotation taking the waves' own frame to the world's.
 fn wind_turn() -> mat2x2<f32> {
@@ -52,12 +71,20 @@ fn swell_at(p: vec2<f32>, t: f32) -> vec3<f32> {
     var out = vec3(0.0);
     for (var i = 0; i < 4; i++) {
         let d = normalize(rot * w[i].xy);
-        let k = 6.2831853 / (w[i].z * long);
+        let len = w[i].z * long;
+        let k = 6.2831853 / len;
         let c = sqrt(9.8 / k);
-        let phase = k * dot(d, p) - k * c * t;
+        let fi = f32(i);
+        // crests bend: a slow, broad warp of the phase (under a third of a wave)
+        let bend = 1.8 * (vnoise(p / (len * 2.6) + vec2(fi * 5.3, fi * 1.9) + t * 0.01) - 0.5);
+        let phase = k * dot(d, p) - k * c * t + bend;
+        // sets: the height swells and fades over a few wavelengths, travelling at half the
+        // waves' speed (0.45 to 1.45, about 1 on average). Its slope is left out of the normal:
+        // it changes over tens of metres, the waves over a few.
+        let group = 0.45 + vnoise((p - d * c * 0.5 * t) / (len * 3.2) + vec2(fi * 2.7, fi * 4.1));
         // sharper crests than troughs: lift the sine towards its peak
         let s = sin(phase);
-        let a = w[i].w * swell.x;
+        let a = w[i].w * swell.x * group;
         let h = a * (s + 0.35 * (s * s - 0.5));
         out.x += h;
         let dh = a * k * cos(phase) * (1.0 + 0.7 * s);
@@ -115,6 +142,8 @@ fn slope(p: vec2<f32>, t: f32) -> vec2<f32> {
     );
     // turn the whole set so the first (longest) waves run with the wind
     let rot = wind_turn();
+    // patches of rougher and calmer water (gusts on the surface), drifting downwind
+    let gusts = 0.45 + 1.1 * vnoise((p - rot * vec2(0.8, 0.6) * t * 1.2) / 14.0);
     for (var i = 0; i < 5; i++) {
         let d = normalize(rot * w[i].xy);
         let k = 6.2831853 / w[i].z;
@@ -122,7 +151,7 @@ fn slope(p: vec2<f32>, t: f32) -> vec2<f32> {
         let phase = k * dot(d, p) - k * c * t;
         g += d * (w[i].w * waves.x * k * cos(phase));
     }
-    return g;
+    return g * gusts;
 }
 
 @fragment
