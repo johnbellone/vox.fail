@@ -140,12 +140,12 @@ impl Directory {
         self.0.worlds.iter().find(|w| w.id == id).map_or_else(|| id.to_string(), |w| w.name.clone())
     }
 
-    fn world(&self, id: &str) -> Res<&crate::WorldInfo> {
+    pub(crate) fn world(&self, id: &str) -> Res<&crate::WorldInfo> {
         self.0.worlds.iter().find(|w| w.id == id).ok_or_else(|| bad("there's no such world"))
     }
 
     /// A world of this directory, or one of its instances: who may report and ask for tickets.
-    fn known_world(&self, id: &str) -> Res<()> {
+    pub(crate) fn known_world(&self, id: &str) -> Res<()> {
         if self.0.worlds.iter().any(|w| w.id == id) || self.tile(id) {
             return Ok(());
         }
@@ -940,7 +940,10 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
             p.push(row.1);
         }
     }
-    Ok(Json(json!({ "plots": plots, "portals": portals, "parties": parties })))
+    // who may edit the world in the advanced editor (see `editors`)
+    let owner: Option<u64> = crate::editors::owner_of(&db, &world)?;
+    let editors = crate::editors::editor_ids(&db, &world)?;
+    Ok(Json(json!({ "plots": plots, "portals": portals, "parties": parties, "owner": owner, "editors": editors })))
 }
 
 // ---- tickets

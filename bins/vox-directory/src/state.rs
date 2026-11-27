@@ -38,6 +38,7 @@ impl Directory {
                  world TEXT, ref INTEGER, detail TEXT NOT NULL, acquired INTEGER NOT NULL);
              CREATE INDEX IF NOT EXISTS items_account ON items (account);
              CREATE TABLE IF NOT EXISTS world_owners (world TEXT PRIMARY KEY, account INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS world_editors (world TEXT NOT NULL, account INTEGER NOT NULL, PRIMARY KEY (world, account));
              CREATE TABLE IF NOT EXISTS world_state (
                  world TEXT PRIMARY KEY, spawn TEXT NOT NULL, level TEXT NOT NULL, reported INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS whereabouts (
@@ -190,6 +191,8 @@ impl Directory {
             .route("/api/world/report", post(game::report))
             .route("/api/world/travel", post(game::travel))
             .route("/api/world/objective", post(game::objective))
+            .route("/api/worlds/editors", post(editors::change).get(editors::list))
+            .route("/api/world/{id}/editor", get(editors::check))
             .route("/api/world/{id}/rules", get(game::rules))
             .route("/auth/steam", get(social::steam_start))
             .route("/auth/steam/return", get(social::steam_return))
