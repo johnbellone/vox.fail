@@ -4,18 +4,17 @@
 // memory; close up it's solid. Its edge shimmers and glows; the picture ripples a little near
 // the edge.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::VertexOutput,
     mesh_view_bindings::{view, globals},
-}
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping::tone_mapping
-#endif
+};
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping::tone_mapping;
 
 // x: how present (0-1), y: the echo is ready (0/1), z: width / height, w: a seed
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var echo_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var echo_smp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var echo_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var echo_smp: sampler;
 
 fn hash2(p: vec2<f32>) -> f32 {
     let q = fract(p * vec2(127.1, 311.7));
@@ -68,8 +67,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let rim_c = vec3(1.0, 0.96, 0.88) * rim * (0.6 + 1.6 * presence);
 
     var out = vec4(c * fade_in + rim_c, clamp(presence * (0.55 + 0.45 * solid) * fade_in + rim * presence, 0.0, 1.0));
-#ifdef TONEMAP_IN_SHADER
+    @if(TONEMAP_IN_SHADER)
     out = tone_mapping(out, view.color_grading);
-#endif
     return out;
 }

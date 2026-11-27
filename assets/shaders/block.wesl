@@ -12,30 +12,29 @@
 // own tile in the atlas. Everything else (normal map, roughness, glow, lights, shadows, fog,
 // reflections) is Bevy's standard material, sampled at the shifted point.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing, calculate_tbn_mikktspace, apply_normal_mapping},
     pbr_types,
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::{view, globals},
-}
-#ifndef BINDLESS
-#import bevy_pbr::pbr_bindings
-#endif
+};
+@if(!BINDLESS)
+import bevy_pbr::render::pbr_bindings;
 
 // x: depth as a fraction of a block face, y: steps, z: tile size in pixels
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> params: vec4<f32>;
 // atlas width, height, cell size and border, in pixels
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> atlas: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var height_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var height_smp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> atlas: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var height_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var height_smp: sampler;
 
 fn depth_at(uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> f32 {
     return 1.0 - textureSampleGrad(height_tex, height_smp, uv, ddx, ddy).r;
 }
 
 fn parallax(in: VertexOutput, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> vec2<f32> {
-#ifdef VERTEX_TANGENTS
+    @if(VERTEX_TANGENTS) {
     let size = atlas.xy;
     // which tile this face shows, and its rectangle in the atlas
     let cell = floor(uv * size / atlas.z);
@@ -78,9 +77,9 @@ fn parallax(in: VertexOutput, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> 
     let gap = d - depth;
     let w = clamp(gap / (gap - prev_gap + 1e-5), 0.0, 1.0);
     return clamp(mix(at, prev_at, w), lo, hi);
-#else
+    } @else {
     return uv;
-#endif
+    }
 }
 
 fn hash3(p: vec3<f32>) -> f32 {
@@ -101,19 +100,21 @@ fn noise3(p: vec3<f32>) -> f32 {
 @fragment
 fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var in = vertex_output;
-#ifdef VERTEX_UVS_B
+    // how fast the unwrapped place changes on screen (set below when the face has a tile)
+    var ddx = vec2<f32>(0.0);
+    var ddy = vec2<f32>(0.0);
+    @if(VERTEX_UVS_B) {
     // where in the tile: the place across the face (in blocks) wrapped, inside the tile's
     // rectangle; and how fast the unwrapped place changes, for every sample below (derivatives
     // first, while every pixel of the quad is still here: WebGPU insists)
     let ext = (params.z - 1.0) / atlas.xy;
-    let ddx = dpdx(vertex_output.uv) * ext;
-    let ddy = dpdy(vertex_output.uv) * ext;
+    ddx = dpdx(vertex_output.uv) * ext;
+    ddy = dpdy(vertex_output.uv) * ext;
     let wrapped = vertex_output.uv_b + fract(vertex_output.uv) * ext;
     in.uv = parallax(vertex_output, wrapped, ddx, ddy);
-#endif
+    }
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-#ifdef VERTEX_UVS_B
-#ifndef BINDLESS
+    @if(VERTEX_UVS_B && !BINDLESS) {
     // sampled again with the smooth rates (the standard material used the wrapped ones)
     let m = pbr_bindings::material;
     let flags = pbr_input.material.flags;
@@ -135,9 +136,8 @@ fn fragment(vertex_output: VertexOutput, @builtin(front_facing) is_front: bool) 
     let nt = textureSampleGrad(pbr_bindings::normal_map_texture, pbr_bindings::normal_map_sampler, uv, ddx, ddy).rgb;
     let double_sided = (flags & pbr_types::STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u;
     pbr_input.N = apply_normal_mapping(flags, tbn, double_sided, is_front, nt);
-#endif
-#endif
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    }
+    pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
     // molten glow (deep orange-red, unlike a lamp's warm white) breathes and flows slowly
     let e = pbr_input.material.emissive;
     if e.r > 0.01 && e.r > 3.5 * e.g {

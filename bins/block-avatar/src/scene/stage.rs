@@ -4,7 +4,7 @@
 //! final picture. The overlay carries the speech bubbles and chat labels (so they show in OBS and
 //! in the virtual camera alike). In retro mode the 3D camera renders into a small image instead
 //! (the final size divided by the pixel size), and the overlay shows that image through
-//! `assets/shaders/retro.wgsl`: each big pixel snaps to the character's own palette (in three
+//! `assets/shaders/retro.wesl`: each big pixel snaps to the character's own palette (in three
 //! shades), and the silhouette gets a one-pixel dark outline, like the original 2D sprites.
 
 use bevy::{
@@ -38,7 +38,7 @@ pub struct RetroMaterial {
 
 impl UiMaterial for RetroMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/retro.wgsl".into()
+        "shaders/retro.wesl".into()
     }
 }
 

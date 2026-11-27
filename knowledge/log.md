@@ -1,4 +1,12 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T04:40:31Z]: Linked `decisions/bevy-0-20-upgrade.md` to `technologies/bevy-ecosystem.md` (The analysis that preceded the upgrade, and the crates still waiting on 0.20 releases.).
+* **Relate** [2026-11-27T04:40:31Z]: Linked `decisions/bevy-0-20-upgrade.md` to `decisions/bevy-0-19-1-pin.md` (The rule this supersedes.).
+* **Relate** [2026-11-27T04:40:31Z]: Linked `technologies/bevy.md` to `technologies/bevy-ecosystem.md` (Which ecosystem crates to use, copy, watch or skip.).
+* **Relate** [2026-11-27T04:40:31Z]: Linked `technologies/bevy.md` to `decisions/bevy-0-20-upgrade.md` (The version rule, and what the upgrade from 0.19.1 took.).
+* **Update** [2026-11-27T04:40:31Z]: Updated concept `convention/hard-constraints.md`. — Constraint 5 now Bevy 0.20.1, upgraded on the owner's say-so (2026-11-27)
+* **Update** [2026-11-27T04:40:12Z]: Updated concept `technologies/bevy.md`. — Upgraded to Bevy 0.20.1; shaders are WESL
+* **Deprecation** [2026-11-27T04:40:12Z]: Deprecated concept `decisions/bevy-0-19-1-pin.md`. — Superseded by decisions/bevy-0-20-upgrade (owner approved the upgrade)
+* **Creation** [2026-11-27T04:40:12Z]: Documented concept `decisions/bevy-0-20-upgrade.md` (Decision: Upgrade to Bevy 0.20.1, and Stay There).
 * **Relate** [2026-11-27T03:55:18Z]: Linked `architecture/world-format-design.md` to `technologies/bevy-ecosystem.md` (Why entities use our own blob instead of DynamicWorld, and what belongs in a pack.).
 * **Relate** [2026-11-27T03:55:18Z]: Linked `decisions/bevy-0-19-1-pin.md` to `technologies/bevy-ecosystem.md` (The analysis behind staying on 0.19.1 for now.).
 * **Relate** [2026-11-27T03:55:18Z]: Linked `technologies/bevy.md` to `technologies/bevy-ecosystem.md` (Which ecosystem crates to use, copy, watch or skip, and the 0.20 upgrade question.).

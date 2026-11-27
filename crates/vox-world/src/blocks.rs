@@ -334,7 +334,7 @@ const FACES: [(IVec3, Vec3, Vec3); 6] = [
 /// number holding the face (which of the six, so the shader can rebuild the normal and
 /// tangent), the corner's shading, and where the vertex is across the face in blocks (a merged
 /// face spans several; the fragment shader repeats the tile across it). See
-/// `shaders/block_vertex.wgsl` and `shaders/block.wgsl`.
+/// `shaders/block_vertex.wesl` and `shaders/block.wesl`.
 pub const ATTRIBUTE_BLOCK_UV: bevy::mesh::MeshVertexAttribute =
     bevy::mesh::MeshVertexAttribute::new("BlockUv", 0x766f_7801, bevy::mesh::VertexFormat::Unorm16x2);
 /// Bits 0-2: the face (the order of `FACES`); bits 8-15: shading, 255 = full light; bits
@@ -734,7 +734,7 @@ pub fn setup(
 // ------------------------------------------------------------------------------------------
 
 /// Block faces with parallax occlusion mapping: the texture is shifted along the view by its
-/// height map, so mortar, cracks and planks' gaps look sunken (`shaders/block.wgsl`).
+/// height map, so mortar, cracks and planks' gaps look sunken (`shaders/block.wesl`).
 pub type BlockMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, BlockExt>;
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -752,11 +752,11 @@ pub struct BlockExt {
 
 impl bevy::pbr::MaterialExtension for BlockExt {
     fn vertex_shader() -> bevy::shader::ShaderRef {
-        "shaders/block_vertex.wgsl".into()
+        "shaders/block_vertex.wesl".into()
     }
 
     fn fragment_shader() -> bevy::shader::ShaderRef {
-        "shaders/block.wgsl".into()
+        "shaders/block.wesl".into()
     }
 
     /// The main pass reads the packed vertex and tells the fragment shader it has normals,
@@ -794,12 +794,12 @@ impl bevy::pbr::MaterialExtension for BlockExt {
 }
 
 /// Water: moving waves on the surface, more mirror-like the flatter you look across it, and
-/// the sky and sun in it (`shaders/water.wgsl`); and, where a world asks for it, a swell that
+/// the sky and sun in it (`shaders/water.wesl`); and, where a world asks for it, a swell that
 /// lifts and drops the surface itself, with pale crests.
 pub type WaterMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, WaterExt>;
 
 /// Flames: rising, flickering noise shaped into tongues of fire, white-yellow at the root
-/// to red at the tips, added onto what's behind (`shaders/flame.wgsl`).
+/// to red at the tips, added onto what's behind (`shaders/flame.wesl`).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct FlameMaterial {
     /// x: brightness
@@ -809,7 +809,7 @@ pub struct FlameMaterial {
 
 impl Material for FlameMaterial {
     fn fragment_shader() -> bevy::shader::ShaderRef {
-        "shaders/flame.wgsl".into()
+        "shaders/flame.wesl".into()
     }
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Add
@@ -840,11 +840,11 @@ pub const WATER_OPACITY: f32 = 0.55;
 
 impl bevy::pbr::MaterialExtension for WaterExt {
     fn vertex_shader() -> bevy::shader::ShaderRef {
-        "shaders/water.wgsl".into()
+        "shaders/water.wesl".into()
     }
 
     fn fragment_shader() -> bevy::shader::ShaderRef {
-        "shaders/water.wgsl".into()
+        "shaders/water.wesl".into()
     }
 }
 
@@ -988,13 +988,27 @@ mod tests {
     #[test]
     fn built_in_levels_load() {
         let pal = palette();
-        for e in std::fs::read_dir(crate::files::base().join("data/levels")).unwrap().flatten() {
-            let t = std::fs::read_to_string(e.path()).unwrap();
-            let cells = load_level(&t, &pal).unwrap_or_else(|err| panic!("{}: {err}", e.path().display()));
+        // every level file, in subfolders too (dungeon templates live in levels/dungeons/)
+        let mut files = Vec::new();
+        let mut dirs = vec![crate::files::base().join("data/levels")];
+        while let Some(d) = dirs.pop() {
+            for e in std::fs::read_dir(d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    dirs.push(p);
+                } else if p.extension().is_some_and(|x| x == "json") {
+                    files.push(p);
+                }
+            }
+        }
+        assert!(files.len() > 5, "{files:?}");
+        for path in files {
+            let t = std::fs::read_to_string(&path).unwrap();
+            let cells = load_level(&t, &pal).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
             assert!(cells.len() > 100);
             // the stage is clear: nothing where the character stands
             for y in 0..4 {
-                assert!(!cells.contains_key(&IVec3::new(0, y, 0)), "{}", e.path().display());
+                assert!(!cells.contains_key(&IVec3::new(0, y, 0)), "{}", path.display());
             }
         }
         assert!(level_path("yard").is_some());
@@ -1012,7 +1026,7 @@ mod packed_tests {
         for (i, (dir, udir, vdir)) in FACES.iter().enumerate() {
             let n = dir.as_vec3().to_array();
             assert_eq!(pack_face(n, 1.0) & 7, i as u32);
-            // and every face's tangent is +u with handedness -1, as block_vertex.wgsl has it
+            // and every face's tangent is +u with handedness -1, as block_vertex.wesl has it
             assert!(dir.as_vec3().cross(*udir).dot(*vdir) < 0.0, "face {i}");
         }
         assert_eq!(pack_face([0.0, 1.0, 0.0], 0.55) >> 8, 140);

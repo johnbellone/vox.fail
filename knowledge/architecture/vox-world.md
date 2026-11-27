@@ -10,7 +10,7 @@ code_refs: [crates/vox-world/src/, assets/shaders/]
 
 # vox-world: Drawing a World (Blocks, Sky, Portals, Players, Controls)
 
-Path `crates/vox-world/`, 8,732 lines in 23 files, 48 tests. Depends on Bevy 0.19.1, `vox-core`, `vox-link`, `png`, `postcard`; `tungstenite`/`vox-link` natively and `web-sys` WebSocket on wasm32.
+Path `crates/vox-world/`, 8,732 lines in 23 files, 48 tests. Depends on Bevy 0.20.1, `vox-core`, `vox-link`, `png`, `postcard`; `tungstenite`/`vox-link` natively and `web-sys` WebSocket on wasm32.
 
 | Module | Role |
 | --- | --- |
@@ -24,7 +24,7 @@ Path `crates/vox-world/`, 8,732 lines in 23 files, 48 tests. Depends on Bevy 0.1
 | `files.rs` | Desktop reads from disk; the browser fetches the files a world needs. |
 
 ## Shaders (`assets/shaders/`)
-`block.wgsl` and `block_vertex.wgsl` (parallax occlusion on the atlas; unpacks the packed vertex; repeats the tile across merged faces), `water.wgsl`, `sky.wgsl`, `floor.wgsl`, `flame.wgsl`, `portal.wgsl`, plus the retro shader.
+`block.wesl` and `block_vertex.wesl` (parallax occlusion on the atlas; unpacks the packed vertex; repeats the tile across merged faces), `water.wesl`, `sky.wesl`, `floor.wesl`, `flame.wesl`, `portal.wesl`, plus the retro shader.
 
 ## Rules and limits
 Anything drawn with `BlockMaterial` must use `into_packed_mesh`. A one-block edit still rebuilds its whole chunk; weather and fog baking run on the main thread. Echoes show the other level as built from its file, drawn a second time at half size. Wasm has no compute shaders in this path, so the sky environment light falls back to flat ambient. The server still sends every chunk on join.

@@ -2,13 +2,13 @@
 // (white-yellow) low in the middle, orange, then red at the ragged tips. Drawn added onto
 // what's behind, bright enough for the bloom to make a glow round it.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::VertexOutput,
     mesh_view_bindings::globals,
-}
+};
 
 // x: brightness, y, z: the wind across x and z (m/s): the flames lean with it
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: vec4<f32>;
 
 fn hash2(p: vec2<f32>) -> f32 {
     let q = fract(p * vec2(127.1, 311.7));
@@ -38,11 +38,9 @@ fn fbm(p0: vec2<f32>) -> f32 {
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv = in.uv;
-#ifdef VERTEX_COLORS
-    let seed = in.color.r * 37.0;
-#else
-    let seed = 0.0;
-#endif
+    var seed = 0.0;
+    @if(VERTEX_COLORS)
+    seed = in.color.r * 37.0;
     let t = globals.time + seed * 3.0;
     // noise streaming upwards, faster near the top
     let p = vec2(uv.x * 2.6 + seed, uv.y * 1.8 - t * 1.7);
@@ -51,9 +49,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // the flame leans and licks: its middle wanders with height
     // the wind's share along this quad leans the flame over, more towards its tip
     var along = 0.0;
-#ifdef VERTEX_TANGENTS
+    @if(VERTEX_TANGENTS)
     along = dot(params.yz, normalize(in.world_tangent.xz));
-#endif
     let lean = clamp(along * 0.09, -0.7, 0.7) * pow(uv.y, 1.5);
     let x = (uv.x - 0.5) * 2.0 + (n - 0.5) * 0.9 * uv.y + sin(t * (2.3 + abs(along) * 0.4) + uv.y * 3.0) * 0.08 * uv.y - lean * 2.0;
     let width = mix(0.8, 0.04, pow(clamp(uv.y, 0.0, 1.0), 0.75));

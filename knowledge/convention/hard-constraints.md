@@ -3,7 +3,7 @@ type: Requirement
 title: Hard Constraints Set by the Owner
 description: "Non-negotiable content, platform and licensing rules; breaking any one of them is a defect."
 tags: [constraints, content, legal, governance]
-generated: { by: agent/mcp, at: "2026-11-26T15:57:58Z" }
+generated: { by: agent/mcp, at: "2026-11-27T04:40:31Z" }
 status: stable
 governance: constraint
 code_refs: [Cargo.toml, assets/, source/vox/, testdata/, demo/, data/characters.json, tools/]
@@ -17,7 +17,7 @@ These come from the project owner (see `docs/avatar/PROJECT.md` and `AGENTS.md`)
 2. **No synthetic voices.** Test and demo audio is real, unmodified human recordings. Viewers are heard in their own recorded voice, never changed or synthesised.
 3. **The medic uses a green cross.** The red cross emblem on white is legally protected.
 4. **No combat poses that depict assaulting police.** Police animations are defensive only.
-5. **Stay on Bevy 0.19.1.** Never upgrade without the owner's say-so. See `decisions/bevy-0-19-1-pin`.
+5. **Stay on Bevy 0.20.1.** Never upgrade without the owner's say-so. The owner approved the move from 0.19.1 to 0.20.1 on 2026-11-27. See `decisions/bevy-0-20-upgrade`.
 6. **Sound effects are real recordings (CC0)**, only trimmed and levelled.
 
 ## Related backlog constraint
@@ -27,5 +27,5 @@ A "January 6 Capitol world" is on the backlog and not started. If it is ever bui
 Edits to characters, props, sounds, test audio or dependencies must follow these rules.
 
 # Related Concepts
-- [Decision: Stay on Bevy 0.19.1](../decisions/bevy-0-19-1-pin.md): constraint 5 in detail
+- [Decision: Upgrade to Bevy 0.20.1, and Stay There](../decisions/bevy-0-20-upgrade.md): constraint 5 in detail
 - [Characters, Props, Sets and Content Licences](../project/characters-and-content.md): content the rules apply to

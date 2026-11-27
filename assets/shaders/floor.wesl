@@ -4,15 +4,15 @@
 // reflect in it, things standing on it cast soft shadows and show as blurred reflections of the
 // environment.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::{view, globals},
-}
+};
 
 // x: seam spacing (m), y: seam strength, z: ripple strength, w: unused
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> floor_params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> floor_params: vec4<f32>;
 
 fn hash2(p: vec2<f32>) -> f32 {
     let q = fract(p * vec2(127.1, 311.7));

@@ -54,7 +54,8 @@ Block Avatar is a single desktop program. It shows one of 38 voxel ("block") cha
 2. No synthetic voices. Test and demo audio is real, unmodified human recordings (LibriSpeech, CMU ARCTIC, ESC-50, vocadito). Viewers are heard in their own recorded voice.
 3. The medic uses a green cross; the red cross emblem is legally protected.
 4. No combat poses that depict assaulting police.
-5. Stay on Bevy 0.19.1.
+5. Stay on Bevy 0.20.1 (upgraded from 0.19.1 on the owner's say-so, 2026-11-27; no further
+   upgrade without it).
 6. Sound effects are real recordings (CC0), only trimmed and levelled.
 
 ## Feature inventory
@@ -125,7 +126,7 @@ There are about 45 user-facing features in eight areas. Almost all of them can b
 
 ## Architecture
 
-Block Avatar is one Rust process (about 12,800 lines in 26 files) built on Bevy 0.19.1. The Bevy ECS main loop owns all state. Named worker threads do the blocking work (mic, wav feeder, IRC, control server, viewer server, Whisper, question transcription, clip encoder, short export, ffmpeg check, webcam, audio playback, hotkeys), and they talk to the main loop only through `Arc<Mutex<_>>` shared state and `mpsc` channels. No async runtime is used.
+Block Avatar is one Rust process (about 12,800 lines in 26 files) built on Bevy 0.20.1 (0.19.1 until 2026-11-27). The Bevy ECS main loop owns all state. Named worker threads do the blocking work (mic, wav feeder, IRC, control server, viewer server, Whisper, question transcription, clip encoder, short export, ffmpeg check, webcam, audio playback, hotkeys), and they talk to the main loop only through `Arc<Mutex<_>>` shared state and `mpsc` channels. No async runtime is used.
 
 ![Architecture: 6 inputs, 1 main loop, 4 outputs](architecture.png)
 
@@ -398,7 +399,7 @@ The app builds with stable Rust and `cargo build --release` on Linux. Windows bu
 
 | Crate | Version | Why |
 | --- | --- | --- |
-| `bevy` | 0.19.1 (pinned by policy) | Engine: ECS, rendering, glTF, UI, animation |
+| `bevy` | 0.20.1 (pinned by policy) | Engine: ECS, rendering, glTF, UI, animation |
 | `cpal` | 0.17 | Mic input and audio output (same backend as Bevy's rodio) |
 | `tiny_http` | 0.12 | Viewer server |
 | `ureq` | 3 | Twitch device-code and username calls |

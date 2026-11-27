@@ -195,7 +195,7 @@ pub fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut cam:
                 ..default()
             },
             RenderTarget::Image(handle.clone().into()),
-            Tonemapping::None,
+            Tonemapping::Linear,
             Transform::default(),
             WebcamCamera,
         ))

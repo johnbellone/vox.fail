@@ -1,7 +1,7 @@
 # Technologies
 * [Technology Stack Overview](stack-overview.md) - One table of every technology in the project, what it is used for, and where its details live.
 * [Rust and the Cargo Workspace](rust-workspace.md) - Edition, workspace members, build profiles, features, and target-specific dependencies.
-* [Bevy 0.19.1: How and Why It Is Used](bevy.md) - What the project uses Bevy for, the version rule, and the engine quirks that have shaped the code.
+* [Bevy 0.20.1: How and Why It Is Used](bevy.md) - What the project uses Bevy for, the version rule, and the engine quirks that have shaped the code.
 * [Server Stack: axum, tokio, tower-http, reqwest, tiny_http](server-stack.md) - Which HTTP and WebSocket libraries each service uses and why the avatar app has no async runtime.
 * [SQLite Persistence (rusqlite, bundled)](sqlite-persistence.md) - Where SQLite is used, the table sets, and the operational notes (backups, ignored files).
 * [WebAssembly and WebGPU Browser Client](webassembly-webgpu.md) - How the Rust client is compiled for the browser, its size, browser requirements and the verified test setup.
