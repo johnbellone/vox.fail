@@ -100,15 +100,15 @@ async fn authority_is_earned_and_spent() {
     // only world servers report
     let r = Client::new().post(format!("{base}/api/world/report")).bearer_auth("guess").json(&json!({"world": "void", "spawn": [0, 0, 0], "players": []})).send().await.unwrap();
     assert_eq!(r.status().as_u16(), 401);
-    // ten minutes in the Void and 120 blocks placed: 1 + 2
+    // ten minutes in the Void and 480 blocks placed: 1 + 2
     for i in 0..10 {
-        let (st, _) = report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": if i == 0 { 120 } else { 0 } }])).await;
+        let (st, _) = report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": if i == 0 { 480 } else { 0 } }])).await;
         assert_eq!(st, 200);
     }
     assert_eq!(ann.authority().await, game::WELCOME + 3);
     // capped per day
     for _ in 0..20 {
-        report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": 1200 }])).await;
+        report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": 4800 }])).await;
     }
     let w = ann.get("/api/wallet").await;
     assert_eq!(w["earning"]["today"], game::DAILY);

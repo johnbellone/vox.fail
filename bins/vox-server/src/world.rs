@@ -47,7 +47,8 @@ impl WorldState {
         crate::entities::create_tables(&db)?;
         // a world saved at half-metre blocks is converted once, before anything reads it
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        if let Some(what) = crate::rescale::migrate(&db, now)? {
+        let converted = crate::rescale::migrate(&db, now)?;
+        if let Some(what) = &converted {
             eprintln!("{}: {what}", cfg.name);
         }
         let meta = |k: &str| -> Option<String> {
@@ -181,9 +182,11 @@ impl WorldState {
             let latest = snaps.latest().map_err(|e| format!("snapshots: {e}"))?;
             // the last snapshot is a base only if nothing happened after it, and only if it holds
             // entities (one from before them doesn't, so the next snapshot is whole); entities
-            // seeded now are not in any snapshot yet
+            // seeded now are not in any snapshot yet. A world just converted to quarter-metre
+            // blocks has the same edit number as its last snapshot but none of its zones: the
+            // next snapshot is whole, or untouched zones would keep half-metre blocks in it
             let predates = latest.as_ref().is_some_and(|m| !m.entities);
-            s.snap_full = latest.as_ref().is_none_or(|m| m.seq != s.seq) || fresh || predates || reseeded;
+            s.snap_full = latest.as_ref().is_none_or(|m| m.seq != s.seq) || fresh || predates || reseeded || converted.is_some();
             s.snap_prev = latest;
             s.snaps = Some(snaps);
         }

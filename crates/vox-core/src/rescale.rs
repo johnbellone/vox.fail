@@ -19,39 +19,60 @@ use crate::world::{CHUNK, Cell, Chunk, ChunkKey};
 /// each side.
 pub const FROM_HALF_METRE: i32 = crate::whole_blocks(0.5);
 
-/// The chunks of a world, each old block filling a `k` × `k` × `k` cube of new ones. Empty
-/// chunks are left out. `k` must be 1 to 4.
-pub fn chunks(old: impl IntoIterator<Item = (ChunkKey, Chunk)>, k: i32) -> BTreeMap<ChunkKey, Chunk> {
-    assert!((1..=4).contains(&k), "factor {k}");
-    let mut out: BTreeMap<ChunkKey, Chunk> = BTreeMap::new();
-    for (key, chunk) in old {
-        if chunk.is_empty() {
-            continue;
-        }
-        let o = key.origin();
-        for y in 0..CHUNK {
-            for z in 0..CHUNK {
-                for x in 0..CHUNK {
-                    let c: Cell = [o[0] + x, o[1] + y, o[2] + z];
-                    let b = chunk.get(c);
-                    if b == 0 {
-                        continue;
-                    }
-                    for dy in 0..k {
-                        for dz in 0..k {
-                            for dx in 0..k {
-                                // chunk keys are a block's chunk; positions stay far inside i32
-                                // (worlds are at most 2^24 blocks from 0)
-                                let n = [c[0] * k + dx, c[1] * k + dy, c[2] * k + dz];
-                                out.entry(ChunkKey::of(n)).or_default().set(n, b);
+/// One chunk's blocks at `k` times the size: the chunks they fill, each old block a `k` × `k`
+/// × `k` cube. An old chunk lands on exactly the `k`³ new chunks from `key * k` (it is `k`
+/// chunks across now), and on no other chunk's, so chunks convert one at a time. Empty new
+/// chunks are left out. `None` when `k` isn't 1 to 4 or the new places would overflow (keys
+/// come from storage, so they are checked).
+pub fn chunk(key: ChunkKey, chunk: &Chunk, k: i32) -> Option<Vec<(ChunkKey, Chunk)>> {
+    if !(1..=4).contains(&k) {
+        return None;
+    }
+    let mut out = Vec::new();
+    if chunk.is_empty() {
+        return Some(out);
+    }
+    // the first new chunk's key, and every new block's place fits an i32
+    let base = [key.0[0].checked_mul(k)?, key.0[1].checked_mul(k)?, key.0[2].checked_mul(k)?];
+    for v in base {
+        v.checked_add(k)?.checked_mul(CHUNK)?;
+    }
+    let o = key.origin();
+    for a in 0..k {
+        for b in 0..k {
+            for c in 0..k {
+                let nk = ChunkKey([base[0] + a, base[1] + b, base[2] + c]);
+                let no = nk.origin();
+                let mut n = Chunk::default();
+                for y in 0..CHUNK {
+                    for z in 0..CHUNK {
+                        for x in 0..CHUNK {
+                            let p: Cell = [no[0] + x, no[1] + y, no[2] + z];
+                            // the old block this new one is part of
+                            let from: Cell = [p[0].div_euclid(k), p[1].div_euclid(k), p[2].div_euclid(k)];
+                            debug_assert!((0..3).all(|i| (o[i]..o[i] + CHUNK).contains(&from[i])));
+                            let id = chunk.get(from);
+                            if id != 0 {
+                                n.set(p, id);
                             }
                         }
                     }
                 }
+                if !n.is_empty() {
+                    // newer than the old chunk, so nothing that cached it takes this for it
+                    n.version = n.version.max(chunk.version.saturating_add(1));
+                    out.push((nk, n));
+                }
             }
         }
     }
-    out
+    Some(out)
+}
+
+/// The chunks of a world converted by [`chunk`], all in memory (a snapshot being restored).
+/// A chunk that would overflow is left out.
+pub fn chunks(old: impl IntoIterator<Item = (ChunkKey, Chunk)>, k: i32) -> BTreeMap<ChunkKey, Chunk> {
+    old.into_iter().filter_map(|(key, c)| chunk(key, &c, k)).flatten().collect()
 }
 
 fn times(p: [f32; 3], k: f32) -> [f32; 3] {
@@ -179,6 +200,11 @@ mod tests {
         // the block at z = 31 (the first chunk along z) lands at z = 62 and 63, in the second
         assert_eq!(ChunkKey::of([-2, 6, 62]), ChunkKey([-1, 0, 1]));
         assert!(n.chunk(ChunkKey([-1, 0, 1])).is_some());
+        // a chunk whose new places would overflow is refused, not wrapped
+        let mut far = Chunk::default();
+        far.set([0, 0, 0], 1);
+        assert!(chunk(ChunkKey([i32::MAX / 64, 0, 0]), &far, 2).is_none());
+        assert!(chunk(ChunkKey([0, 0, 0]), &far, 5).is_none());
     }
 
     #[test]

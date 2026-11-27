@@ -48,9 +48,12 @@ pub const COST_PORTAL: i64 = 30;
 pub const COST_CURRENCY: i64 = 100;
 pub const COST_RAID: i64 = 10;
 /// Earning: one authority per this many minutes in a world, and per this many blocks placed,
-/// up to `DAILY` a day.
+/// up to `DAILY` a day. A wall the same size in metres takes four times the quarter-metre
+/// blocks it took in half-metre ones, so the blocks per authority went up four times too.
 pub const MINUTES_PER: i64 = 10;
-pub const EDITS_PER: i64 = 50;
+pub const EDITS_PER: i64 = 200;
+/// The most blocks placed a world may report for one player in one report (a minute).
+const EDITS_REPORTED_MOST: i64 = 4_800;
 pub const DAILY: i64 = 60;
 /// A raid: how long it lasts, how many minutes at least two of the party must spend in the
 /// target world together, and what each of them gets for it.
@@ -1146,7 +1149,7 @@ pub(crate) async fn report(State(d): State<Directory>, h: HeaderMap, Json(r): Js
             )
             .map_err(oops)?;
         }
-        earned_total += earn(&tx, p.account, p.edits.clamp(0, 1200), &wname)?;
+        earned_total += earn(&tx, p.account, p.edits.clamp(0, EDITS_REPORTED_MOST), &wname)?;
     }
     let finished = raids(&tx, &r.world, &wname, &here)?;
     tx.commit().map_err(oops)?;

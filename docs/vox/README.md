@@ -56,7 +56,7 @@ name); signed in already, **Link your Steam account** adds it to yours. Name and
 still work.
 
 **Authority, coins, the inventory, friends and raids.** Authority is the currency every
-world shares: 25 to start, then one for every 10 minutes in a world and every 50 blocks you
+world shares: 25 to start, then one for every 10 minutes in a world and every 200 blocks you
 place (up to 60 a day), and 15 for each raid your party wins. It can't be sent: it's spent on
 feats. **Claim a plot** (20): 64 × 64 blocks (16 m) around where you last stood, up to six in a world, which only you, or a
 group you share it with, can build in. **Open a portal** (30): a doorway in your plot to another

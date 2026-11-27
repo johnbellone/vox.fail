@@ -133,11 +133,13 @@ pub fn fill(world: &mut World, t: &Tile, palette: &[String]) {
     for x in b.lo[0]..b.hi[0] {
         for z in b.lo[2]..b.hi[2] {
             let h = t.height(x, z).clamp(b.lo[1], b.hi[1] - 1);
-            let shore = h <= SEA + 1;
+            // within half a metre of the water: sand
+            let shore = h <= SEA + crate::whole_blocks(0.5);
             for y in b.lo[1]..=h {
                 let block = if y == h {
                     if shore { sand } else { grass }
-                } else if y >= h - 3 {
+                } else if y >= h - crate::whole_blocks(1.5) {
+                    // a metre and a half of dirt (or sand) under the top
                     if shore { sand } else { dirt }
                 } else {
                     stone

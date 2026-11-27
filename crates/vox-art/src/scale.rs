@@ -1,7 +1,8 @@
 //! The scales voxel art is drawn at, and how big a grid at each one may be.
 //!
 //! Characters and small props use 5 cm and 10 cm voxels. A world piece (a structure) uses
-//! 0.5 m voxels, the size of one world block. Every grid is capped at 64 voxels a side, so
+//! 0.25 m voxels, the size of one world block (`vox_core::BLOCK_M`; vox-art depends on nothing
+//! of ours, so the number is repeated here). Every grid is capped at 64 voxels a side, so
 //! a prop never outgrows what a single placement and a single edit can handle.
 
 /// The scale a grid is drawn at.
@@ -11,7 +12,7 @@ pub enum Scale {
     Character,
     /// 10 cm voxels: furniture, boats and trees.
     Prop,
-    /// 0.5 m voxels: structures, one world block per voxel.
+    /// 0.25 m voxels: structures, one world block per voxel.
     World,
 }
 
@@ -24,7 +25,7 @@ impl Scale {
         match self {
             Scale::Character => 0.05,
             Scale::Prop => 0.10,
-            Scale::World => 0.5,
+            Scale::World => 0.25,
         }
     }
 

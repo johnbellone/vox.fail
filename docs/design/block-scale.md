@@ -81,6 +81,11 @@ behind a schema version:
   portals, last-seen places, spawns, deeds and keys (`bins/vox-directory/src/rescale.rs`,
   counter `block_scale`). Both run once, in one transaction. Edit logs from before the change
   are emptied; snapshots from before it are converted when restored.
+- Chunks convert one at a time into a new table (an old chunk's eight new ones are its own),
+  and the first snapshot after a conversion is whole, so no snapshot mixes the two sizes.
+- `vox-art`'s world scale is 0.25 m (one voxel per block). Authority is one per 200 blocks
+  placed (was 50): a wall the same size takes four times the blocks. The server's edit rate
+  is unchanged (20 a second), so building the same area takes four times as long.
 - Not converted: a world-graph node keeps its size and recipe (a recipe is drawn one voxel per
   block, so it now builds at half the size in metres), and structure blobs (stored by hash
   outside the databases) keep half-metre blocks. Neither is in use on vox.fail yet.

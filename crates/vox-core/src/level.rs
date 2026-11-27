@@ -68,7 +68,7 @@ pub fn entities(text: &str) -> Result<Vec<Component>, String> {
             // clamped as `portal::parse` clamps, so an out-of-range size (even an infinite one) comes out the same
             let dim = |j: usize, d: f64| {
                 let c = size.and_then(|s| s.get(j)).and_then(|x| x.as_f64()).unwrap_or(d) as f32;
-                c.clamp(1.0, 64.0)
+                crate::portal::clamp_side(c)
             };
             let to = match p.get("url").and_then(|u| u.as_str()) {
                 None => Dest::Here { arrive },
@@ -81,7 +81,7 @@ pub fn entities(text: &str) -> Result<Vec<Component>, String> {
                 name: p.get("name").and_then(|n| n.as_str()).map_or_else(|| format!("portal {}", i + 1), String::from),
                 at,
                 axis: if p.get("axis").and_then(|a| a.as_str()) == Some("x") { Axis::X } else { Axis::Z },
-                size: [dim(0, 4.0), dim(1, 6.0)],
+                size: [dim(0, f64::from(crate::portal::DEFAULT_SIZE[0])), dim(1, f64::from(crate::portal::DEFAULT_SIZE[1]))],
                 // a yaw too big for f32 is 0, as `portal::parse` has it
                 yaw: match p.get("yaw").and_then(|y| y.as_f64()).unwrap_or(0.0) as f32 {
                     y if y.is_finite() => y,

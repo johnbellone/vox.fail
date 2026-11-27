@@ -14,7 +14,7 @@
 //
 // Where the world has ground relief (docs/design/ground-relief.md), the tops of natural blocks
 // dip a few centimetres: the dips come from the world's seed and the place alone (a copy of
-// vox_core::relief, version 1), tilt the surface's normal by their slope and darken the
+// vox_core::relief, version 2), tilt the surface's normal by their slope and darken the
 // hollows. They fade out where a wall or block is near (the corner shading says so) and in the
 // distance, where they would only shimmer.
 //
@@ -73,7 +73,7 @@ fn rain_rings(p: vec2<f32>, t: f32, rate: f32) -> vec2<f32> {
     return g;
 }
 
-// ---- ground relief: vox_core::relief, version 1. The hashes must stay bit for bit the same
+// ---- ground relief: vox_core::relief, version 2. The hashes must stay bit for bit the same
 // as there (u32 arithmetic wraps in both); the blend is smooth floating point, within about
 // 1/255 of the integer one there.
 

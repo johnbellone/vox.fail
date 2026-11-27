@@ -30,28 +30,39 @@ pub(crate) fn migrate(db: &Connection, now: u64) -> Result<Option<String>, Strin
     let tx = db.unchecked_transaction().map_err(e)?;
     let mut what = None;
     if made {
-        let old: Vec<(ChunkKey, Chunk)> = {
-            let mut q = tx.prepare("SELECT x, y, z, version, data FROM chunks").map_err(e)?;
-            let rows = q
-                .query_map([], |r| Ok((ChunkKey([r.get(0)?, r.get(1)?, r.get(2)?]), r.get::<_, u32>(3)?, r.get::<_, Vec<u8>>(4)?)))
-                .map_err(e)?;
-            let mut out = Vec::new();
-            for row in rows {
-                let (k, version, data) = row.map_err(e)?;
-                out.push((k, Chunk::decode(&data, version)?));
-            }
-            out
+        // one stored chunk at a time into a new table (an old chunk's new chunks are its own,
+        // so none is written twice), then the new table takes the old one's place: a world
+        // never holds both whole in memory
+        tx.execute_batch(
+            "CREATE TABLE chunks_new(x INTEGER, y INTEGER, z INTEGER, version INTEGER NOT NULL,
+                 data BLOB NOT NULL, PRIMARY KEY(x, y, z));",
+        )
+        .map_err(e)?;
+        let keys: Vec<ChunkKey> = {
+            let mut q = tx.prepare("SELECT x, y, z FROM chunks").map_err(e)?;
+            q.query_map([], |r| Ok(ChunkKey([r.get(0)?, r.get(1)?, r.get(2)?]))).map_err(e)?.collect::<Result<_, _>>().map_err(e)?
         };
-        let (was, blocks) = (old.len(), old.iter().map(|(k, c)| count(*k, c)).sum::<usize>());
-        let new = rescale::chunks(old, FROM_HALF_METRE);
-        tx.execute("DELETE FROM chunks", []).map_err(e)?;
-        for (k, c) in &new {
-            tx.execute(
-                "INSERT INTO chunks(x, y, z, version, data) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![k.0[0], k.0[1], k.0[2], c.version, c.encode()],
-            )
-            .map_err(e)?;
+        let (mut blocks, mut made) = (0usize, 0usize);
+        for k in &keys {
+            let (version, data): (u32, Vec<u8>) = tx
+                .query_row("SELECT version, data FROM chunks WHERE x = ?1 AND y = ?2 AND z = ?3", params![k.0[0], k.0[1], k.0[2]], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .map_err(e)?;
+            let old = Chunk::decode(&data, version)?;
+            blocks += count(*k, &old);
+            let new = rescale::chunk(*k, &old, FROM_HALF_METRE).ok_or_else(|| format!("chunk {:?} is too far out to convert", k.0))?;
+            for (nk, c) in new {
+                tx.execute(
+                    "INSERT INTO chunks_new(x, y, z, version, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![nk.0[0], nk.0[1], nk.0[2], c.version, c.encode()],
+                )
+                .map_err(e)?;
+                made += 1;
+            }
         }
+        tx.execute_batch("DROP TABLE chunks; ALTER TABLE chunks_new RENAME TO chunks;").map_err(e)?;
+        let was = keys.len();
         // entities: each moved with the blocks, into the zone its new place is in. A row that
         // doesn't decode is left as it is (loading skips it and says so).
         let rows: Vec<(u32, Vec<u8>)> = {
@@ -79,7 +90,7 @@ pub(crate) fn migrate(db: &Connection, now: u64) -> Result<Option<String>, Strin
         what = Some(format!(
             "converted to {} m blocks: {blocks} blocks in {was} chunks became {} chunks, {moved} entities moved",
             vox_core::BLOCK_M,
-            new.len()
+            made
         ));
     }
     tx.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?1, ?2)", params![MARK, vox_core::BLOCK_M.to_string()]).map_err(e)?;
