@@ -2,13 +2,13 @@
 // distances so it has depth: streaks falling at their own speed, slanting with the wind,
 // thicker the harder it rains; or flakes drifting and swaying.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::VertexOutput,
     mesh_view_bindings::globals,
-}
+};
 
 // x: how hard (0-1), y: snow (0 or 1), z, w: the wind across x and z (m/s)
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: vec4<f32>;
 
 fn hash1(x: f32) -> f32 {
     return fract(sin(x * 127.1) * 43758.5453);

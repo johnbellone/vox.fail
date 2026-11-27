@@ -4,7 +4,7 @@
 //! - **earth:** a sun that moves with the time of day, blue overhead, a warm horizon at dusk,
 //!   clouds drifting on the wind, stars and moonlight at night.
 //! - **void:** the luminous void: bright, even, pale light from everywhere, an endless polished
-//!   floor (`shaders/floor.wgsl`) going into white fog, three moons faint in the light.
+//!   floor (`shaders/floor.wesl`) going into white fog, three moons faint in the light.
 //! - **islands:** fog without end in every direction, dark, with three moons (a great pale one,
 //!   a red one, a small cold one) veiled behind it; lit by the pale moon and by fire.
 //! - **sea:** a storm at night over open water: a sky black overhead and slate at the horizon,
@@ -16,7 +16,7 @@
 //!
 //! A world can also set how its water looks (`"water": {"colour": [r, g, b], "swell": metres,
 //! "opacity": 0-1}`): the colour it's tinted, how high its swell rolls, and how much it hides
-//! what's under it (see `shaders/water.wgsl`).
+//! what's under it (see `shaders/water.wesl`).
 //!
 //! Either way the same sky (without its small detail) is drawn into an environment map, so the
 //! whole sky lights the world softly and shows in glass, metal and water; haze takes the
@@ -54,7 +54,7 @@ const LIGHTS: usize = 12;
 const DAY: f32 = 24.0 * 60.0;
 const SKY_RADIUS: f32 = 450.0;
 
-/// The sky shader's inputs (`shaders/sky.wgsl`).
+/// The sky shader's inputs (`shaders/sky.wesl`).
 #[derive(ShaderType, Debug, Clone, Copy, Default, PartialEq)]
 pub struct SkyUniform {
     /// towards the sun
@@ -84,7 +84,7 @@ pub struct SkyMaterial {
 
 impl Material for SkyMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/sky.wgsl".into()
+        "shaders/sky.wesl".into()
     }
     fn enable_prepass() -> bool {
         false
@@ -97,7 +97,7 @@ impl Material for SkyMaterial {
 #[derive(Component)]
 pub struct SkyDome;
 
-/// The void's endless floor (`shaders/floor.wgsl`).
+/// The void's endless floor (`shaders/floor.wesl`).
 pub type FloorMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, FloorExt>;
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -109,11 +109,11 @@ pub struct FloorExt {
 
 impl bevy::pbr::MaterialExtension for FloorExt {
     fn fragment_shader() -> ShaderRef {
-        "shaders/floor.wgsl".into()
+        "shaders/floor.wesl".into()
     }
 }
 
-/// Rain or snow round the camera (`shaders/rain.wgsl`).
+/// Rain or snow round the camera (`shaders/rain.wesl`).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct RainMaterial {
     /// how hard (0-1), snow (0/1), wind x, wind z
@@ -123,7 +123,7 @@ pub struct RainMaterial {
 
 impl Material for RainMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/rain.wgsl".into()
+        "shaders/rain.wesl".into()
     }
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend

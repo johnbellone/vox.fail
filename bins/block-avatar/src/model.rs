@@ -11,7 +11,7 @@ pub(super) fn setup_scene(mut commands: Commands) {
     // No tonemapping: keeps the palette's flat block colours exactly as authored.
     commands.spawn((
         Camera3d::default(),
-        Tonemapping::None,
+        Tonemapping::Linear,
         MainCamera,
         vox_world::WorldCamera,
         Transform::from_xyz(0.45, 1.6, 2.8).looking_at(Vec3::new(0.0, 1.42, 0.0), Vec3::Y),

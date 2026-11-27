@@ -10,7 +10,7 @@ code_refs: [bins/block-avatar/src/main.rs, bins/block-avatar/src/app/sim.rs, bin
 
 # Block Avatar Runtime: Bevy Plugins, Threads and State
 
-`bins/block-avatar/`, one Rust process on Bevy 0.19.1. The ECS main loop owns all state. **Named worker threads** do blocking work (mic, WAV feeder, IRC, control server, viewer server, Whisper, question transcription, clip encoder, short export, ffmpeg check, webcam, audio playback, hotkeys) and reach the main loop only through `Arc<Mutex<_>>` and `mpsc`. **No async runtime** in the app. Mutex locks recover from poisoning (`unwrap_or_else(|e| e.into_inner())`).
+`bins/block-avatar/`, one Rust process on Bevy 0.20.1. The ECS main loop owns all state. **Named worker threads** do blocking work (mic, WAV feeder, IRC, control server, viewer server, Whisper, question transcription, clip encoder, short export, ffmpeg check, webcam, audio playback, hotkeys) and reach the main loop only through `Arc<Mutex<_>>` and `mpsc`. **No async runtime** in the app. Mutex locks recover from poisoning (`unwrap_or_else(|e| e.into_inner())`).
 
 ## Startup (`main.rs`, about 50 lines)
 Parses the CLI (`cli.rs`), reads settings (`settings.rs`), builds resources in `app/configure.rs`, adds Bevy default plugins plus `AvatarPlugins`.
@@ -42,5 +42,5 @@ Resource tuples remain; duplicated helpers (xorshift, value noise, child-spawnin
 - [Avatar Control Surfaces: Control API, Commands, Settings and Files](control-surfaces.md): control page and commands
 - [Audience Interaction: Chat, Dress-up, Polls, Crowd and Moments](audience-interaction.md): chat features
 - [Decision: 120 Hz Fixed Step with Interpolated Drawing](../decisions/fixed-120hz-simulation.md): why effects step at 120 Hz
-- [Bevy 0.19.1: How and Why It Is Used](../technologies/bevy.md): the engine
+- [Bevy 0.20.1: How and Why It Is Used](../technologies/bevy.md): the engine
 - [Decision (done): Restructure into crates/, bins/ and apps/](../decisions/restructure-into-crates-bins-apps.md): why the app is plugins and folders

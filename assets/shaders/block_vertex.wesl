@@ -4,13 +4,13 @@
 // shading (bits 8-15) and where the vertex is across the face, in blocks (bits 16-21 along u,
 // 22-27 along v: a merged face spans several). The normal and tangent are the face's, rebuilt
 // here; the shading becomes the vertex colour; `uv` carries the place across the face and
-// `uv_b` the tile, for block.wgsl to repeat the tile across the face.
+// `uv_b` the tile, for block.wesl to repeat the tile across the face.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_functions,
     forward_io::VertexOutput,
     view_transformations::position_world_to_clip,
-}
+};
 
 struct BlockVertex {
     @builtin(instance_index) instance_index: u32,
@@ -56,11 +56,9 @@ fn vertex(v: BlockVertex) -> VertexOutput {
     out.uv = vec2<f32>(f32((v.face >> 16u) & 63u), f32((v.face >> 22u) & 63u));
     out.uv_b = v.tile;
     out.color = vec4<f32>(shade, shade, shade, 1.0);
-#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = v.instance_index;
-#endif
-#ifdef VISIBILITY_RANGE_DITHER
+    @if(VISIBILITY_RANGE_DITHER)
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(v.instance_index, world_from_local[3]);
-#endif
     return out;
 }

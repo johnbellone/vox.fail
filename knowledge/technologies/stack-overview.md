@@ -12,7 +12,7 @@ status: stable
 | Area | Technology | Used for | Details |
 | --- | --- | --- | --- |
 | Language | Rust, edition 2024, one Cargo workspace | Everything except asset scripts and web pages | `technologies/rust-workspace` |
-| Engine | Bevy 0.19.1 (ECS, PBR, glTF, animation) | Avatar app, world rendering, clients | `technologies/bevy` |
+| Engine | Bevy 0.20.1 (ECS, PBR, glTF, animation) | Avatar app, world rendering, clients | `technologies/bevy` |
 | Browser | WebAssembly + WebGPU via wasm-bindgen | Player client in the browser | `technologies/webassembly-webgpu` |
 | Servers | axum 0.8, tokio, tower-http, reqwest | directory, world server, relay | `technologies/server-stack` |
 | Storage | SQLite via rusqlite (bundled); region blobs with BLAKE3 + zstd | directory.db, world.db, world snapshots | `technologies/sqlite-persistence` |
@@ -33,11 +33,11 @@ status: stable
 - **macOS**: never built.
 
 ## Versions seen on 2026-11-26
-rustc/cargo 1.100.0 locally; no `rust-toolchain` file (CI uses stable); `Cargo.lock` has about 700 packages; Bevy 0.19.1.
+rustc/cargo 1.100.0 locally; no `rust-toolchain` file (CI uses stable); `Cargo.lock` has about 700 packages; Bevy 0.20.1.
 
 # Related Concepts
 - [Rust and the Cargo Workspace](rust-workspace.md): Rust and Cargo
-- [Bevy 0.19.1: How and Why It Is Used](bevy.md): Bevy
+- [Bevy 0.20.1: How and Why It Is Used](bevy.md): Bevy
 - [Server Stack: axum, tokio, tower-http, reqwest, tiny_http](server-stack.md): HTTP and WebSocket libraries
 - [SQLite Persistence (rusqlite, bundled)](sqlite-persistence.md): SQLite
 - [WebAssembly and WebGPU Browser Client](webassembly-webgpu.md): WebAssembly and WebGPU

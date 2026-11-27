@@ -1,5 +1,5 @@
 # Decisions
-* [Decision: Stay on Bevy 0.19.1](bevy-0-19-1-pin.md) - The owner requires Bevy to stay at 0.19.1; upgrades need explicit approval.
+* [Decision (superseded): Stay on Bevy 0.19.1](bevy-0-19-1-pin.md) - Superseded on 2026-11-27 by the owner-approved upgrade to Bevy 0.20.1; kept for history.
 * [Decision: Keep vox-core Free of Bevy](core-without-bevy.md) - Shared game rules live in an engine-free crate so servers, clients and future pocket worlds run identical code.
 * [Decision: 120 Hz Fixed Step with Interpolated Drawing](fixed-120hz-simulation.md) - Particles, crowd and effects step at a fixed 120 Hz and are drawn as a blend of the last two ticks, so motion is frame-rate independent.
 * [Decision: Read Twitch Chat Anonymously](anonymous-twitch-irc.md) - Chat is read over IRC as the read-only justinfan user so streamers set only a channel name and authorise nothing.
@@ -16,3 +16,4 @@
 * [Decision: Props Come from Recipes and Imported MagicaVoxel Files](props-hybrid-authoring.md) - Prop art is authored two ways into one library: Rust recipes for most props, and hand-made MagicaVoxel files as first-class imports, both through the same checks.
 * [Decision: Prop Behaviours Are a Closed Vocabulary, Never Code](props-closed-behaviours.md) - A prop can only do what a fixed list of declarative behaviours allows, so any prop is as safe to accept as a block and the server stays authoritative.
 * [Decision: Props Are a Third Kind of Thing, Beside Blocks and Structures](props-third-kind-of-thing.md) - A prop has its own finer voxel grid, behaviours and versioned entity form; it is neither a block in chunk data nor a structure of blocks.
+* [Decision: Upgrade to Bevy 0.20.1, and Stay There](bevy-0-20-upgrade.md) - On the owner's say-so (2026-11-27) the workspace moved from Bevy 0.19.1 to 0.20.1; further upgrades again need the owner's approval.

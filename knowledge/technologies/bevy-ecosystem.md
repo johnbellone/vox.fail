@@ -13,7 +13,7 @@ stale_after: 2027-01-26
 Source: `docs/design/bevy-ecosystem.md` (checked 2026-11-26 against crates.io, docs.rs, each repository, and this repository's `Cargo.lock` and code). Recommendations only; nothing adopted yet.
 
 ## The upgrade question
-Bevy 0.20.1 is the newest release. No crate on the list needs 0.20; upgrading now would lose six of them until they publish 0.20 releases (big_space, bevy_firework, bevy_svg, bevy_feronia, transform-gizmo-bevy, bevy_animation_graph). It also costs moving all 9 shaders from naga_oil syntax to WESL, plus wgpu and naga 30. Stay on 0.19.1 and plan the upgrade as its own step (see `decisions/bevy-0-19-1-pin`).
+Done on 2026-11-27, on the owner's say-so: the workspace is on Bevy 0.20.1 (`decisions/bevy-0-20-upgrade`). The analysis had advised waiting, because six crates (big_space, bevy_firework, bevy_svg, bevy_feronia, transform-gizmo-bevy, bevy_animation_graph) have no 0.20 release. None of them was adopted, so nothing was lost; adopting them now waits on their releases.
 
 ## Use directly (on 0.19.1)
 - bevy_seedling 0.8: the audio standard, with buses for props, ambience and voice.

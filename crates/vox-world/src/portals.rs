@@ -26,7 +26,7 @@
 //! off on its own render layer, with its own sky dome, light, haze and environment map. Each
 //! portal has a camera there that moves as the main camera's mirror through the doorway and
 //! renders (HDR, half size) to a texture; the doorway is a quad that shows that texture by
-//! screen position (`shaders/portal.wgsl`), shimmering at its edge. Its near plane is pushed
+//! screen position (`shaders/portal.wesl`), shimmering at its edge. Its near plane is pushed
 //! out to the doorway, so what stands behind the other side's doorway doesn't block the view.
 
 use std::{
@@ -176,7 +176,7 @@ pub fn presence(d: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The doorway's surface (`shaders/portal.wgsl`).
+/// The doorway's surface (`shaders/portal.wesl`).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct PortalMaterial {
     /// x: how present (0-1), y: the echo's ready (0/1), z: width / height, w: a seed
@@ -189,7 +189,7 @@ pub struct PortalMaterial {
 
 impl Material for PortalMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/portal.wgsl".into()
+        "shaders/portal.wesl".into()
     }
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
@@ -392,7 +392,7 @@ pub fn update(
                     Camera { order: -10 - p.live.len() as isize, is_active: false, ..default() },
                     RenderTarget::Image(ImageRenderTarget { handle: image.clone(), scale_factor: 1.0 }),
                     Hdr,
-                    Tonemapping::None,
+                    Tonemapping::Linear,
                     RenderLayers::layer(p.scenes[scene].layer),
                     Transform::default(),
                     EchoCamera,

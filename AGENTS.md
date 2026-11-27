@@ -27,7 +27,7 @@ exists), `bd ready` / `bd close <id> --reason "..."` (work).
 
 Two products share one Cargo workspace:
 
-1. **Block Avatar** (`block_avatar`, in `bins/block-avatar/`): a Bevy 0.19 desktop app that
+1. **Block Avatar** (`block_avatar`, in `bins/block-avatar/`): a Bevy 0.20 desktop app that
    drives block-style characters from a microphone, for streaming through OBS. Lip sync,
    reactions, a local HTTP control page, viewer questions, Twitch chat, optional
    Windows-only webcam output.
@@ -130,7 +130,8 @@ ignores `*.db`).
 
 ## Conventions
 
-- Rust 2024 edition, Bevy 0.19. Positions in `vox-core` are in **blocks**; the app scales by
+- Rust 2024 edition, Bevy 0.20 (0.20.1). Shaders are WESL (`assets/shaders/*.wesl`: `import …;`,
+  `@if(…)`, `constants::MATERIAL_BIND_GROUP`), as Bevy 0.20 requires. Positions in `vox-core` are in **blocks**; the app scales by
   the palette's block size (0.5 m) for metres.
 - The client crate also compiles to **wasm32**. Do not use threads, blocking I/O, `std::time`
   clocks, or unchecked arithmetic on untrusted sizes in code shared with `vox-world` or
@@ -282,9 +283,9 @@ From the code review; none are regressions, but know they exist before relying o
   old build, `--update`, then compare the new one).
 - Remeshing copies voxels chunk by chunk and runs within a per-frame budget (8 ms desktop,
   5 ms browser), nearest first. World faces use a packed 20-byte vertex (`blocks::ATTRIBUTE_BLOCK_UV`
-  and `ATTRIBUTE_BLOCK_FACE`, unpacked by `assets/shaders/block_vertex.wgsl`); neighbouring
+  and `ATTRIBUTE_BLOCK_FACE`, unpacked by `assets/shaders/block_vertex.wesl`); neighbouring
   solid faces with the same tile and even light are merged (`mesh_cells(.., merge: true)`), and
-  `assets/shaders/block.wgsl` repeats the tile across them, sampling every texture with the
+  `assets/shaders/block.wesl` repeats the tile across them, sampling every texture with the
   unwrapped coordinates' derivatives (no seams). Anything drawn with `BlockMaterial` must use
   `into_packed_mesh`; chunk meshes live only on the GPU (`bounds()` gives their `Aabb`). Still:
   a one-block edit rebuilds its whole chunk, and weather and fog baking run on the main thread.
@@ -318,7 +319,7 @@ From the code review; none are regressions, but know they exist before relying o
   status. Search it before large changes; record decisions in it when you finish.
 - Hard constraints: no real-person likenesses or trademarked characters; no synthetic voices
   (test and demo audio are real recordings); the medic's cross is green; no poses of assaulting
-  police; sound effects are real CC0 recordings; stay on Bevy 0.19.1. See
+  police; sound effects are real CC0 recordings; stay on Bevy 0.20.1 (upgraded from 0.19.1 on the owner's say-so, 2026-11-27). See
   `knowledge/convention/hard-constraints.md`.
 - Before finishing code changes run `cargo test --workspace`, and
   `okf validate knowledge --strict --drift` when you touched `knowledge/`.

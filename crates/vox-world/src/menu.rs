@@ -10,6 +10,7 @@
 use bevy::{
     input::gamepad::Gamepad,
     input_focus::{FocusCause, InputFocus, InputFocusVisible, directional_navigation::DirectionalNavigationPlugin},
+    picking::{events::PointerClick, hover::Hovered},
     prelude::*,
     ui::auto_directional_navigation::{AutoDirectionalNavigation, AutoDirectionalNavigator},
 };
@@ -151,7 +152,7 @@ fn button_node() -> Node {
 }
 
 fn choice(c: Choice, node: Node) -> impl Bundle {
-    (node, Button, c, AutoDirectionalNavigation::default(), BackgroundColor(BUTTON), BorderColor::all(EDGE))
+    (node, Hovered::default(), c, AutoDirectionalNavigation::default(), BackgroundColor(BUTTON), BorderColor::all(EDGE))
 }
 
 // ---- opening and closing
@@ -488,7 +489,7 @@ fn navigate(
     menus: Res<Menus>,
     mut nav: AutoDirectionalNavigator,
     mut visible: ResMut<InputFocusVisible>,
-    hovered: Query<(Entity, &Interaction), (Changed<Interaction>, With<Choice>)>,
+    hovered: Query<(Entity, &Hovered), (Changed<Hovered>, With<Choice>)>,
 ) {
     if *mode != UiMode::Menu || menus.capture.is_some() {
         return;
@@ -497,8 +498,8 @@ fn navigate(
         let _ = nav.navigate(dir);
         visible.0 = true;
     }
-    for (e, i) in &hovered {
-        if *i == Interaction::Hovered {
+    for (e, h) in &hovered {
+        if h.get() {
             // (the navigator holds the focus)
             nav.manual_directional_navigation.focus.set(e, FocusCause::Pressed);
         }
@@ -512,7 +513,7 @@ fn choose(
     mut menus: ResMut<Menus>,
     focus: Res<InputFocus>,
     choices: Query<&Choice>,
-    pressed: Query<(&Interaction, &Choice), Changed<Interaction>>,
+    mut clicked: ResMut<Clicked>,
     mut bindings: ResMut<Bindings>,
     mut settings: ResMut<InputSettings>,
     mut w: ResMut<WorldClient>,
@@ -527,10 +528,8 @@ fn choose(
     if actions.just_pressed(Action::Confirm) {
         chosen = focus.get().and_then(|e| choices.get(e).ok()).copied();
     }
-    for (i, c) in &pressed {
-        if *i == Interaction::Pressed {
-            chosen = Some(*c);
-        }
+    if let Some(c) = clicked.0.take() {
+        chosen = Some(c);
     }
     if actions.just_pressed(Action::Alternate) {
         if let Some(Choice::Bind(a)) = focus.get().and_then(|e| choices.get(e).ok()).copied() {
@@ -673,6 +672,18 @@ fn style_focus(focus: Res<InputFocus>, mut q: Query<(Entity, &mut BackgroundColo
     }
 }
 
+/// The choice the mouse last clicked, until `choose` acts on it.
+#[derive(Resource, Default)]
+pub struct Clicked(Option<Choice>);
+
+/// A click lands on the deepest thing under the pointer (often a choice's text) and climbs up
+/// through its parents: the first one that is a choice is what was chosen.
+fn clicked(ev: On<PointerClick>, choices: Query<&Choice>, mut clicked: ResMut<Clicked>) {
+    if let Ok(c) = choices.get(ev.entity) {
+        clicked.0 = Some(*c);
+    }
+}
+
 /// The menus. Needs [`crate::input::InputPlugin`] and [`crate::hud::HudPlugin`].
 pub struct MenuPlugin;
 
@@ -681,7 +692,7 @@ impl Plugin for MenuPlugin {
         if !app.is_plugin_added::<DirectionalNavigationPlugin>() {
             app.add_plugins(DirectionalNavigationPlugin);
         }
-        app.init_resource::<Menus>().add_systems(Update, (open_close, capture, build, navigate, choose, style_focus).chain());
+        app.init_resource::<Menus>().init_resource::<Clicked>().add_observer(clicked).add_systems(Update, (open_close, capture, build, navigate, choose, style_focus).chain());
     }
 }
 

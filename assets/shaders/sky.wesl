@@ -13,10 +13,10 @@
 // Colours come from `outdoors.rs`, which draws the same sky (without the small detail) into
 // the environment map that lights the world.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::VertexOutput,
     mesh_view_bindings::{view, globals},
-}
+};
 
 struct Sky {
     sun: vec4<f32>,
@@ -38,7 +38,7 @@ struct Sky {
     wind: vec4<f32>,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> sky: Sky;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> sky: Sky;
 
 fn hash2(p: vec2<f32>) -> f32 {
     let q = fract(p * vec2(123.34, 456.21));

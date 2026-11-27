@@ -360,7 +360,7 @@ pub fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut clip
                 ..default()
             },
             RenderTarget::Image(handle.clone().into()),
-            Tonemapping::None,
+            Tonemapping::Linear,
             Transform::default(),
             ClipCamera,
         ))
