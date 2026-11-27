@@ -57,9 +57,12 @@ Decisions (2026-11-27, with the owner):
 
 ### Types
 
-In `vox-format` (`src/entities/`), plain serde types, **no Bevy**: `vox-format` stays free of
-Bevy so the server does (world-format.md had proposed `bevy_reflect`; plain serde with explicit
-stable names and versions gives the same guarantees without it).
+In `vox-core` (new module `vox_core::entity`), plain serde types, **no Bevy**. They are in
+`vox-core`, not `vox-format`, because the wire protocol (`vox_core::wire`) carries them and
+`vox-core` can't depend on `vox-format`; `vox-format` stores them (zone blobs) and the server
+keeps them in SQLite. world-format.md had proposed `bevy_reflect` types in `vox-format`; plain
+serde with explicit stable names and versions gives the same guarantees and keeps the server
+free of Bevy.
 
 ```rust
 pub struct EntityId(pub u32);          // unique in its world; the server allocates
@@ -130,10 +133,12 @@ sequence (`seq`), so blocks and entities are seen in one order.
 
 ### Rules (`vox-core`)
 
-The checks are pure functions in `vox-core` (new module `vox_core::edit`), so the client
-predicts with the same rules and the server enforces them. `vox-core` cannot depend on
-`vox-format` (the dependency runs the other way), so the rules take plain values (positions,
-sizes, plot rectangles, who is asking); `vox-format`'s types call them.
+The checks are pure functions in `vox-core` (new module `vox_core::edit`, over
+`vox_core::entity`'s types), so the client predicts with the same rules and the server enforces
+them.
+
+`vox-server` gains two dependencies, `vox-art` and `vox-graph` (no Bevy, no threads), to check
+prop blobs and expand nodes for `Build`; the rule that servers stay free of Bevy holds.
 
 `EntityWhy`: `NotYours` (not your plot, not an editor), `Outside`, `TooFar`, `TooMany` (a cap),
 `TooBig` (a string, a recipe), `Blocked` (footprint not free, no standing room), `BadDest`,
@@ -338,7 +343,7 @@ The seam for later: `vox-forge`'s MCP tools (world-graph-and-art.md phase 4) can
 
 ## Wasm and the browser
 
-- Shared code (`vox-core::edit`, `vox-format::entities`, `vox-art`, `vox-graph`,
+- Shared code (`vox-core::edit`, `vox-core::entity`, `vox-art`, `vox-graph`,
   `vox-world::editor`) has no threads, no blocking I/O, no `std::time` clocks, and uses checked
   arithmetic on sizes from the network or a recipe (wasm32 `usize` is 32 bits and release
   builds wrap).
@@ -351,7 +356,8 @@ The seam for later: `vox-forge`'s MCP tools (world-graph-and-art.md phase 4) can
 | What | How | Command |
 | --- | --- | --- |
 | Rules | unit tests in `vox_core::edit` for each `EntityWhy` | `cargo test -p vox-core edit` |
-| Entities | round trips, version-1 zone blobs still load, crafted blobs refused | `cargo test -p vox-format entities` |
+| Entities | types round trip, caps refuse crafted input | `cargo test -p vox-core entity` |
+| Zone blobs | entities in v2 blobs, version-1 zone blobs still load | `cargo test -p vox-format zone` |
 | Wire | round trips, first bytes of old variants unchanged | `cargo test -p vox-core wire` |
 | Server | one test per refusal; a change reaches a second player; restore-at brings entities back; a stale `expect` is refused; a 32,768-block build interleaves with another player's edit; 20,000 props join with no message over 64 KB | `cargo test -p vox-server editor` |
 | Directory charge | the same idempotency key charges once; a failed re-check refunds; reconciliation recreates a paid portal | `cargo test -p vox-directory portal` |
@@ -365,7 +371,7 @@ The seam for later: `vox-forge`'s MCP tools (world-graph-and-art.md phase 4) can
 
 Each ships on its own; dependencies in brackets.
 
-1. **Entities** (world-format phase 2): `vox-format::entities`, the zone blob v2, the SQLite
+1. **Entities** (world-format phase 2): `vox_core::entity`, the zone blob v2, the SQLite
    table, seeding portals, spawn, objective and settings from level files, protocol 9
    (`Put`, `Remove`, `Entities`, `EntityRefused`), clients reading portals from entities.
 2. **Rights**: `vox_core::edit` rules, `world_editors`, rules carrying owner and editors,
