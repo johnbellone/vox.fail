@@ -1,0 +1,75 @@
+name: Edge worker
+
+# Deploys vox.fail's Cloudflare Worker (apps/edge): it passes every request on to the server and
+# shows the offline page when the server can't be reached. Runs when the Worker or the offline
+# page changes on main, after the tests pass.
+#
+# The deploy job uses the "production" environment: give it required reviewers (Settings →
+# Environments) so a deploy waits for an approval, and put the secrets there, not on the
+# repository. CLOUDFLARE_API_TOKEN: Account → Workers Scripts: Edit, and Zone (vox.fail) →
+# Workers Routes: Edit, nothing else. CLOUDFLARE_ACCOUNT_ID: the account's ID.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/edge/**"
+      - "apps/site/src/features/home/Pitch.tsx"
+      - "apps/site/src/components/**"
+      - "apps/site/src/styles/**"
+      - "apps/site/src/theme.ts"
+      - "docs/screenshots/**"
+      - "bun.lock"
+      - ".github/workflows/edge.yml"
+  pull_request:
+    paths:
+      - "apps/edge/**"
+      - ".github/workflows/edge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  WRANGLER_SEND_METRICS: "false"
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - run: bun install --frozen-lockfile
+      - name: Test, typecheck, build
+        working-directory: apps/edge
+        run: |
+          bun test
+          bun run typecheck
+          bun run build
+          bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/edge"
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - run: bun install --frozen-lockfile
+      - name: Deploy
+        working-directory: apps/edge
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          bun run build
+          bunx wrangler deploy

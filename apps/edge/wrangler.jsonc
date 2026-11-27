@@ -1,0 +1,20 @@
+// vox.fail's Worker (src/worker.ts): in front of every request, passing it on to the server
+// through the tunnel, and showing the offline page when the server can't be reached.
+// Deployed by .github/workflows/edge.yml; by hand: bun run deploy (needs CLOUDFLARE_API_TOKEN
+// and CLOUDFLARE_ACCOUNT_ID, see README.md).
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vox-edge",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "vox.fail/*", "zone_name": "vox.fail" }],
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    // the Worker decides: only /_offline/ is served from here, everything else goes to the server
+    "run_worker_first": true
+  },
+  "observability": { "enabled": true }
+}
