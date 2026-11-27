@@ -14,10 +14,19 @@
 //! (`NoSuchProp`), but whoever may remove a prop may remove it. Putting its hash back in the
 //! catalogue restores it the next time the world opens.
 
-use std::{collections::HashMap, fs, io::Read, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    io::Read,
+    path::Path,
+};
 
 use vox_art::prop::Collide;
-use vox_core::{body::prop_footprint_cells, entity::Prop};
+use vox_core::{
+    ChunkKey,
+    body::prop_footprint_cells,
+    entity::{Component, EntityId, Prop},
+};
 use vox_format::prop::{Catalogue, PropBlob};
 
 /// Largest catalogue read, in bytes.
@@ -52,10 +61,22 @@ impl Footprint {
     }
 }
 
-/// The accepted props, by their hash (the version their blob is named by).
+/// The accepted props, by their hash (the version their blob is named by), and the index of the
+/// colliding props placed in the world (see `PropIndex`). The index is kept in step by the world
+/// wherever an entity changes (`index_change`), and rebuilt when the entities are loaded
+/// (`index_all`).
 #[derive(Debug, Default)]
 pub struct PropLibrary {
     defs: HashMap<[u8; 16], Footprint>,
+    index: PropIndex,
+}
+
+/// The colliding props placed in a world, by the chunks their cells fall in. A footprint check
+/// looks only at the props in the chunks the new prop's cells are in, so placing one costs what
+/// is near it, not what the world holds. A prop that spans several chunks is in each of them.
+#[derive(Debug, Default, PartialEq)]
+struct PropIndex {
+    chunks: HashMap<ChunkKey, HashSet<EntityId>>,
 }
 
 impl PropLibrary {
@@ -94,12 +115,76 @@ impl PropLibrary {
     pub fn known(&self, hash: &[u8; 16]) -> bool {
         self.defs.contains_key(hash)
     }
+
+    /// The chunks a prop's cells fall in, when it collides and its hash is accepted: exactly the
+    /// props the index holds. Empty otherwise (a rug, or an orphan, takes no part in the index).
+    fn chunks_of(&self, prop: &Prop) -> Vec<ChunkKey> {
+        let Some(fp) = self.defs.get(&prop.prop).filter(|f| f.collides) else { return Vec::new() };
+        let mut keys: Vec<ChunkKey> = fp.covers(prop).into_iter().map(ChunkKey::of).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+
+    /// Rebuilds the index from the entities a world holds (at open, once they are loaded).
+    pub fn index_all<'a>(&mut self, placed: impl Iterator<Item = (EntityId, &'a Component)>) {
+        self.index = PropIndex::default();
+        for (id, c) in placed {
+            if let Component::Prop(p) = c {
+                self.index_add(id, p);
+            }
+        }
+    }
+
+    /// Keeps the index in step with one entity that changed: it was `old` (None when it is new)
+    /// and is now `new` (None when it is removed). Anything but a prop is ignored.
+    pub fn index_change(&mut self, id: EntityId, old: Option<&Component>, new: Option<&Component>) {
+        if let Some(Component::Prop(p)) = old {
+            self.index_remove(id, p);
+        }
+        if let Some(Component::Prop(p)) = new {
+            self.index_add(id, p);
+        }
+    }
+
+    fn index_add(&mut self, id: EntityId, prop: &Prop) {
+        for k in self.chunks_of(prop) {
+            self.index.chunks.entry(k).or_default().insert(id);
+        }
+    }
+
+    fn index_remove(&mut self, id: EntityId, prop: &Prop) {
+        for k in self.chunks_of(prop) {
+            if let Some(set) = self.index.chunks.get_mut(&k) {
+                set.remove(&id);
+                if set.is_empty() {
+                    self.index.chunks.remove(&k);
+                }
+            }
+        }
+    }
+
+    /// The placed colliding props that may stand in `prop`'s way, from the chunks its cells are
+    /// in. A superset of what `free` needs: the caller still leaves out the prop being changed.
+    pub fn near(&self, prop: &Prop) -> Vec<EntityId> {
+        let mut ids: Vec<EntityId> = self
+            .chunks_of(prop)
+            .iter()
+            .filter_map(|k| self.index.chunks.get(k))
+            .flatten()
+            .copied()
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
 }
 
 /// Is the prop's footprint free in the world? Every cell it covers must be air (`solid` says
 /// which are not). A prop that collides also may not share a cell with another colliding prop:
-/// `others` are the other props in the world, and the caller leaves out the prop being changed,
-/// so a prop can be turned or moved onto its own old cells. A prop with `collide: none` blocks
+/// `others` are the other props that may stand in its way: the world passes the ones near `prop`
+/// (`PropLibrary::near`), not every prop it holds, and leaves out the prop being changed, so a
+/// prop can be turned or moved onto its own old cells. A prop with `collide: none` blocks
 /// nothing, so other props may stand on its cells and it on theirs. Props whose definitions are
 /// not in the library take no cells here.
 pub fn free<'a>(
@@ -130,4 +215,149 @@ fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>, String> {
         return Err(format!("{} is over {cap} bytes", path.display()));
     }
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, time::Duration};
+
+    use vox_core::entity::PROP_UNITS_PER_BLOCK;
+
+    use super::*;
+
+    const CRATE: [u8; 16] = [1; 16];
+    const RUG: [u8; 16] = [2; 16];
+
+    /// A library of a crate (one cell, two high, collides) and a rug (one cell, does not collide).
+    fn library() -> PropLibrary {
+        let defs = HashMap::from([
+            (CRATE, Footprint { floor: vec![[0, 0]], height: 2, collides: true }),
+            (RUG, Footprint { floor: vec![[0, 0]], height: 1, collides: false }),
+        ]);
+        PropLibrary { defs, index: PropIndex::default() }
+    }
+
+    /// A prop standing on block (x, z), facing 0.
+    fn at(hash: [u8; 16], x: i32, z: i32) -> Prop {
+        Prop {
+            prop: hash,
+            at: [x * PROP_UNITS_PER_BLOCK, 0, z * PROP_UNITS_PER_BLOCK],
+            yaw: 0,
+            variant: 0,
+            state: 0,
+            channel: None,
+            text: None,
+            owner: None,
+        }
+    }
+
+    /// The world's props, as the full scan (`free` over every other prop) sees them.
+    fn free_scan(lib: &PropLibrary, placed: &BTreeMap<EntityId, Component>, p: &Prop, editing: Option<EntityId>) -> bool {
+        let others = placed
+            .iter()
+            .filter(|(id, _)| Some(**id) != editing)
+            .filter_map(|(_, c)| match c {
+                Component::Prop(q) => Some(q),
+                _ => None,
+            });
+        free(lib, p, others, |_| false)
+    }
+
+    /// The same check as the world makes it: only the props `near` returns.
+    fn free_near(lib: &PropLibrary, placed: &BTreeMap<EntityId, Component>, p: &Prop, editing: Option<EntityId>) -> bool {
+        let others = lib
+            .near(p)
+            .into_iter()
+            .filter(|id| Some(*id) != editing)
+            .filter_map(|id| match placed.get(&id) {
+                Some(Component::Prop(q)) => Some(q),
+                _ => None,
+            });
+        free(lib, p, others, |_| false)
+    }
+
+    #[test]
+    fn index_agrees_with_a_full_scan_through_put_move_and_remove() {
+        let mut lib = library();
+        let mut placed: BTreeMap<EntityId, Component> = BTreeMap::new();
+        let mut next_id = 0u32;
+        let mut seed: u32 = 12345;
+        let mut rand = move |n: u32| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 8) % n
+        };
+        for _ in 0..1500 {
+            let hash = if rand(5) == 0 { RUG } else { CRATE };
+            let (x, z) = (rand(40) as i32, rand(40) as i32);
+            let p = at(hash, x, z);
+            match rand(3) {
+                0 => {
+                    let id = EntityId(next_id);
+                    next_id += 1;
+                    if free_near(&lib, &placed, &p, None) {
+                        assert!(free_scan(&lib, &placed, &p, None));
+                        let c = Component::Prop(p);
+                        lib.index_change(id, None, Some(&c));
+                        placed.insert(id, c);
+                    }
+                }
+                1 if !placed.is_empty() => {
+                    let id = *placed.keys().nth(rand(placed.len() as u32) as usize).unwrap();
+                    if free_near(&lib, &placed, &p, Some(id)) {
+                        assert!(free_scan(&lib, &placed, &p, Some(id)));
+                        let old = placed.insert(id, Component::Prop(p.clone())).unwrap();
+                        lib.index_change(id, Some(&old), Some(&Component::Prop(p)));
+                    }
+                }
+                2 if !placed.is_empty() => {
+                    let id = *placed.keys().nth(rand(placed.len() as u32) as usize).unwrap();
+                    let old = placed.remove(&id).unwrap();
+                    lib.index_change(id, Some(&old), None);
+                }
+                _ => {}
+            }
+            // the index is what a rebuild from the placed entities makes
+            let mut fresh = PropLibrary { defs: lib.defs.clone(), index: PropIndex::default() };
+            fresh.index_all(placed.iter().map(|(id, c)| (*id, c)));
+            assert_eq!(lib.index, fresh.index);
+        }
+        // and the check agrees with the full scan for placements all over the grid
+        for x in 0..40 {
+            for z in 0..40 {
+                let p = at(CRATE, x, z);
+                assert_eq!(free_near(&lib, &placed, &p, None), free_scan(&lib, &placed, &p, None));
+            }
+        }
+    }
+
+    #[test]
+    fn a_rug_and_an_orphan_take_no_place_in_the_index() {
+        let mut lib = library();
+        let rug = Component::Prop(at(RUG, 3, 3));
+        let orphan = Component::Prop(at([9; 16], 3, 3));
+        lib.index_change(EntityId(1), None, Some(&rug));
+        lib.index_change(EntityId(2), None, Some(&orphan));
+        assert_eq!(lib.index, PropIndex::default());
+    }
+
+    #[test]
+    fn one_more_prop_among_4000_in_a_zone_is_checked_fast() {
+        let mut lib = library();
+        let mut placed: BTreeMap<EntityId, Component> = BTreeMap::new();
+        for i in 0..4000u32 {
+            let c = Component::Prop(at(CRATE, (i % 64) as i32 * 2, (i / 64) as i32 * 2));
+            lib.index_change(EntityId(i), None, Some(&c));
+            placed.insert(EntityId(i), c);
+        }
+        let p = at(CRATE, 1, 1);
+        let start = std::time::Instant::now();
+        let free_now = free_near(&lib, &placed, &p, None);
+        let took = start.elapsed();
+        assert!(free_now);
+        assert_eq!(free_now, free_scan(&lib, &placed, &p, None));
+        // the timing is for an optimised build only; debug builds check the answer alone
+        if !cfg!(debug_assertions) {
+            assert!(took < Duration::from_millis(5), "footprint check took {took:?}");
+        }
+    }
 }

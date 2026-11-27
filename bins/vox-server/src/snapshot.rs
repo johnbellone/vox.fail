@@ -217,6 +217,8 @@ impl WorldState {
             let zones: HashSet<ZoneKey> = self.entities.map.values().chain(ents.values()).map(|(_, c)| entities::zone_key(c)).collect();
             self.snap_changed.extend(zones);
             self.entities.replace(ents);
+            // the props' footprint index follows the entities it was built from
+            self.props.index_all(self.entities.map.iter().map(|(id, (_, c))| (*id, c)));
         }
         // the objective and the settings come from the entities, which may now be the old ones
         self.refresh_from_entities();

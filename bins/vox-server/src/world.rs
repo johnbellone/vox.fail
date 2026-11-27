@@ -106,7 +106,8 @@ impl WorldState {
             seed.push(Component::Spawn(Spawn { at: spawn, yaw: 0.0 }));
             ents.seed(seed);
         }
-        let props = props::PropLibrary::load(&cfg.props);
+        let mut props = props::PropLibrary::load(&cfg.props);
+        props.index_all(ents.map.iter().map(|(id, (_, c))| (*id, c)));
         let climate = match meta("climate").and_then(|c| serde_json::from_str::<Climate>(&c).ok()) {
             Some(c) if !fresh => c.sane(),
             _ => Climate::from_settings(set.get("weather"), ground),
@@ -384,7 +385,8 @@ impl WorldState {
             // the edit number is taken only once the change is made, so none is skipped
             let seq = self.seq + 1;
             let left = self.entities.map.get(&id).map(|(_, old)| entities::zone_key(old));
-            if self.entities.remove(seq, at, "directory".into(), id).is_some() {
+            if let Some(old) = self.entities.remove(seq, at, "directory".into(), id) {
+                self.props.index_change(id, Some(&old), None);
                 self.seq = seq;
                 // the zone it leaves is changed for the next snapshot
                 self.snap_changed.extend(left);
@@ -399,8 +401,10 @@ impl WorldState {
             let seq = self.seq + 1;
             // the zones it leaves and enters are changed for the next snapshot
             let left = held.and_then(|id| self.entities.map.get(&id)).map(|(_, old)| entities::zone_key(old));
+            let was = held.and_then(|id| self.entities.map.get(&id)).map(|(_, old)| old.clone());
             // None only when the id counter is spent: this portal is then not placed
             if let Some(id) = self.entities.put(seq, at, "directory".into(), held, c.clone()) {
+                self.props.index_change(id, was.as_ref(), Some(&c));
                 self.seq = seq;
                 self.snap_changed.extend(left);
                 self.snap_changed.insert(entities::zone_key(&c));
@@ -964,6 +968,7 @@ impl WorldState {
                     self.refuse_entity(conn, &tx, id, EntityWhy::TooMany);
                     return false;
                 };
+                self.props.index_change(eid, old.as_ref(), Some(&component));
                 let mut zones = vec![entities::zone_key(&component)];
                 zones.extend(old.as_ref().map(entities::zone_key));
                 let touched = is_objective_or_settings(&component) || old.as_ref().is_some_and(is_objective_or_settings);
@@ -975,6 +980,7 @@ impl WorldState {
                     self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
                     return false;
                 };
+                self.props.index_change(entity, Some(&old), None);
                 keyed = matches!(old, Component::Portal(ref p) if p.key.is_some());
                 (EntityChange { seq, entity, component: None }, vec![entities::zone_key(&old)], is_objective_or_settings(&old))
             }
@@ -1021,13 +1027,13 @@ impl WorldState {
         let lib = &self.props;
         let known = move |hash: &[u8; 16]| lib.known(hash);
         let free = move |p: &Prop| {
-            let others = self
-                .entities
-                .map
-                .iter()
-                .filter(move |(id, _)| Some(**id) != editing)
-                .filter_map(|(_, (_, c))| match c {
-                    Component::Prop(q) => Some(q),
+            // only the props near `p` (the index), not every prop in the world
+            let others = lib
+                .near(p)
+                .into_iter()
+                .filter(move |id| Some(*id) != editing)
+                .filter_map(|id| match self.entities.map.get(&id) {
+                    Some((_, Component::Prop(q))) => Some(q),
                     _ => None,
                 });
             props::free(lib, p, others, |c| self.world.get(c) != 0)
