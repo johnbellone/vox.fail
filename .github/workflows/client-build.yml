@@ -255,7 +255,8 @@ jobs:
           if-no-files-found: error
 
   macos:
-    runs-on: macos-14
+    # macos-14 is retired on GitHub-hosted runners; latest is Apple silicon and cross-builds x86_64.
+    runs-on: macos-latest
     env:
       # Only true or false is exposed here; the secrets themselves stay in the steps that use them.
       HAVE_MAC_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
