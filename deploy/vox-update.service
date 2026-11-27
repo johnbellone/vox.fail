@@ -1,0 +1,17 @@
+[Unit]
+Description=Install the newest vox.fail server release from GitHub (deploy/vox-update.sh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# VOX_REPO, GITHUB_TOKEN (private repository only), CF_ZONE and CF_TOKEN (see deploy.env)
+EnvironmentFile=-/etc/vox/deploy.env
+ExecStart=/usr/local/sbin/vox-update.sh
+# hardening: it writes only the releases and the /opt/vox link, and restarts the vox units
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt
+TimeoutStartSec=30min

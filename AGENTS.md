@@ -55,7 +55,7 @@ Two products share one Cargo workspace:
 | `apps/site/` | (Bun) | The vox.fail pages: React 19, Mantine 9, built with Bun into `dist/`. `public/pkg/` is the wasm client (generated, ignored). See its README. |
 | `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands, sea, orbit), clip manifests. |
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
-| `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail (`deploy/README.md`); the container image (`docker/Dockerfile`) and a Helm chart for Kubernetes (`helm/vox`, see `helm/README.md`). |
+| `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail, and automatic deploys from version tags (`vox-update.sh`, `.github/workflows/release.yml`; see `deploy/README.md`); the container image (`docker/Dockerfile`) and a Helm chart for Kubernetes (`helm/vox`, see `helm/README.md`). |
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
 | `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen), `screenshots.sh` (the README's pictures, drawn by the real client into `docs/screenshots/`; run by hand when the look changes). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |

@@ -1,4 +1,6 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T14:03:14Z]: Linked `architecture/deployment.md` to `decisions/pull-based-auto-deploy.md` (How releases reach the server: v* tags build a bundle, a timer on the server installs it.).
+* **Creation** [2026-11-27T14:03:07Z]: Documented concept `decisions/pull-based-auto-deploy.md` (Decision: Pull-Based Automatic Deploys from Version Tags). — Automatic deploys to vox.fail chosen as server-pull on version tags.
 * **Relate** [2026-11-27T13:28:19Z]: Linked `architecture/weather-simulation.md` to `architecture/ground-relief-design.md` (Proposed: ground water per column, filling puddles in the generated relief.).
 * **Relate** [2026-11-27T13:28:19Z]: Linked `architecture/ground-relief-design.md` to `architecture/world-scaling-design.md` (Relief is part of the generated terrain and follows its integer-only rules.).
 * **Relate** [2026-11-27T13:28:19Z]: Linked `architecture/ground-relief-design.md` to `architecture/weather-simulation.md` (Ground water that fills the puddles is a new field of the weather simulation.).

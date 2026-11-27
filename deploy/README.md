@@ -52,6 +52,40 @@ unchanged locally and here. The tunnel can't rewrite paths, so world servers ans
    public hostnames: `vox.fail` path `^/w/7780/` → `http://127.0.0.1:7780`, and so on, the
    directory last; then `cloudflared service install <token>`.)
 
+## Automatic deploys
+
+Pushing a version tag ships it: `git tag v0.4.0 && git push origin v0.4.0`. GitHub Actions
+(`.github/workflows/release.yml`) builds the container image's `/opt/vox` (servers, browser
+client, pages, assets, data) and attaches it to the release as `vox-linux-x86_64.tar.gz` with
+its SHA-256. The server pulls it: `vox-update.timer` runs `vox-update.sh` every five minutes,
+which downloads the latest release, checks it, unpacks it into `/opt/vox-releases/<tag>`,
+points the `/opt/vox` symlink at it, restarts the vox services that were running (the
+directory first), and purges Cloudflare's cache. Nothing outside can reach the machine, and
+GitHub holds no key to it. The build takes a while (the browser client is the slow part), so
+a tag is live about half an hour after you push it.
+
+If the directory doesn't answer within a minute, the previous release goes back and the timer
+won't try that tag again: fix it and push a new tag. Players are disconnected for the few
+seconds a restart takes; the worlds save first.
+
+Set up once, as root:
+
+1. `apt install curl jq` (and `gh`, to check build provenance).
+2. Turn the copy in `/opt/vox` into the first release:
+   `systemctl stop vox-directory vox-host 'vox-world@*'`,
+   `mkdir -p /opt/vox-releases && mv /opt/vox /opt/vox-releases/v0-manual && ln -s /opt/vox-releases/v0-manual /opt/vox`,
+   then start them again. The units don't change.
+3. `install -m 755 deploy/vox-update.sh /usr/local/sbin/vox-update.sh`, and copy `deploy.env`
+   to `/etc/vox/deploy.env` (root, mode 600). Fill in `CF_ZONE` and `CF_TOKEN` (an API token
+   with only Zone → Cache Purge on vox.fail) to purge the cache, and `GITHUB_TOKEN` (read-only
+   contents) if the repository is private.
+4. Install `vox-update.service` and `vox-update.timer` in `/etc/systemd/system`, then
+   `systemctl enable --now vox-update.timer`. Watch it with `journalctl -u vox-update`.
+
+By hand: `vox-update.sh --rollback` goes back one release, `--tag v0.3.0` installs that one;
+both hold it (the timer stops upgrading) until `vox-update.sh --resume`. The three newest
+releases are kept.
+
 ## All worlds in one process (vox-host)
 
 Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port
