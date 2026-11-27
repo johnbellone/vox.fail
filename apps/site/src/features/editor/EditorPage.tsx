@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, messageOf, post, worldUrl } from "../../api/client";
 import { useApi } from "../../api/hooks";
 import type { Inventory, Me, Token, WorldEntry, Worlds } from "../../api/types";
-import { loadClient } from "../../game/wasm";
+import { loadClient, webgpuProblem } from "../../game/wasm";
 import { type Command, type NodePreview, type Tool, onEvent, sendCommand } from "../../game/editor";
 import { chooseBlock } from "./BlockPalette";
 import { EditorHeader, type Mode } from "./EditorHeader";
@@ -199,6 +199,10 @@ export function EditorPage() {
       setWorld(found);
       document.title = `Edit ${found.name} · Vox`;
       void checkAdvanced(found.id);
+      // as the play page does: before megabytes of client, can this browser draw it at all?
+      const why = await webgpuProblem();
+      if (why) throw new Error(why);
+      if (cancelled) return;
       setStatus("Loading the client…");
       const start = await loadClient();
       if (cancelled) return;
