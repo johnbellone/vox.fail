@@ -81,7 +81,9 @@ impl WorldState {
         // from before entities existed takes its stored settings once; then the spawn. The
         // mark, not the map, says whether a world was seeded: an emptied world stays empty.
         let mut ents = Entities::load(&db)?;
+        let mut reseeded = false;
         if meta("entities_seeded").is_none() {
+            reseeded = true;
             let mut seed = if !fresh {
                 vox_core::level::entities(&format!(r#"{{"world":{settings}}}"#))?
             } else if let Some(t) = &cfg.tile {
@@ -146,8 +148,11 @@ impl WorldState {
         if let Some(dir) = s.cfg.snapshots.clone() {
             let snaps = vox_format::Snapshots::new(SnapStore::open(&dir, s.cfg.snapshot_oxen.as_deref())?);
             let latest = snaps.latest().map_err(|e| format!("snapshots: {e}"))?;
-            // the last snapshot is a base only if nothing happened after it
-            s.snap_full = latest.as_ref().is_none_or(|m| m.seq != s.seq) || fresh;
+            // the last snapshot is a base only if nothing happened after it, and only if it holds
+            // entities (one from before them doesn't, so the next snapshot is whole); entities
+            // seeded now are not in any snapshot yet
+            let predates = latest.as_ref().is_some_and(|m| !m.entities);
+            s.snap_full = latest.as_ref().is_none_or(|m| m.seq != s.seq) || fresh || predates || reseeded;
             s.snap_prev = latest;
             s.snaps = Some(snaps);
         }
@@ -340,6 +345,10 @@ impl WorldState {
         let mut changes = Vec::new();
         for id in stale {
             self.seq += 1;
+            // the zone it leaves is changed for the next snapshot
+            if let Some((_, old)) = self.entities.map.get(&id) {
+                self.snap_changed.insert(entities::zone_key(old));
+            }
             if self.entities.remove(self.seq, at, "directory".into(), id).is_some() {
                 changes.push(EntityChange { seq: self.seq, entity: id, component: None });
             }
@@ -350,6 +359,11 @@ impl WorldState {
                 continue;
             }
             self.seq += 1;
+            // the zones it leaves and enters are changed for the next snapshot
+            if let Some((_, old)) = held.and_then(|id| self.entities.map.get(&id)) {
+                self.snap_changed.insert(entities::zone_key(old));
+            }
+            self.snap_changed.insert(entities::zone_key(&c));
             // None only when the id counter is spent: this portal is then not placed
             if let Some(id) = self.entities.put(self.seq, at, "directory".into(), held, c.clone()) {
                 changes.push(EntityChange { seq: self.seq, entity: id, component: Some(c) });

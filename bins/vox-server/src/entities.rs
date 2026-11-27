@@ -181,6 +181,47 @@ impl Entities {
         keyed.into_iter().map(|(_, c)| c).collect()
     }
 
+    /// Makes `ents` the whole set (a restore): entities not in it are removed and the rest are
+    /// written in the next flush. Ids keep counting up past the highest, so none is reused.
+    /// The `entities_seeded` mark is left alone.
+    pub(crate) fn replace(&mut self, ents: BTreeMap<EntityId, (u64, Component)>) {
+        self.dirty.extend(self.map.keys().copied());
+        self.dirty.extend(ents.keys().copied());
+        self.next = self.next.max(ents.keys().next_back().map_or(1, |id| id.0.saturating_add(1)));
+        self.map = ents;
+    }
+
+    /// Applies the entity edits after `after` and at or before `until` (the log, in edit order)
+    /// to `base`: the entities as a snapshot holds them. A logged value that doesn't validate
+    /// is an error, since the restore could not then be trusted.
+    pub(crate) fn replay(db: &Connection, base: &mut BTreeMap<EntityId, (u64, Component)>, after: u64, until: u64) -> Result<usize, String> {
+        let e = |e: rusqlite::Error| e.to_string();
+        let mut q = db.prepare("SELECT seq, entity, new FROM entity_edits WHERE seq > ?1 AND at <= ?2 ORDER BY seq").map_err(e)?;
+        let rows = q
+            .query_map(params![after as i64, until as i64], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, u32>(1)?, r.get::<_, Option<Vec<u8>>>(2)?))
+            })
+            .map_err(e)?;
+        let mut applied = 0;
+        for row in rows {
+            let (seq, id, new) = row.map_err(e)?;
+            let seq = u64::try_from(seq).map_err(|_| format!("entity edit {seq}: a bad edit number"))?;
+            let id = EntityId(id);
+            match new {
+                None => {
+                    base.remove(&id);
+                }
+                Some(bytes) => {
+                    let c: Component = wire::decode(&bytes).map_err(|why| format!("entity edit {seq}: {why}"))?;
+                    c.validate().map_err(|why| format!("entity edit {seq}: {why}"))?;
+                    base.insert(id, (seq, c));
+                }
+            }
+            applied += 1;
+        }
+        Ok(applied)
+    }
+
     /// Whether anything is waiting to be written.
     pub(crate) fn changed(&self) -> bool {
         !self.dirty.is_empty() || !self.log.is_empty() || self.seeded_now
@@ -249,6 +290,12 @@ pub(crate) fn position(c: &Component) -> Option<[f32; 3]> {
 /// The zone an entity lies in, by its position (a settings entity has none: zone 0, 0).
 fn zone_of(c: &Component) -> (i32, i32) {
     position(c).map_or((0, 0), zone_at)
+}
+
+/// The zone an entity is written in in a snapshot (see `zone_of`).
+pub(crate) fn zone_key(c: &Component) -> vox_format::ZoneKey {
+    let (x, z) = zone_of(c);
+    vox_format::ZoneKey { x, z }
 }
 
 /// The zone holding a position in blocks: the cell it is in, then the chunk and zone holding that cell.

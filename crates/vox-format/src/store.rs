@@ -195,6 +195,10 @@ pub struct Manifest {
     /// over every (region, hash): equal roots, equal worlds (as regions' hashes cover their
     /// zones' hashes, which cover their blocks)
     pub root: Hash,
+    /// whether every zone was written with its entities (the zones of a snapshot taken before
+    /// entities existed hold none, and say nothing about them); missing means false
+    #[serde(default)]
+    pub entities: bool,
 }
 
 impl Manifest {
@@ -229,8 +233,9 @@ impl<S: BlobStore> Snapshots<S> {
     }
 
     /// Take a snapshot: `prev` with the zones in `changed` replaced (a zone with no chunks left
-    /// is dropped, and so is a region with no zones left). With no `prev`, `changed` must hold
-    /// every zone. Writes the changed zones' blobs and the blobs of the regions they are in.
+    /// is dropped, and so is a region with no zones left; a zone with entities but no chunks is
+    /// kept). With no `prev`, `changed` must hold every zone. Writes the changed zones' blobs and
+    /// the blobs of the regions they are in.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn take(&self, prev: Option<&Manifest>, changed: &[Zone], taken_at: u64, seq: u64, palette_version: u16) -> Result<Manifest, Error> {
         let mut regions = BTreeMap::new();
@@ -258,7 +263,8 @@ impl<S: BlobStore> Snapshots<S> {
                     e.insert(had)
                 }
             };
-            if zone.chunks.is_empty() {
+            // a zone is dropped only when it has neither chunks nor entities left
+            if zone.chunks.is_empty() && zone.entities.is_empty() {
                 region.zones.remove(&zone.key);
                 continue;
             }
@@ -285,6 +291,8 @@ impl<S: BlobStore> Snapshots<S> {
             palette_version,
             root: Manifest::root_of(&regions),
             regions,
+            // the server always writes each zone's entities, so this snapshot carries them
+            entities: true,
         };
         let json = serde_json::to_vec_pretty(&m).map_err(|e| Error(e.to_string()))?;
         self.store.put(&format!("snapshots/{}.json", m.id), &json)?;

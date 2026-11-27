@@ -769,6 +769,279 @@ async fn snapshot_cycle(name: &str, oxen: Option<std::path::PathBuf>) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The yard level's config with snapshots in `dir/snaps`, taken at every flush and on closing.
+fn yard_snapshotted(db: &str, dir: &std::path::Path) -> Config {
+    let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/");
+    let blocks = std::fs::read_to_string(format!("{data}blocks.json")).unwrap();
+    let mut cfg = config(db);
+    cfg.palette = vox_core::palette_names(&blocks).unwrap();
+    cfg.seed = Some(std::fs::read_to_string(format!("{data}levels/yard.json")).unwrap());
+    cfg.snapshots = Some(dir.join("snaps"));
+    cfg.snapshot_every = Duration::ZERO;
+    cfg
+}
+
+/// Runs the yard world on `db` for a moment (it seeds, or applies what was changed while it was
+/// closed), then shuts it down, which takes a snapshot of anything changed.
+async fn run_yard(db: &str, dir: &std::path::Path) {
+    let (server, _url) = serve(yard_snapshotted(db, dir)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    server.shutdown().await;
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}
+
+/// Where the yard's portal is, as the entities table holds it.
+fn portal_at(db: &str) -> [f32; 3] {
+    let c = rusqlite::Connection::open(db).unwrap();
+    let data: Vec<u8> = c.query_row("SELECT data FROM entities WHERE name = 'vox::Portal'", [], |r| r.get(0)).unwrap();
+    match wire::decode::<vox_core::entity::Component>(&data).unwrap() {
+        vox_core::entity::Component::Portal(p) => p.at,
+        _ => panic!("the portal row isn't a portal"),
+    }
+}
+
+fn meta_seq(db: &str) -> u64 {
+    let c = rusqlite::Connection::open(db).unwrap();
+    c.query_row("SELECT value FROM meta WHERE key = 'seq'", [], |r| r.get::<_, String>(0)).unwrap().parse().unwrap()
+}
+
+/// Moves the yard's portal to `to` while the world is closed, as an edit: the entity row, the
+/// edit log (at unix time `now`, edit number after the last), and the world's edit number.
+fn move_portal_while_closed(db: &str, to: [f32; 3]) {
+    use vox_core::entity::Component;
+    let mut c = rusqlite::Connection::open(db).unwrap();
+    let (id, old_bytes): (u32, Vec<u8>) = c
+        .query_row("SELECT id, data FROM entities WHERE name = 'vox::Portal'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    let old: Component = wire::decode(&old_bytes).unwrap();
+    let mut new = old.clone();
+    if let Component::Portal(p) = &mut new {
+        p.at = to;
+    }
+    let new_bytes = wire::encode(&new);
+    let seq = meta_seq(db) + 1;
+    let at = unix_now();
+    // the zone columns follow the position, as the world writes them
+    let cell = [to[0].floor() as i32, to[1].floor() as i32, to[2].floor() as i32];
+    let zone = vox_format::zone_of(vox_core::ChunkKey::of(cell));
+    let t = c.transaction().unwrap();
+    t.execute(
+        "UPDATE entities SET data = ?1, seq = ?2, zone_x = ?3, zone_z = ?4 WHERE id = ?5",
+        rusqlite::params![new_bytes, seq as i64, zone.x, zone.z, id],
+    )
+    .unwrap();
+    t.execute(
+        "INSERT INTO entity_edits(seq, at, player, entity, old, new) VALUES (?1, ?2, 'test', ?3, ?4, ?5)",
+        rusqlite::params![seq as i64, at as i64, id, old_bytes, new_bytes],
+    )
+    .unwrap();
+    t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('seq', ?1)", [seq.to_string()]).unwrap();
+    t.commit().unwrap();
+}
+
+#[tokio::test]
+async fn entities_restore() {
+    let dir = std::env::temp_dir().join(format!("vox-server-entities-restore-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("yard.db");
+    let db = db.to_str().unwrap().to_string();
+    let snaps = dir.join("snaps");
+    // The portal is moved by editing its rows while the world is closed (there is no wire
+    // handling for a change yet), so each move is an edit logged like one a world makes.
+    run_yard(&db, &dir).await;
+    let seeded = portal_at(&db);
+    // move 1, then a run takes a snapshot that holds it
+    let move1 = [seeded[0] + 2.0, seeded[1], seeded[2]];
+    move_portal_while_closed(&db, move1);
+    let seq1 = meta_seq(&db);
+    run_yard(&db, &dir).await;
+    assert_eq!(portal_at(&db), move1, "the first move is in the world");
+    // a moment with the first move in and the second not yet
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let between = unix_now();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    // move 2, after the moment; the moment after it is later still
+    let move2 = [seeded[0] + 4.0, seeded[1], seeded[2]];
+    move_portal_while_closed(&db, move2);
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let after2 = unix_now();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    let snap_list = vox_format::Snapshots::new(vox_format::DirStore::new(&snaps)).list().unwrap();
+    let s1 = snap_list.iter().find(|m| m.seq < seq1).expect("the snapshot from before move 1").id.clone();
+    let s2 = snap_list.iter().find(|m| m.seq == seq1).expect("the snapshot holding move 1").id.clone();
+
+    // a moment after move 2: the snapshot holding move 1, then move 2 replayed from the log
+    let what = vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::At(after2)).unwrap();
+    assert!(what.contains("restored to"), "{what}");
+    assert_eq!(portal_at(&db), move2, "the edit after the snapshot is replayed");
+    assert_eq!(entity_rows(&db), 3, "the same entities, not more");
+
+    // a moment between the moves: move 2 is not replayed
+    let what = vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::At(between)).unwrap();
+    assert!(what.contains("restored to"), "{what}");
+    assert_eq!(portal_at(&db), move1, "the first move is what you see");
+    assert_eq!(entity_rows(&db), 3);
+
+    // restoring to the snapshot itself gives its entities
+    vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::Snapshot(s2)).unwrap();
+    assert_eq!(portal_at(&db), move1);
+    assert_eq!(entity_rows(&db), 3);
+    // and to the one before the first move, the portal as the level placed it
+    vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::Snapshot(s1)).unwrap();
+    assert_eq!(portal_at(&db), seeded);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The newest snapshot's id in `snaps` (a folder of plain snapshots).
+fn latest_snapshot(snaps: &std::path::Path) -> vox_format::Manifest {
+    vox_format::Snapshots::new(vox_format::DirStore::new(snaps)).latest().unwrap().unwrap()
+}
+
+/// Makes snapshot `id` look as one taken before entities existed: its manifest loses the
+/// `entities` marker (the root covers only the regions, so the manifest still reads).
+fn drop_entities_marker(snaps: &std::path::Path, id: &str) {
+    let p = snaps.join("snapshots").join(format!("{id}.json"));
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    assert!(v.as_object_mut().unwrap().remove("entities").is_some(), "the manifest had the marker");
+    std::fs::write(&p, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+}
+
+/// How many entities the snapshot's zones hold, and the zone of its portal.
+fn snapshot_entities(snaps: &std::path::Path, m: &vox_format::Manifest) -> (usize, Option<vox_format::ZoneKey>) {
+    let store = vox_format::Snapshots::new(vox_format::DirStore::new(snaps));
+    let zones = store.zones(m).unwrap();
+    let total = zones.iter().map(|z| z.entities.len()).sum();
+    let portal = zones.iter().find(|z| z.entities.iter().any(|(_, c)| matches!(c, vox_core::entity::Component::Portal(_)))).map(|z| z.key);
+    (total, portal)
+}
+
+/// Removes the entity called `name` while the world is closed, as an edit logged like one a
+/// world makes (an entity edit with no new value).
+fn remove_while_closed(db: &str, name: &str) {
+    let mut c = rusqlite::Connection::open(db).unwrap();
+    let (id, old_bytes): (u32, Vec<u8>) =
+        c.query_row("SELECT id, data FROM entities WHERE name = ?1", [name], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    let seq = meta_seq(db) + 1;
+    let at = unix_now();
+    let t = c.transaction().unwrap();
+    t.execute("DELETE FROM entities WHERE id = ?1", [id]).unwrap();
+    t.execute(
+        "INSERT INTO entity_edits(seq, at, player, entity, old, new) VALUES (?1, ?2, 'test', ?3, ?4, NULL)",
+        rusqlite::params![seq as i64, at as i64, id, old_bytes],
+    )
+    .unwrap();
+    t.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('seq', ?1)", [seq.to_string()]).unwrap();
+    t.commit().unwrap();
+}
+
+/// A snapshot whose manifest predates entities (its `entities` marker dropped, as a world from
+/// before them would have written) keeps the world's entities when restored: they are not
+/// replaced by its zones, which hold none.
+#[tokio::test]
+async fn restoring_a_snapshot_from_before_entities_keeps_them() {
+    let dir = std::env::temp_dir().join(format!("vox-server-old-snapshot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("yard.db").to_str().unwrap().to_string();
+    let snaps = dir.join("snaps");
+    run_yard(&db, &dir).await;
+    let seeded = portal_at(&db);
+    let old = latest_snapshot(&snaps);
+    assert!(old.entities, "a snapshot the server takes carries entities");
+    drop_entities_marker(&snaps, &old.id);
+    // the world moves on: its entities are not the old snapshot's
+    let moved = [seeded[0] + 2.0, seeded[1], seeded[2]];
+    move_portal_while_closed(&db, moved);
+    let what = vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::Snapshot(old.id.clone())).unwrap();
+    assert!(what.contains("entities kept"), "{what}");
+    assert_eq!(portal_at(&db), moved, "the portal is where the world had it");
+    assert_eq!(entity_rows(&db), 3, "no entity was dropped by the restore");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Opening a world whose latest snapshot predates entities makes the next snapshot whole, so
+/// that it carries every entity (and a restore to it gives them back).
+#[tokio::test]
+async fn the_snapshot_after_an_old_one_carries_entities() {
+    let dir = std::env::temp_dir().join(format!("vox-server-after-old-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("yard.db").to_str().unwrap().to_string();
+    let snaps = dir.join("snaps");
+    run_yard(&db, &dir).await;
+    let old = latest_snapshot(&snaps);
+    drop_entities_marker(&snaps, &old.id);
+    // open and close with nothing changed: the snapshot taken on closing is whole
+    run_yard(&db, &dir).await;
+    let next = latest_snapshot(&snaps);
+    assert_ne!(next.id, old.id, "a snapshot was taken");
+    assert!(next.entities, "the new snapshot says it holds entities");
+    assert_eq!(snapshot_entities(&snaps, &next).0, 3, "and it holds all three");
+    // the world loses an entity while closed; restoring to the new snapshot brings it back
+    remove_while_closed(&db, "vox::Settings");
+    assert_eq!(entity_rows(&db), 2);
+    vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::Snapshot(next.id.clone())).unwrap();
+    assert_eq!(entity_rows(&db), 3, "the restore gives the entities back");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An entity moved into another zone, and one removed, come back right on a restore: to a
+/// snapshot from before the change, and to a moment after it (the snapshot, then the logged
+/// entity edits up to the moment).
+#[tokio::test]
+async fn entities_move_across_zones_and_removals_restore() {
+    let dir = std::env::temp_dir().join(format!("vox-server-zones-restore-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("yard.db").to_str().unwrap().to_string();
+    let snaps = dir.join("snaps");
+    run_yard(&db, &dir).await;
+    let seeded = portal_at(&db);
+    let before = latest_snapshot(&snaps);
+    let (_, seeded_zone) = snapshot_entities(&snaps, &before);
+    // a moment after the first snapshot, before the changes
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let t_before = unix_now();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    // the portal goes 512 blocks along x (more than a zone), and the settings entity is removed,
+    // both while closed; the moment after them is taken before the next snapshot
+    let far = [seeded[0] + 512.0, seeded[1], seeded[2]];
+    move_portal_while_closed(&db, far);
+    remove_while_closed(&db, "vox::Settings");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let t_after = unix_now();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    run_yard(&db, &dir).await;
+    assert_eq!(portal_at(&db), far, "the move is in the world");
+    assert_eq!(entity_rows(&db), 2);
+
+    // the snapshot taken after the changes holds the portal in its new zone, and only there
+    let after = latest_snapshot(&snaps);
+    let far_cell = [far[0].floor() as i32, far[1].floor() as i32, far[2].floor() as i32];
+    let far_zone = vox_format::zone_of(vox_core::ChunkKey::of(far_cell));
+    assert_ne!(Some(far_zone), seeded_zone, "the portal crossed into another zone");
+    let (count, portal_zone) = snapshot_entities(&snaps, &after);
+    assert_eq!(count, 2, "the portal and the spawn");
+    assert_eq!(portal_zone, Some(far_zone), "the portal is held by its new zone");
+
+    // a moment before the changes: the portal back where it was, the settings entity too
+    let what = vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::At(t_before)).unwrap();
+    assert!(what.contains("restored to"), "{what}");
+    assert_eq!(portal_at(&db), seeded);
+    assert_eq!(entity_rows(&db), 3);
+    // a moment after the changes, from the snapshot before them and the logged edits
+    let what = vox_server::restore(yard_snapshotted(&db, &dir), vox_server::Restore::At(t_after)).unwrap();
+    assert!(what.contains("restored to"), "{what}");
+    assert_eq!(portal_at(&db), far, "the logged move is replayed");
+    assert_eq!(entity_rows(&db), 2, "the logged removal is replayed");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A voice packet that passes the checks; `seq` tells packets apart.
 fn packet(channel: u8, seq: u32) -> VoicePacket {
     VoicePacket { channel, seq, samples: VOICE_SAMPLES, pred: 120, index: 7, data: vec![(seq % 256) as u8; VOICE_BYTES] }

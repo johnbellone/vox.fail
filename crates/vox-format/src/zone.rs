@@ -188,6 +188,10 @@ impl Zone {
             out.extend_from_slice(&c.version().to_le_bytes());
             out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
             out.extend_from_slice(&payload);
+            // decode refuses a section this big, so refuse to write one: what encodes must decode
+            if out.len() > MAX_ENTITY_DATA {
+                return err("the zone's entities are too big to decode");
+            }
         }
         Ok(out)
     }
@@ -566,6 +570,22 @@ mod tests {
         assert_eq!(back.entities, want);
         assert_eq!(back.hash().unwrap(), hash, "the hash survives the trip");
         assert_eq!(back.chunks.len(), z.chunks.len());
+    }
+
+    #[test]
+    fn the_largest_entity_section_encodes_and_decodes() {
+        // the most a zone may hold: MAX_ZONE_ENTITIES settings of the largest size each. Its
+        // uncompressed section must be under the decode cap, or the zone could be written and
+        // never read back.
+        let json = format!(r#"{{"x":"{}"}}"#, "a".repeat(vox_core::entity::MAX_SETTINGS - 8));
+        let mut z = Zone::from_chunks(ZoneKey { x: 0, z: 0 }, 1, std::iter::empty());
+        z.entities = (1..=MAX_ZONE_ENTITIES).map(|id| (EntityId(id), Component::Settings(Settings { json: json.clone() }))).collect();
+        let (blob, hash) = z.encode().unwrap();
+        let back = Zone::decode(&blob).unwrap();
+        assert_eq!(back.entities.len(), MAX_ZONE_ENTITIES as usize);
+        assert_eq!(back.hash().unwrap(), hash);
+        // the caps keep the section under the cap, so the encoder's own refusal is a backstop
+        assert!(z.entity_data().unwrap().len() <= MAX_ENTITY_DATA);
     }
 
     #[test]

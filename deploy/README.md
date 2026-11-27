@@ -86,6 +86,13 @@ By hand: `vox-update.sh --rollback` goes back one release, `--tag v0.3.0` instal
 both hold it (the timer stops upgrading) until `vox-update.sh --resume`. The three newest
 releases are kept.
 
+Snapshots written by this release are zone format 2, which holds each zone's entities as well as
+its blocks. Older binaries can't read zone format 2, so rolling back the binary alone leaves the
+newer snapshots unreadable to it. To roll back, first restore with the newer binary to a snapshot
+from before the upgrade (`vox-server --db <world>.db --restore <id>`, world stopped): it keeps the
+world's current entities, since that snapshot predates them. Then roll the binary back. The restore
+itself is a snapshot, so the newer binary can still undo it.
+
 ## All worlds in one process (vox-host)
 
 Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port
