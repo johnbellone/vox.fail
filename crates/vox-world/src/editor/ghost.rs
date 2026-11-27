@@ -133,6 +133,8 @@ pub fn check_portal(known: &Known, portal: &Component) -> Result<(), EntityWhy> 
         ground: known.solid,
         props_in_plot: 0,
         prop_footprint_free: &no_prop,
+        // a portal has no footprint cells of a prop's
+        prop_cells: &|_: &Prop| Vec::new(),
         known_prop: &no_prop_kind,
     };
     vox_core::edit::check_put(&ctx, None, portal)
@@ -279,7 +281,12 @@ fn within(unit: i32, block: i32) -> i32 {
 /// `prop.prop`. The owner is stamped with the same placeholder account as [`check_portal`] uses,
 /// so the owner rule passes and the server, which stamps the real owner, decides; `footprint_free`
 /// says whether the prop's cells are clear.
-pub fn check_prop(known: &Known, prop: &Prop, footprint_free: &dyn Fn(&Prop) -> bool) -> Result<(), EntityWhy> {
+pub fn check_prop(
+    known: &Known,
+    prop: &Prop,
+    cells: &dyn Fn(&Prop) -> Vec<Cell>,
+    footprint_free: &dyn Fn(&Prop) -> bool,
+) -> Result<(), EntityWhy> {
     let spawns = known.entities.values().filter(|(_, c)| matches!(c, Component::Spawn(_))).count();
     let account = Some(0);
     let stamped = Prop { owner: account, ..prop.clone() };
@@ -298,6 +305,8 @@ pub fn check_prop(known: &Known, prop: &Prop, footprint_free: &dyn Fn(&Prop) -> 
         ground: known.solid,
         props_in_plot: 0,
         prop_footprint_free: footprint_free,
+        // every footprint cell must be in the world (and, for a builder, the server checks the plot)
+        prop_cells: cells,
         known_prop: &known_prop,
     };
     vox_core::edit::check_put(&ctx, None, &Component::Prop(stamped))
@@ -387,16 +396,15 @@ fn prop_ghost(
         let empty = Occupancy::default();
         let props = occupancy.map_or(&empty, |o| &o.0);
         let blocked = with_props(&solid, props);
-        let footprint_free = |p: &Prop| {
-            prop_footprint_cells(p.at, p.yaw, &shape.footprint, shape.height).into_iter().all(|c| !blocked(c))
-        };
+        let cells = |p: &Prop| prop_footprint_cells(p.at, p.yaw, &shape.footprint, shape.height);
+        let footprint_free = |p: &Prop| cells(p).into_iter().all(|c| !blocked(c));
         let known = Known {
             at: Some(w.body.pos),
             bounds: w.view.confirmed.bounds,
             entities: &entities.map,
             solid: &solid,
         };
-        tint(check_prop(&known, &prop, &footprint_free))
+        tint(check_prop(&known, &prop, &cells, &footprint_free))
     };
     // the world's solid test borrows the client, and the notice below needs it
     drop(solid);
@@ -633,6 +641,7 @@ mod tests {
         let empty = BTreeMap::new();
         let no_blocks = |_: Cell| false;
         let free = |_: &Prop| true;
+        let pivot = |p: &Prop| prop_footprint_cells(p.at, p.yaw, &[[0, 0]], 1);
         // the feet are at (0.5, 0, -2) blocks, and the prop at [5, 0, -20] units (5 cm each) is there too
         let known = Known {
             at: Some([0.5, 0.0, -2.0]),
@@ -640,9 +649,9 @@ mod tests {
             entities: &empty,
             solid: &no_blocks,
         };
-        assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &free), Ok(()));
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &free), Ok(()));
         // out of reach: 20 blocks from the feet
-        assert_eq!(check_prop(&known, &ghost_prop([5, 0, 180]), &free), Err(EntityWhy::TooFar));
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, 180]), &pivot, &free), Err(EntityWhy::TooFar));
     }
 
     #[test]
@@ -656,7 +665,8 @@ mod tests {
             solid: &no_blocks,
         };
         let blocked = |_: &Prop| false;
-        let verdict = check_prop(&known, &ghost_prop([5, 0, -20]), &blocked);
+        let pivot = |p: &Prop| prop_footprint_cells(p.at, p.yaw, &[[0, 0]], 1);
+        let verdict = check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &blocked);
         assert_eq!(verdict, Err(EntityWhy::Blocked));
         assert_eq!(tint(verdict), Tint::Red(EntityWhy::Blocked));
     }

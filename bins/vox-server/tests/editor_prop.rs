@@ -27,6 +27,7 @@ use vox_core::{
     auth::{self, Character, Claims, SigningKey},
     entity::{Component, EntityId, EntityWhy, Prop},
     wire::{self, EntityChange, PROTOCOL, ToClient, ToServer},
+    world::Why,
 };
 use vox_format::{
     Hash,
@@ -369,6 +370,33 @@ async fn editor_prop_a_plot_holds_64_props_and_no_more() {
         assert_eq!(next_done(&mut c.ws).await.0, i);
     }
     assert_eq!(next_refusal(&mut c.ws).await, (65, EntityWhy::TooMany));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_a_block_may_not_go_where_a_colliding_prop_stands() {
+    let f = folder("blockprop", false);
+    let (_server, url) = world(&f, Arc::default()).await;
+    let mut a = join(&url, "Ann", token(7, "Ann")).await;
+    // Stand outside the directory's plot (0..10, builder 8 only), so the only reason for a
+    // refusal here is the prop. The crate's pivot is block (-3, 0, -3) on the grass; it is two high.
+    send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-25, 0, -25], 0, 7) }).await;
+    assert_eq!(next_done(&mut a.ws).await.0, 1);
+    // a block into the crate's upper cell is refused
+    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-3, 1, -3], block: 3 }).await;
+    let refused = until(&mut a.ws, |m| match m {
+        ToClient::Refused { id, why } => Some((id, why)),
+        _ => None,
+    })
+    .await;
+    assert_eq!(refused, (2, Why::Blocked));
+    // the same block beside the crate is made
+    send(&mut a.ws, &ToServer::Edit { id: 3, cell: [-2, 0, -3], block: 3 }).await;
+    until(&mut a.ws, |m| match m {
+        ToClient::Edits(v) if v.iter().any(|e| e.cell == [-2, 0, -3]) => Some(()),
+        _ => None,
+    })
+    .await;
 }
 
 /// A hash no catalogue names: a prop placed under it is an orphan once the world opens.

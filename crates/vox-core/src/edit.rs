@@ -79,6 +79,11 @@ pub struct Ctx<'a> {
     /// The caller answers from its occupancy and must leave out the entity being changed, or
     /// a prop could never be turned in place.
     pub prop_footprint_free: &'a dyn Fn(&Prop) -> bool,
+    /// Every cell the prop covers, from its definition's footprint and height. The reach and
+    /// plot checks look at the pivot alone; these cells are checked for the world's bounds (for
+    /// anyone) and for a builder's plot. The caller answers from its library, and `known_prop`
+    /// refuses an unknown prop before this is asked.
+    pub prop_cells: &'a dyn Fn(&Prop) -> Vec<Cell>,
     /// Does the world accept this prop (its version hash)?
     pub known_prop: &'a dyn Fn(&[u8; 16]) -> bool,
 }
@@ -116,6 +121,21 @@ fn check_cell(ctx: &Ctx, cell: Cell) -> Result<(), EntityWhy> {
     }
     if !within_reach(ctx.at, cell) {
         return Err(EntityWhy::TooFar);
+    }
+    Ok(())
+}
+
+/// Every cell a prop covers must be inside the world, for anyone; a builder's must also be inside
+/// their own plot. Only the pivot is in reach, so without this a prop could hang over a
+/// neighbour's plot or past the world's edge.
+fn check_footprint(ctx: &Ctx, account: u64, cells: &[Cell]) -> Result<(), EntityWhy> {
+    for &cell in cells {
+        if !ctx.bounds.contains(cell) {
+            return Err(EntityWhy::Outside);
+        }
+        if ctx.role == Role::Builder && !in_own_plot(ctx.plots, account, cell) {
+            return Err(EntityWhy::NotYours);
+        }
     }
     Ok(())
 }
@@ -255,6 +275,15 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
                 }
             }
             Component::Prop(p) => {
+                // A channel wires a prop to a switch or a light; a builder may keep the channel
+                // a prop has but not choose one.
+                let old_channel = match old {
+                    Some(Component::Prop(o)) => o.channel,
+                    _ => None,
+                };
+                if p.channel.is_some() && p.channel != old_channel {
+                    return Err(EntityWhy::NotYours);
+                }
                 // A builder places props in their own plot, and moves or changes only the
                 // props they placed (the owner was checked above to be unchanged).
                 if let Some(Component::Prop(o)) = old
@@ -290,6 +319,9 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
     };
     if let Some(cell) = cell {
         check_cell(ctx, cell)?;
+    }
+    if let Component::Prop(p) = new {
+        check_footprint(ctx, account, &(ctx.prop_cells)(p))?;
     }
 
     // A new entity, or one moving into another zone, needs room in the zone it lands in.
@@ -379,6 +411,17 @@ mod tests {
         true
     }
 
+    /// A prop that covers only its pivot's cell.
+    fn pivot_only(p: &Prop) -> Vec<Cell> {
+        vec![prop_cell(p.at)]
+    }
+
+    /// A prop two cells long, along x from its pivot's cell.
+    fn two_long(p: &Prop) -> Vec<Cell> {
+        let c = prop_cell(p.at);
+        vec![c, [c[0] + 1, c[1], c[2]]]
+    }
+
     fn floor(c: Cell) -> bool {
         c[1] < 0
     }
@@ -416,6 +459,7 @@ mod tests {
             ground,
             props_in_plot: 0,
             prop_footprint_free: &free_footprint,
+            prop_cells: &pivot_only,
             known_prop: &any_prop,
         }
     }
@@ -1035,6 +1079,50 @@ mod tests {
         assert_eq!(check_remove(&editor, &level), Ok(()));
         let far = Component::Prop(prop([1000, 0, 55], Some(1)));
         assert_eq!(check_remove(&editor, &far), Err(EntityWhy::TooFar));
+    }
+
+    #[test]
+    fn builder_prop_overhanging_its_plot_is_not_yours() {
+        // the pivot is in plot 0..10, the second cell (10, 0, 5) is not
+        let plots = [plot(&[7])];
+        let c = Ctx { prop_cells: &two_long, ..ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        let p = Component::Prop(prop([95, 0, 55], Some(7)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NotYours));
+        // the same prop from an editor may overhang, as it is in reach
+        let e = Ctx { prop_cells: &two_long, ..ctx(Role::Editor, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        assert_eq!(check_put(&e, None, &p), Ok(()));
+    }
+
+    #[test]
+    fn prop_overhanging_the_world_is_outside_for_anyone() {
+        let plots: [PlotArea; 0] = [];
+        let bounds = Bounds { lo: [0, 0, 0], hi: [10, 10, 10] };
+        // pivot (9, 0, 5) is inside the world, the second cell (10, 0, 5) is not
+        let c = Ctx { bounds, prop_cells: &two_long, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        let p = Component::Prop(prop([95, 0, 55], Some(1)));
+        assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Outside));
+        let plots = [plot(&[1])];
+        let b = Ctx { bounds, prop_cells: &two_long, ..ctx(Role::Builder, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
+        assert_eq!(check_put(&b, None, &p), Err(EntityWhy::Outside));
+    }
+
+    #[test]
+    fn builder_may_keep_a_prop_channel_but_not_choose_one() {
+        let plots = [plot(&[7])];
+        let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let wired = |ch: Option<u16>| Component::Prop(Prop { channel: ch, ..prop([55, 0, 55], Some(7)) });
+        assert_eq!(check_put(&c, None, &wired(Some(3))), Err(EntityWhy::NotYours));
+        assert_eq!(check_put(&c, None, &wired(None)), Ok(()));
+        // an edit that leaves the channel as it was is fine
+        let old = wired(Some(3));
+        let turned = Component::Prop(Prop { yaw: 1, channel: Some(3), ..prop([55, 0, 55], Some(7)) });
+        assert_eq!(check_put(&c, Some(&old), &turned), Ok(()));
+        // changing it is not
+        let rewired = Component::Prop(Prop { channel: Some(4), ..prop([55, 0, 55], Some(7)) });
+        assert_eq!(check_put(&c, Some(&old), &rewired), Err(EntityWhy::NotYours));
+        // an editor may set one
+        let e = ctx(Role::Editor, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        assert_eq!(check_put(&e, None, &wired(Some(3))), Ok(()));
     }
 
     #[test]

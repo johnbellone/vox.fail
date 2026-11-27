@@ -1029,11 +1029,16 @@ impl WorldState {
     }
 
     /// The prop rules for an edit of `editing` (None for a new entity): whether the world accepts
-    /// a prop's hash, and whether its footprint is free. The footprint check leaves out the entity
-    /// being changed, so a prop may be turned or moved onto its own old cells.
-    fn prop_rules(&self, editing: Option<EntityId>) -> (impl Fn(&[u8; 16]) -> bool + '_, impl Fn(&Prop) -> bool + '_) {
+    /// a prop's hash, whether its footprint is free, and the cells it covers. The footprint check
+    /// leaves out the entity being changed, so a prop may be turned or moved onto its own old cells.
+    #[allow(clippy::type_complexity)]
+    fn prop_rules(
+        &self,
+        editing: Option<EntityId>,
+    ) -> (impl Fn(&[u8; 16]) -> bool + '_, impl Fn(&Prop) -> bool + '_, impl Fn(&Prop) -> Vec<[i32; 3]> + '_) {
         let lib = &self.props;
         let known = move |hash: &[u8; 16]| lib.known(hash);
+        let cells = move |p: &Prop| lib.cells(p);
         let free = move |p: &Prop| {
             // only the props near `p` (the index), not every prop in the world
             let others = lib
@@ -1046,7 +1051,7 @@ impl WorldState {
                 });
             props::free(lib, p, others, |c| self.world.get(c) != 0)
         };
-        (known, free)
+        (known, free, cells)
     }
 
     /// Starts a build the rules have passed (`judge`): the node's recipe is expanded and checked
@@ -1192,9 +1197,9 @@ impl WorldState {
                     Some(id) => Some(self.held(*id, *expect)?),
                 };
                 let zone = entities::zone_key(component);
-                let (known_prop, footprint_free) = self.prop_rules(*entity);
+                let (known_prop, footprint_free, prop_cells) = self.prop_rules(*entity);
                 let props_in_plot = match component {
-                    Component::Prop(p) => props_in_plot(&plots, &self.entities, prop_cell(p.at)),
+                    Component::Prop(p) => props_in_plot(&plots, &self.props, &self.entities, prop_cell(p.at)),
                     _ => 0,
                 };
                 let ctx = Ctx {
@@ -1205,6 +1210,7 @@ impl WorldState {
                     plots: &plots,
                     props_in_plot,
                     prop_footprint_free: &footprint_free,
+                    prop_cells: &prop_cells,
                     known_prop: &known_prop,
                     zone_entities: self.entities.zone_count(zone),
                     moves_zone: old.is_some_and(|o| entities::zone_key(o) != zone),
@@ -1264,7 +1270,7 @@ impl WorldState {
             }
             Edit::Remove { entity, expect } => {
                 let old = self.held(*entity, *expect)?;
-                let (known_prop, footprint_free) = self.prop_rules(Some(*entity));
+                let (known_prop, footprint_free, prop_cells) = self.prop_rules(Some(*entity));
                 let ctx = Ctx {
                     role,
                     account,
@@ -1273,6 +1279,7 @@ impl WorldState {
                     plots: &plots,
                     props_in_plot: 0,
                     prop_footprint_free: &footprint_free,
+                    prop_cells: &prop_cells,
                     known_prop: &known_prop,
                     zone_entities: 0,
                     moves_zone: false,
@@ -1412,10 +1419,19 @@ impl WorldState {
                     let account = p.account;
                     let claimed = self.plots.iter().any(|pl| pl.holds(cell) && !account.is_some_and(|a| pl.builders.contains(&a)));
                     self.world.check(cell, block).and_then(|_| {
+                        // a solid block may not go where a colliding prop stands (breaking one is
+                        // not refused here; see vox-tol.4.17 for what removing support does)
+                        let in_prop = block != 0
+                            && self.props.covers_cell(cell, |id| match self.entities.map.get(&id) {
+                                Some((_, Component::Prop(q))) => Some(q),
+                                _ => None,
+                            });
                         if !within_reach(p.at, cell) {
                             Err(Why::TooFar)
                         } else if claimed {
                             Err(Why::Claimed)
+                        } else if in_prop {
+                            Err(Why::Blocked)
                         } else {
                             self.world.edit(cell, block)
                         }
@@ -1562,13 +1578,14 @@ fn is_objective_or_settings(c: &Component) -> bool {
     matches!(c, Component::Objective(_) | Component::Settings(_))
 }
 
-/// The props standing in the plot that `cell` is in (0 when `cell` is in no plot).
-fn props_in_plot(plots: &[PlotArea], ents: &Entities, cell: [i32; 3]) -> usize {
+/// The props standing in the plot that `cell` is in (0 when `cell` is in no plot). Counted from
+/// the props' columns (`PropLibrary::count_in`), so a Put costs its plot, not every entity.
+fn props_in_plot(plots: &[PlotArea], props: &props::PropLibrary, ents: &Entities, cell: [i32; 3]) -> usize {
     let Some(plot) = plots.iter().find(|p| p.holds(cell[0], cell[2])) else { return 0 };
-    ents.map
-        .values()
-        .filter(|(_, c)| matches!(c, Component::Prop(q) if { let k = prop_cell(q.at); plot.holds(k[0], k[2]) }))
-        .count()
+    props.count_in(plot.x0..plot.x1, plot.z0..plot.z1, |id| match ents.map.get(&id) {
+        Some((_, Component::Prop(q))) => Some(q),
+        _ => None,
+    })
 }
 
 /// The keyed portals (the directory's player portals) already in the plot a new component

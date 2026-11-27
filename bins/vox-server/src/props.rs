@@ -18,6 +18,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     io::Read,
+    ops::Range,
     path::Path,
 };
 
@@ -25,7 +26,7 @@ use vox_art::prop::Collide;
 use vox_core::{
     ChunkKey,
     body::prop_footprint_cells,
-    entity::{Component, EntityId, Prop},
+    entity::{Component, EntityId, Prop, prop_cell},
 };
 use vox_format::prop::{Catalogue, PropBlob};
 
@@ -69,6 +70,9 @@ impl Footprint {
 pub struct PropLibrary {
     defs: HashMap<[u8; 16], Footprint>,
     index: PropIndex,
+    /// Every prop placed in the world (colliding or not, orphans too), by the column its pivot
+    /// stands in: a plot's prop cap counts these, not every entity in the world.
+    columns: HashMap<[i32; 2], HashSet<EntityId>>,
 }
 
 /// The colliding props placed in a world, by the chunks their cells fall in. A footprint check
@@ -129,6 +133,7 @@ impl PropLibrary {
     /// Rebuilds the index from the entities a world holds (at open, once they are loaded).
     pub fn index_all<'a>(&mut self, placed: impl Iterator<Item = (EntityId, &'a Component)>) {
         self.index = PropIndex::default();
+        self.columns.clear();
         for (id, c) in placed {
             if let Component::Prop(p) = c {
                 self.index_add(id, p);
@@ -151,6 +156,7 @@ impl PropLibrary {
         for k in self.chunks_of(prop) {
             self.index.chunks.entry(k).or_default().insert(id);
         }
+        self.columns.entry(column_of(prop_cell(prop.at))).or_default().insert(id);
     }
 
     fn index_remove(&mut self, id: EntityId, prop: &Prop) {
@@ -162,6 +168,53 @@ impl PropLibrary {
                 }
             }
         }
+        let col = column_of(prop_cell(prop.at));
+        if let Some(set) = self.columns.get_mut(&col) {
+            set.remove(&id);
+            if set.is_empty() {
+                self.columns.remove(&col);
+            }
+        }
+    }
+
+    /// The cells a prop of an accepted hash covers in the world, the same cells the footprint
+    /// check and the client use. Empty for a hash the world does not accept.
+    pub fn cells(&self, prop: &Prop) -> Vec<[i32; 3]> {
+        self.defs.get(&prop.prop).map(|fp| fp.covers(prop)).unwrap_or_default()
+    }
+
+    /// Does a placed colliding prop cover `cell`? `prop_of` gives the entity's prop by id. Looks
+    /// only at the props indexed in the cell's chunk, so it costs what is near the cell.
+    pub fn covers_cell<'a>(&self, cell: [i32; 3], prop_of: impl Fn(EntityId) -> Option<&'a Prop>) -> bool {
+        let Some(ids) = self.index.chunks.get(&ChunkKey::of(cell)) else { return false };
+        ids.iter().filter_map(|&id| prop_of(id)).any(|q| {
+            self.defs.get(&q.prop).is_some_and(|fp| fp.covers(q).contains(&cell))
+        })
+    }
+
+    /// How many props have their pivot in the columns `x` and `z` (blocks, lo inclusive, hi
+    /// exclusive). Counts the props in the columns those ranges span, `prop_of` giving each by
+    /// id, so a plot's cap costs the plot and not the world.
+    pub fn count_in<'a>(&self, x: Range<i32>, z: Range<i32>, prop_of: impl Fn(EntityId) -> Option<&'a Prop>) -> usize {
+        if x.is_empty() || z.is_empty() {
+            return 0;
+        }
+        let col = |v: i32| ChunkKey::of([v, 0, 0]).0[0];
+        let mut n = 0;
+        for cx in col(x.start)..=col(x.end - 1) {
+            for cz in col(z.start)..=col(z.end - 1) {
+                let Some(ids) = self.columns.get(&[cx, cz]) else { continue };
+                n += ids
+                    .iter()
+                    .filter_map(|&id| prop_of(id))
+                    .filter(|q| {
+                        let c = prop_cell(q.at);
+                        x.contains(&c[0]) && z.contains(&c[2])
+                    })
+                    .count();
+            }
+        }
+        n
     }
 
     /// The placed colliding props that may stand in `prop`'s way, from the chunks its cells are
@@ -178,6 +231,12 @@ impl PropLibrary {
         ids.dedup();
         ids
     }
+}
+
+/// The column (chunk of x and z) a cell is in.
+fn column_of(cell: [i32; 3]) -> [i32; 2] {
+    let k = ChunkKey::of(cell).0;
+    [k[0], k[2]]
 }
 
 /// Is the prop's footprint free in the world? Every cell it covers must be air (`solid` says
@@ -234,7 +293,7 @@ mod tests {
             (CRATE, Footprint { floor: vec![[0, 0]], height: 2, collides: true }),
             (RUG, Footprint { floor: vec![[0, 0]], height: 1, collides: false }),
         ]);
-        PropLibrary { defs, index: PropIndex::default() }
+        PropLibrary { defs, index: PropIndex::default(), columns: HashMap::new() }
     }
 
     /// A prop standing on block (x, z), facing 0.
@@ -317,9 +376,23 @@ mod tests {
                 _ => {}
             }
             // the index is what a rebuild from the placed entities makes
-            let mut fresh = PropLibrary { defs: lib.defs.clone(), index: PropIndex::default() };
+            let mut fresh = PropLibrary { defs: lib.defs.clone(), index: PropIndex::default(), columns: HashMap::new() };
             fresh.index_all(placed.iter().map(|(id, c)| (*id, c)));
             assert_eq!(lib.index, fresh.index);
+            assert_eq!(lib.columns, fresh.columns);
+            // and the plot count agrees with a scan of every placed prop, over ranges that cross
+            // chunk edges
+            let prop_of = |id: EntityId| match placed.get(&id) {
+                Some(Component::Prop(q)) => Some(q),
+                _ => None,
+            };
+            for (x, z) in [(0..10, 0..10), (5..40, 3..33), (31..33, 0..40), (-5..64, -5..64)] {
+                let scan = placed
+                    .values()
+                    .filter(|c| matches!(c, Component::Prop(q) if { let p = prop_cell(q.at); x.contains(&p[0]) && z.contains(&p[2]) }))
+                    .count();
+                assert_eq!(lib.count_in(x.clone(), z.clone(), prop_of), scan);
+            }
         }
         // and the check agrees with the full scan for placements all over the grid
         for x in 0..40 {
