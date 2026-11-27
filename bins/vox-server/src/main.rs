@@ -42,42 +42,12 @@ async fn main() {
     let seed = arg("--seed").map(PathBuf::from).unwrap_or_else(|| data.join("levels/void.json"));
     cfg.seed = std::fs::read_to_string(&seed).ok();
     cfg.level = seed.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    cfg.directory_url = arg("--directory-url");
-    cfg.world_secret = std::env::var("VOX_WORLD_SECRET").ok().filter(|s| !s.trim().is_empty());
-    if cfg.directory_url.is_some() && cfg.world_secret.is_none() {
-        eprintln!("--directory-url without VOX_WORLD_SECRET: not reporting to the directory");
+    if let Err(e) = vox_server::flags::apply(&mut cfg, &args) {
+        panic!("{e}");
     }
-    if let Some(n) = arg("--max-players").and_then(|v| v.parse().ok()) {
-        cfg.max_players = n;
-    }
-    if let Some(n) = arg("--max-watchers").and_then(|v| v.parse().ok()) {
-        cfg.max_watchers = n;
-    }
-    // test and automation worlds: positions as players report them, unchecked
-    cfg.trust_moves = args.iter().any(|a| a == "--trust-moves");
-    // sign-in: the directory's public key (hex, or a file holding it)
-    if let Some(k) = arg("--directory-key") {
-        let hex = std::fs::read_to_string(&k).unwrap_or(k);
-        cfg.directory = Some(vox_core::auth::public_from_hex(&hex).unwrap_or_else(|e| panic!("--directory-key: {e}")));
-        cfg.guests = args.iter().any(|a| a == "--guests");
-    }
-    // snapshots next to the world's database unless told otherwise
-    let in_memory = cfg.db.to_string_lossy() == ":memory:";
-    if !args.iter().any(|a| a == "--no-snapshots") && !in_memory {
-        let mut d = cfg.db.clone().into_os_string();
-        d.push(".snapshots");
-        cfg.snapshots = Some(arg("--snapshots").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(d)));
-    }
-    // Oxen: `--oxen` alone finds `oxen` on the PATH; `--oxen /path/to/oxen` names it
-    let oxen_flag = args.iter().position(|a| a == "--oxen").map(|i| args.get(i + 1).filter(|v| !v.starts_with("--")).cloned());
-    cfg.snapshot_oxen = match (oxen_flag, std::env::var("VOX_OXEN").ok().filter(|v| !v.trim().is_empty())) {
-        (Some(Some(path)), _) => Some(PathBuf::from(path)),
-        (Some(None), env) => Some(PathBuf::from(env.unwrap_or_else(|| "oxen".into()))),
-        (None, Some(path)) => Some(PathBuf::from(path)),
-        (None, None) => None,
-    };
-    if let Some(n) = arg("--snapshot-every").and_then(|v| v.parse().ok()) {
-        cfg.snapshot_every = std::time::Duration::from_secs(n);
+    // one world alone may put its snapshots anywhere
+    if let (Some(dir), Some(_)) = (arg("--snapshots"), &cfg.snapshots) {
+        cfg.snapshots = Some(PathBuf::from(dir));
     }
     // the world closed: list or restore snapshots, then stop
     if args.iter().any(|a| a == "--list-snapshots") {

@@ -47,6 +47,7 @@ Two products share one Cargo workspace:
 | `crates/avatar-voice/` | `avatar-voice` | Block Avatar's voice analysis, pure Rust: lip sync (`lipsync`), pitch and formants (`voice`), laugh and sing detection (`detect`), WAV files (`wav`, one hardened reader). Its tests run on real recordings in `testdata/real`. |
 | `bins/vox-client/` | `vox-client` | The player client: a thin Bevy app (`lib.rs`) around `vox-world`. Builds natively and to wasm32. Also the FPS counter, the portal sweep and watch mode (the front page's live view). |
 | `bins/vox-server/` | `vox-server` | One world: a single thread owns the blocks, players and edit order; WebSocket on `/ws` for players and watchers; SQLite persistence, with `vox-format` snapshots beside it (`<db>.snapshots/`) and restore (`snapshot`). |
+| `bins/vox-host/` | `vox-host` | Many worlds in one process on one port, each a `vox-server` world routed by path (`/w/<id>/ws`, plus an alias such as its old port); `GET /` lists them. Takes the same world flags (`vox_server::flags`). |
 | `bins/vox-directory/` | `vox-directory` | Accounts (Steam, Discord, name and password), characters, authority and world currencies, plots, portals, raids, friends and groups, structures and their entitlements (`structures`), token signing; serves the site and the game's files. |
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
@@ -87,6 +88,7 @@ cargo run --release -p vox-server -- --listen 127.0.0.1:7780 --db void.db     # 
 cargo run --release -p vox-server -- --db void.db --oxen                       # snapshots as Oxen commits (oxen on the PATH, or --oxen <path>)
 cargo run --release -p vox-server -- --db void.db --list-snapshots             # (world closed) its snapshots
 cargo run --release -p vox-server -- --db void.db --restore-at 1795700000      # back to a moment; undoable
+cargo run --release -p vox-host -- --listen 127.0.0.1:7790 --world void@7780 --world yard@7781   # several worlds, one port
 cargo run --release -p vox-client -- --world ws://127.0.0.1:7780/ws --name Sam
 cargo run --release -p vox-directory -- --listen 0.0.0.0:7700                 # accounts and pages
 tools/dev/build_web.sh               # browser client into apps/site/public/pkg (wasm32 target + wasm-bindgen-cli)
@@ -241,6 +243,9 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [world-format.md](docs/design/world-format.md): regions as compressed blobs (blocks in
   run-length encoding + zstd, entities as Bevy `DynamicWorld` in RON or postcard),
   content-addressed snapshots, levels as files, the `vox-format` crate.
+- [world-network.md](docs/design/world-network.md): many worlds; worlds by id with many per
+  host, a world registry, server-driven portal travel with tickets, dungeon instances for raid
+  parties, an atlas of tiled worlds; the rollout in phases.
 - [controls-and-hud.md](docs/design/controls-and-hud.md): block-game controls on an action
   layer, gamepad out of the box with brand-matched button hints, HUD (hotbar, health), menus
   with controller navigation, server-side inventory and health.

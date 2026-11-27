@@ -52,6 +52,21 @@ unchanged locally and here. The tunnel can't rewrite paths, so world servers ans
    public hostnames: `vox.fail` path `^/w/7780/` → `http://127.0.0.1:7780`, and so on, the
    directory last; then `cloudflared service install <token>`.)
 
+## All worlds in one process (vox-host)
+
+Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port
+(`vox-host.service`): each world at `/w/<id>/ws`, and at its old port as an alias
+(`/w/7781/ws` is the yard), so levels and clients don't change. It reads and writes the same
+`/var/lib/vox/<id>.db` files, so switching is:
+
+1. `systemctl disable --now vox-world@void vox-world@yard vox-world@islands vox-world@sea vox-world@orbit`
+2. Install `vox-host.service` in `/etc/systemd/system`, then `systemctl enable --now vox-host`.
+3. In the tunnel, replace the per-port rules with one: `vox.fail` path `^/w/` →
+   `http://127.0.0.1:7790`, before the directory's rule.
+
+Adding a world is then a `--world <id>` in the unit, not a new unit and tunnel rule. Design:
+`docs/design/world-network.md`.
+
 ## In the Cloudflare dashboard (vox.fail)
 
 - SSL/TLS: Always Use HTTPS on.

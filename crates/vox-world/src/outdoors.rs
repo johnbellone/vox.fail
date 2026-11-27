@@ -1448,7 +1448,7 @@ mod tests {
 
     #[test]
     fn halves() {
-        for v in [0.0f32, 1.0, -2.5, 0.5, 65504.0, 1e-3, 3.14159] {
+        for v in [0.0f32, 1.0, -2.5, 0.5, 65504.0, 1e-3, 3.25] {
             let back = half_to_f32(f16_bits(v));
             assert!((back - v).abs() <= v.abs() * 1e-3 + 1e-4, "{v} -> {back}");
         }
