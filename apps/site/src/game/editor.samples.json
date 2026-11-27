@@ -1,0 +1,237 @@
+{
+  "commands": [
+    {
+      "tool": "select",
+      "type": "tool"
+    },
+    {
+      "tool": "blocks",
+      "type": "tool"
+    },
+    {
+      "tool": "portal",
+      "type": "tool"
+    },
+    {
+      "tool": "prop",
+      "type": "tool"
+    },
+    {
+      "tool": "node",
+      "type": "tool"
+    },
+    {
+      "name": "stone",
+      "type": "block"
+    },
+    {
+      "entity": 3,
+      "type": "select"
+    },
+    {
+      "entity": null,
+      "type": "select"
+    },
+    {
+      "component": {
+        "Portal": {
+          "at": [
+            0.0,
+            0.0,
+            11.5
+          ],
+          "axis": "Z",
+          "key": null,
+          "level": "void",
+          "name": "void",
+          "size": [
+            8.0,
+            16.0
+          ],
+          "to": {
+            "Url": {
+              "arrive": [
+                0.0,
+                0.0,
+                -39.5
+              ],
+              "url": ":7780"
+            }
+          },
+          "yaw": 0.0
+        }
+      },
+      "type": "create"
+    },
+    {
+      "component": {
+        "Portal": {
+          "at": [
+            0.0,
+            0.0,
+            11.5
+          ],
+          "axis": "Z",
+          "key": null,
+          "level": "void",
+          "name": "void",
+          "size": [
+            8.0,
+            16.0
+          ],
+          "to": {
+            "Url": {
+              "arrive": [
+                0.0,
+                0.0,
+                -39.5
+              ],
+              "url": ":7780"
+            }
+          },
+          "yaw": 0.0
+        }
+      },
+      "entity": 3,
+      "expect": 12,
+      "type": "set"
+    },
+    {
+      "component": {
+        "Portal": {
+          "at": [
+            0.0,
+            0.0,
+            11.5
+          ],
+          "axis": "Z",
+          "key": null,
+          "level": "void",
+          "name": "void",
+          "size": [
+            8.0,
+            16.0
+          ],
+          "to": {
+            "Url": {
+              "arrive": [
+                0.0,
+                0.0,
+                -39.5
+              ],
+              "url": ":7780"
+            }
+          },
+          "yaw": 0.0
+        }
+      },
+      "entity": 3,
+      "expect": null,
+      "type": "set"
+    },
+    {
+      "entity": 3,
+      "expect": 12,
+      "type": "remove"
+    },
+    {
+      "entity": 3,
+      "expect": null,
+      "type": "remove"
+    },
+    {
+      "entity": 3,
+      "type": "fly_to"
+    },
+    {
+      "type": "undo"
+    },
+    {
+      "type": "redo"
+    },
+    {
+      "node": 4,
+      "type": "build"
+    }
+  ],
+  "events": [
+    {
+      "palette": [
+        "stone",
+        "grass"
+      ],
+      "type": "ready",
+      "world": "yard"
+    },
+    {
+      "changes": [
+        {
+          "component": {
+            "Portal": {
+              "at": [
+                0.0,
+                0.0,
+                11.5
+              ],
+              "axis": "Z",
+              "key": null,
+              "level": "void",
+              "name": "void",
+              "size": [
+                8.0,
+                16.0
+              ],
+              "to": {
+                "Url": {
+                  "arrive": [
+                    0.0,
+                    0.0,
+                    -39.5
+                  ],
+                  "url": ":7780"
+                }
+              },
+              "yaw": 0.0
+            }
+          },
+          "entity": 3,
+          "seq": 12
+        },
+        {
+          "component": null,
+          "entity": 4,
+          "seq": 13
+        }
+      ],
+      "type": "entities"
+    },
+    {
+      "entity": 3,
+      "type": "selected"
+    },
+    {
+      "entity": null,
+      "type": "selected"
+    },
+    {
+      "id": 7,
+      "text": "that's out of reach",
+      "type": "refused",
+      "why": "TooFar"
+    },
+    {
+      "cell": [
+        1,
+        -2,
+        30
+      ],
+      "type": "picked"
+    },
+    {
+      "players": [
+        "Sam"
+      ],
+      "type": "here"
+    }
+  ]
+}

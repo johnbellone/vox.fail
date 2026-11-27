@@ -17,6 +17,7 @@
 
 pub mod blocks;
 pub mod client;
+pub mod editor;
 pub mod entities;
 pub mod files;
 pub mod hud;
