@@ -1,0 +1,72 @@
+name: Server release
+
+# Builds what vox.fail runs (the directory, the world servers, the browser client, the pages,
+# assets and data) for a version tag and attaches it to the GitHub release as
+# vox-linux-x86_64.tar.gz, with its SHA-256 and a build provenance attestation. The server
+# picks it up on its own: deploy/vox-update.sh, run by vox-update.timer, installs the newest
+# release, restarts the services and purges Cloudflare's cache (deploy/README.md).
+#
+# The bundle is /opt/vox from the container image (deploy/docker/Dockerfile), so the image and
+# the bundle are always the same build. Debian bookworm's glibc: runs on bookworm, Ubuntu 22.04
+# and newer.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach to the release
+  id-token: write # sign the attestation
+  attestations: write
+
+concurrency:
+  group: server-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          load: true
+          tags: vox:release
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Bundle /opt/vox
+        run: |
+          id=$(docker create vox:release)
+          docker cp "$id:/opt/vox" bundle
+          docker rm "$id"
+          test -x bundle/bin/vox-directory && test -x bundle/bin/vox-server && test -x bundle/bin/vox-host
+          test -f bundle/web/index.html && test -f bundle/web/pkg/vox_client_bg.wasm
+          echo "${GITHUB_REF_NAME}" > bundle/RELEASE
+          tar -C bundle --owner=0 --group=0 --numeric-owner -czf vox-linux-x86_64.tar.gz .
+          sha256sum vox-linux-x86_64.tar.gz > vox-linux-x86_64.tar.gz.sha256
+          cat vox-linux-x86_64.tar.gz.sha256
+      - name: Attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: vox-linux-x86_64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vox-linux-x86_64
+          path: |
+            vox-linux-x86_64.tar.gz
+            vox-linux-x86_64.tar.gz.sha256
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            vox-linux-x86_64.tar.gz
+            vox-linux-x86_64.tar.gz.sha256

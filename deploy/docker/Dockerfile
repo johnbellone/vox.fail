@@ -24,8 +24,8 @@ WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p vox-server -p vox-directory \
-    && mkdir -p /out && cp target/release/vox-server target/release/vox-directory /out/
+    cargo build --release --locked -p vox-server -p vox-host -p vox-directory \
+    && mkdir -p /out && cp target/release/vox-server target/release/vox-host target/release/vox-directory /out/
 
 # ---- the browser client (WebAssembly), into apps/site/public/pkg
 FROM rust:${RUST_VERSION}-${DEBIAN} AS client
