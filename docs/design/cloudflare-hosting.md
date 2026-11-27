@@ -6,7 +6,11 @@ Status: **approved** (2026-11-27). **Phases 1 and 2 built**: Litestream, `start.
 been built yet: the first release build is its test. **Phase 3 built**: the Worker serves the
 site, and `bun test` in `apps/edge` covers it. **Phase 4 built** (`src/container.ts`,
 `wrangler.jsonc`): `wrangler deploy --dry-run` accepts it with a placeholder image. It needs the
-Workers Paid plan and Docker to deploy for real. Phases 5 to 7 are not built.
+Workers Paid plan and Docker to deploy for real. **Phase 5 done** (2026-11-27,
+`deploy/cloudflare-setup.sh`): the bucket `vox-data` and its token, the secrets
+`VOX_DIRECTORY_KEY`, `VOX_WORLD_SECRET` and Litestream's two R2 keys. The tunnel is deleted and
+`vox.fail` is a proxied placeholder. The Discord and Steam secrets wait for their values.
+Phases 6 and 7 are not built.
 
 As built:
 - Litestream **0.5.18**, which replicates the whole data folder (`dir`, `watch`, `recursive`).
