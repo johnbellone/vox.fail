@@ -31,6 +31,22 @@ import {
   setPortal,
   dropEdit,
   sortedRows,
+  possibleEdges,
+  withEdge,
+  settingsOf,
+  settingsFormOf,
+  settingsJsonOf,
+  atlasOf,
+  spawnFormOf,
+  spawnOf,
+  objectiveFormOf,
+  objectiveOf,
+  rowOfKind,
+  MAX_SETTINGS_BYTES,
+  MAX_RADIUS,
+  type Entities,
+  type Json,
+  type SettingsForm,
 } from "./state";
 
 const spawn = (x: number): Component => ({ Spawn: { at: [x, 0, 0], yaw: 0 } });
@@ -310,5 +326,221 @@ describe("bounds checked before sending", () => {
     expect(dungeon("Crypt")).toBe(false);
     expect(dungeon("cr ypt")).toBe(false);
     expect(dungeon("  ")).toBe(false);
+  });
+});
+
+describe("atlas edges", () => {
+  test("a tile has the edges whose next tile is on the map", () => {
+    expect(possibleEdges([0, 0], [2, 2])).toEqual(["east", "south"]);
+    expect(possibleEdges([1, 1], [3, 3])).toEqual(["east", "west", "south", "north"]);
+    expect(possibleEdges([1, 0], [2, 1])).toEqual(["west"]);
+    expect(possibleEdges([0, 0], [1, 1])).toEqual([]);
+  });
+
+  test("opening and closing keeps the order east, west, south, north", () => {
+    const all = ["east", "west", "south", "north"] as const;
+    expect(withEdge([], "south", true, all)).toEqual(["south"]);
+    expect(withEdge(["south"], "east", true, all)).toEqual(["east", "south"]);
+    expect(withEdge(["east", "south"], "east", false, all)).toEqual(["south"]);
+    expect(withEdge(["up", "east"], "south", true, all)).toEqual(["east", "south", "up"]);
+  });
+
+  test("an edge the tile cannot have is never opened", () => {
+    expect(withEdge([], "west", true, ["east", "south"])).toEqual([]);
+  });
+
+  test("the atlas of a settings object is its tile and size, or nothing", () => {
+    expect(atlasOf({ atlas: { tile: [1, 2], size: [4, 4], edges: [] } })).toEqual({ tile: [1, 2], size: [4, 4] });
+    expect(atlasOf({ atlas: { tile: [1], size: [4, 4] } })).toBeNull();
+    expect(atlasOf({ sky: "void" })).toBeNull();
+  });
+});
+
+describe("world settings", () => {
+  const base: Json = {
+    sky: "void",
+    time: 12,
+    clouds: 0.45,
+    relief: { amount: 1, seed: 7 },
+    hotbar: ["pearl", "lumen"],
+    portals: [{ name: "yard", at: [0, 0, 0] }],
+    cameras: [{ yaw: 0 }],
+    floor: 2,
+    unknown: { kept: true },
+  };
+
+  test("a form edits a copy: keys it does not show come back as they were", () => {
+    const form = settingsFormOf(base);
+    const out = settingsJsonOf(base, { ...form, time: "6" });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const json = JSON.parse(out.value);
+    expect(json.time).toBe(6);
+    expect(json.portals).toEqual(base.portals);
+    expect(json.cameras).toEqual(base.cameras);
+    expect(json.floor).toBe(2);
+    expect(json.unknown).toEqual({ kept: true });
+    expect(json.relief).toEqual({ amount: 1, seed: 7 });
+  });
+
+  test("an empty field leaves its key out, and an unset weather is left out", () => {
+    const form = settingsFormOf(base);
+    const out = settingsJsonOf(base, { ...form, sky: " ", clouds: "", relief: "" });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const json = JSON.parse(out.value);
+    expect("sky" in json).toBe(false);
+    expect("clouds" in json).toBe(false);
+    expect(json.relief).toEqual({ seed: 7 });
+    expect("weather" in json).toBe(false);
+  });
+
+  test("numbers out of range or not finite are refused", () => {
+    const form = settingsFormOf(base);
+    const refused = (f: Partial<SettingsForm>) => !settingsJsonOf(base, { ...form, ...f }).ok;
+    expect(refused({ time: "25" })).toBe(true);
+    expect(refused({ time: "-1" })).toBe(true);
+    expect(refused({ time: "Infinity" })).toBe(true);
+    expect(refused({ time: "noon" })).toBe(true);
+    expect(refused({ clouds: "1.5" })).toBe(true);
+    expect(refused({ relief: "2" })).toBe(true);
+    expect(refused({ time: "24" })).toBe(false);
+  });
+
+  test("stored edges are kept once, and kept as they are when the tile is unknown", () => {
+    const tiled = { atlas: { tile: [0, 0], size: [2, 2], edges: ["east", "east", "south"] } };
+    expect(settingsFormOf(tiled).edges).toEqual(["east", "south"]);
+    const untiled = { atlas: { edges: ["east", "north"] } };
+    expect(settingsFormOf(untiled).edges).toEqual(["east", "north"]);
+  });
+
+  test("a custom weather is a JSON object, and a preset is a string", () => {
+    const form = settingsFormOf(base);
+    expect(settingsJsonOf(base, { ...form, weather: "custom", weatherJson: "[1]" }).ok).toBe(false);
+    expect(settingsJsonOf(base, { ...form, weather: "custom", weatherJson: "nope" }).ok).toBe(false);
+    const custom = settingsJsonOf(base, { ...form, weather: "custom", weatherJson: '{"kind":"snow"}' });
+    expect(custom.ok && JSON.parse(custom.value).weather).toEqual({ kind: "snow" });
+    const preset = settingsJsonOf(base, { ...form, weather: "luminous" });
+    expect(preset.ok && JSON.parse(preset.value).weather).toBe("luminous");
+  });
+
+  test("water is an object with three colour numbers, a swell and an opacity; off removes it", () => {
+    const withWater: Json = { ...base, water: { colour: [0.1, 0.2, 0.3], swell: 1, opacity: 0.5, extra: 1 } };
+    const form = settingsFormOf(withWater);
+    expect(form.water).toEqual({ colour: ["0.1", "0.2", "0.3"], swell: "1", opacity: "0.5" });
+    const out = settingsJsonOf(withWater, { ...form, water: { colour: ["0", "0.5", "1"], swell: "3", opacity: "0" } });
+    expect(out.ok && JSON.parse(out.value).water).toEqual({ colour: [0, 0.5, 1], swell: 3, opacity: 0, extra: 1 });
+    expect(settingsJsonOf(withWater, { ...form, water: { colour: ["0", "0", "2"], swell: "1", opacity: "1" } }).ok).toBe(false);
+    expect(settingsJsonOf(withWater, { ...form, water: { colour: ["0", "0", "0"], swell: "4", opacity: "1" } }).ok).toBe(false);
+    expect(settingsJsonOf(withWater, { ...form, water: { colour: ["0", "0", "0"], swell: "1", opacity: "" } }).ok).toBe(false);
+    const off = settingsJsonOf(withWater, { ...form, water: null });
+    expect(off.ok && "water" in JSON.parse(off.value)).toBe(false);
+  });
+
+  test("the hotbar holds nine blocks at most, and an empty one is left out", () => {
+    const form = settingsFormOf(base);
+    expect(settingsJsonOf(base, { ...form, hotbar: Array(10).fill("stone") }).ok).toBe(false);
+    const nine = settingsJsonOf(base, { ...form, hotbar: Array(9).fill("stone") });
+    expect(nine.ok && JSON.parse(nine.value).hotbar).toEqual(Array(9).fill("stone"));
+    const none = settingsJsonOf(base, { ...form, hotbar: [] });
+    expect(none.ok && "hotbar" in JSON.parse(none.value)).toBe(false);
+  });
+
+  test("on an atlas tile, the edges written are the ones the form has, in order", () => {
+    const tile: Json = { sky: "earth", atlas: { name: "a", tile: [0, 0], size: [2, 2], edges: ["east"] } };
+    const form = settingsFormOf(tile);
+    expect(form.edges).toEqual(["east"]);
+    const possible = possibleEdges([0, 0], [2, 2]);
+    const opened = withEdge(form.edges, "south", true, possible);
+    const out = settingsJsonOf(tile, { ...form, edges: opened });
+    expect(out.ok && JSON.parse(out.value).atlas).toEqual({ name: "a", tile: [0, 0], size: [2, 2], edges: ["east", "south"] });
+  });
+
+  test("the settings text is at most MAX_SETTINGS_BYTES", () => {
+    const out = settingsJsonOf(base, { ...settingsFormOf(base), sky: "x".repeat(MAX_SETTINGS_BYTES) });
+    expect(out.ok).toBe(false);
+    expect(settingsJsonOf({}, { ...settingsFormOf({}), sky: "x".repeat(1000) }).ok).toBe(true);
+  });
+
+  test("the settings must be an object", () => {
+    expect(settingsOf("[]").ok).toBe(false);
+    expect(settingsOf("nope").ok).toBe(false);
+    expect(settingsOf('{"sky":"void"}').ok).toBe(true);
+  });
+});
+
+describe("spawn and objective", () => {
+  const spot = { at: [4, 1, -2] as [number, number, number], axis: "X" as const, size: [4, 6] as [number, number] };
+
+  test("a new spawn starts at the marked spot; an existing one at its own place", () => {
+    expect(spawnFormOf(undefined, spot).at).toEqual(["4", "1", "-2"]);
+    expect(spawnFormOf({ at: [1, 2, 3], yaw: 90 }, spot)).toEqual({ at: ["1", "2", "3"], yaw: "90" });
+  });
+
+  test("a spawn needs three position numbers and a finite turn", () => {
+    expect(spawnOf({ at: ["1", "2", "3"], yaw: "180" })).toEqual({ ok: true, value: { at: [1, 2, 3], yaw: 180 } });
+    expect(spawnOf({ at: ["1", "", "3"], yaw: "0" }).ok).toBe(false);
+    expect(spawnOf({ at: ["1", "2", "3"], yaw: "Infinity" }).ok).toBe(false);
+  });
+
+  test("an objective needs a name, a position and a radius from more than 0 to MAX_RADIUS", () => {
+    const form = objectiveFormOf(undefined, spot);
+    expect(form.radius).toBe("");
+    const good = { name: "the altar", at: ["0", "0", "-9"] as [string, string, string], radius: "3" };
+    expect(objectiveOf(good)).toEqual({ ok: true, value: { name: "the altar", at: [0, 0, -9], radius: 3 } });
+    expect(objectiveOf({ ...good, name: "  " }).ok).toBe(false);
+    expect(objectiveOf({ ...good, name: "a".repeat(33) }).ok).toBe(false);
+    expect(objectiveOf({ ...good, radius: "0" }).ok).toBe(false);
+    expect(objectiveOf({ ...good, radius: String(MAX_RADIUS + 1) }).ok).toBe(false);
+    expect(objectiveOf({ ...good, radius: String(MAX_RADIUS) }).ok).toBe(true);
+  });
+
+  test("rowOfKind finds the first entity of a kind, typed", () => {
+    const entities: Entities = {
+      rows: new Map([
+        [3, { entity: 3, seq: 1, component: spawn(0) }],
+        [4, { entity: 4, seq: 2, component: { Settings: { json: "{}" } } }],
+      ]),
+      gone: new Map(),
+    };
+    expect(rowOfKind(entities, "Settings")?.component.Settings.json).toBe("{}");
+    expect(rowOfKind(entities, "Objective")).toBeUndefined();
+    expect(rowOfKind(entities, "Spawn")?.component.Spawn.yaw).toBe(0);
+  });
+});
+
+describe("atlas edges left as the world has them", () => {
+  test("an atlas with no edges key starts with every edge checked, and Apply leaves the key out", () => {
+    const tile: Json = { sky: "earth", atlas: { name: "a", tile: [0, 0], size: [2, 2] } };
+    const form = settingsFormOf(tile);
+    expect(form.edges).toEqual(possibleEdges([0, 0], [2, 2]));
+    const out = settingsJsonOf(tile, form);
+    expect(out.ok && JSON.parse(out.value).atlas).toEqual({ name: "a", tile: [0, 0], size: [2, 2] });
+  });
+
+  test("once an edge is toggled, the edges are written: the closed one is left out, the rest kept", () => {
+    const tile: Json = { sky: "earth", atlas: { name: "a", tile: [0, 0], size: [2, 2] } };
+    const form = settingsFormOf(tile);
+    const closed = withEdge(form.edges, "east", false, possibleEdges([0, 0], [2, 2]));
+    const out = settingsJsonOf(tile, { ...form, edges: closed });
+    expect(out.ok && JSON.parse(out.value).atlas.edges).toEqual(["south"]);
+  });
+
+  test("toggling an edge off and back on leaves the key out again", () => {
+    const tile: Json = { atlas: { name: "a", tile: [0, 0], size: [2, 2] } };
+    const possible = possibleEdges([0, 0], [2, 2]);
+    const form = settingsFormOf(tile);
+    const back = withEdge(withEdge(form.edges, "east", false, possible), "east", true, possible);
+    const out = settingsJsonOf(tile, { ...form, edges: back });
+    expect(out.ok && "edges" in JSON.parse(out.value).atlas).toBe(false);
+  });
+
+  test("a stored edge the tile cannot have is dropped from the form, and not written back", () => {
+    // the corner tile (0,0) of a 2x2 map has no west or north edge
+    const tile: Json = { atlas: { name: "a", tile: [0, 0], size: [2, 2], edges: ["east", "west", "up"] } };
+    const form = settingsFormOf(tile);
+    expect(form.edges).toEqual(["east"]);
+    const out = settingsJsonOf(tile, form);
+    expect(out.ok && JSON.parse(out.value).atlas.edges).toEqual(["east"]);
   });
 });

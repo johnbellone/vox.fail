@@ -3,7 +3,7 @@
 // canvas, and lays out the tools, the inspector and the entity list around it. The client's
 // events are installed before the client starts, so none is missed.
 
-import { Alert, Box, Center, Flex, Stack, Text } from "@mantine/core";
+import { Alert, Box, Button, Center, Flex, Group, Stack, Text } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, messageOf, post, worldUrl } from "../../api/client";
 import { useApi } from "../../api/hooks";
@@ -15,14 +15,20 @@ import { EditorHeader, type Mode } from "./EditorHeader";
 import { EntityList } from "./EntityList";
 import { Inspector } from "./Inspector";
 import { NewPortal } from "./NewPortal";
+import { ObjectivePanel, SpawnPanel } from "./SpawnObjective";
+import { SettingsPanel } from "./SettingsPanel";
 import {
   applyChanges,
   cleared,
   dropEdit,
   type Edits,
+  kindOf,
+  type PanelKind,
   refuseEdit,
   resendEdit,
   retryCommand,
+  rowOfKind,
+  type RowOf,
   type Entities,
   sentEdit,
   settleEdit,
@@ -63,6 +69,9 @@ export function EditorPage() {
   // where the Portal tool last marked a spot: a new-portal form opens there, keyed by its number
   const [spot, setSpot] = useState<{ id: number; spot: Spot }>();
   const spotSeq = useRef(0);
+  // the advanced panel opened by a button (World settings, Add spawn, Add objective) with nothing
+  // selected; a selected Spawn, Objective or Settings entity shows its own panel instead
+  const [panelOpen, setPanelOpen] = useState<PanelKind>();
   // the worlds to lead to, and the player's keys to pair with (both for the portal forms)
   const worldList = useApi<Worlds>("/api/worlds");
   const inventory = useApi<Inventory>("/api/inventory");
@@ -83,6 +92,7 @@ export function EditorPage() {
           setRefusal(undefined);
           setEdits(new Map());
           setSpot(undefined);
+          setPanelOpen(undefined);
           setPalette(e.palette);
           setBlock(undefined);
           break;
@@ -91,6 +101,8 @@ export function EditorPage() {
           break;
         case "selected":
           setSelected(e.entity);
+          // selecting an entity shows its own panel, in place of a panel opened by a button
+          if (e.entity !== null) setPanelOpen(undefined);
           break;
         case "refused":
           // a refusal of an open portal edit is shown by its form; any other goes in the banner
@@ -230,6 +242,29 @@ export function EditorPage() {
   };
 
   const rows = sortedRows(entities);
+  const isAdvanced = canAdvanced && mode === "advanced";
+  // the advanced panels: a selected Spawn, Objective or Settings entity shows its own; a panel
+  // opened by a button shows when nothing is selected; anything else shows the Inspector
+  const selectedRow = selected === null ? undefined : entities.rows.get(selected);
+  const selectedKind = selectedRow ? kindOf(selectedRow.component) : undefined;
+  let panel: PanelKind | undefined;
+  if (isAdvanced) {
+    if (selectedKind === undefined) panel = panelOpen;
+    else if (selectedKind === "Spawn" || selectedKind === "Objective" || selectedKind === "Settings") panel = selectedKind;
+  }
+  // a selected row is the one edited (a world may have several spawns); a button edits the first
+  const panelRow = <K extends PanelKind>(kind: K): RowOf<K> | undefined =>
+    selectedRow !== undefined && kind in selectedRow.component ? (selectedRow as RowOf<K>) : rowOfKind(entities, kind);
+  const spawnRow = panelRow("Spawn");
+  const objectiveRow = panelRow("Objective");
+  const settingsRow = panelRow("Settings");
+  // a button opens its panel with nothing selected
+  const openPanel = (kind: PanelKind) => {
+    setPanelOpen(kind);
+    setSelected(null);
+    send({ type: "select", entity: null });
+  };
+  const closePanel = () => setPanelOpen(undefined);
 
   return (
     <Stack gap={0} mih="100dvh" style={{ maxWidth: "100%", overflowX: "hidden" }}>
@@ -303,18 +338,77 @@ export function EditorPage() {
             </Center>
           )}
         </Box>
-        <Inspector
-          row={selected === null ? undefined : entities.rows.get(selected)}
-          advanced={canAdvanced && mode === "advanced"}
-          worlds={worlds}
-          items={items}
-          itemsError={itemsError}
-          edits={edits}
-          submit={submit}
-          retry={retry}
-          forget={forget}
-        />
+        {panel ? (
+          <Stack gap="xs" p="sm" w={{ base: "100%", md: 280 }} style={{ flexShrink: 0 }}>
+            {/* a panel opened by a button closes with its Close; one opened by a selected entity does not */}
+            {panel === "Spawn" && (
+              <SpawnPanel
+                key={spawnRow?.entity ?? "new"}
+                row={spawnRow}
+                spot={spot?.spot}
+                edits={edits}
+                submit={submit}
+                retry={retry}
+                forget={forget}
+                onClose={selectedKind === undefined ? closePanel : undefined}
+              />
+            )}
+            {panel === "Objective" && (
+              <ObjectivePanel
+                key={objectiveRow?.entity ?? "new"}
+                row={objectiveRow}
+                spot={spot?.spot}
+                edits={edits}
+                submit={submit}
+                retry={retry}
+                forget={forget}
+                onClose={selectedKind === undefined ? closePanel : undefined}
+              />
+            )}
+            {panel === "Settings" && (
+              <SettingsPanel
+                key={settingsRow?.entity ?? "new"}
+                row={settingsRow}
+                palette={palette}
+                edits={edits}
+                submit={submit}
+                retry={retry}
+                forget={forget}
+                onClose={selectedKind === undefined ? closePanel : undefined}
+              />
+            )}
+          </Stack>
+        ) : (
+          <Inspector
+            row={selectedRow}
+            advanced={isAdvanced}
+            worlds={worlds}
+            items={items}
+            itemsError={itemsError}
+            edits={edits}
+            submit={submit}
+            retry={retry}
+            forget={forget}
+          />
+        )}
       </Flex>
+      {isAdvanced && (
+        <Group px="sm" pt="xs" gap="xs">
+          <Button size="xs" variant="default" onClick={() => openPanel("Settings")}>
+            World settings
+          </Button>
+          {!objectiveRow && (
+            <Button size="xs" variant="default" onClick={() => openPanel("Objective")}>
+              Add objective
+            </Button>
+          )}
+          {!spawnRow && (
+            <Button size="xs" variant="default" onClick={() => openPanel("Spawn")}>
+              Add spawn
+            </Button>
+          )}
+        </Group>
+      )}
       <EntityList rows={rows} selected={selected} onError={setNotice} />
     </Stack>
   );
