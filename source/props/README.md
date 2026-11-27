@@ -12,5 +12,3 @@ cargo run -p vox-props -- --source source/props --out data/props
 ```
 
 `cargo test -p vox-props` fails if `data/props` is out of step with these sources.
-
-The stool's seat is one voxel wider (lathe profile 4, not 3) than in vox-art's golden test: the golden stool's legs do not touch its seat, which the prop checks refuse as floating.
