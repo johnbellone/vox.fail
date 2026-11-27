@@ -585,6 +585,15 @@ impl WorldState {
         let Some(tile) = &self.cfg.tile else { return };
         let Some((_, d)) = vox_core::terrain::EDGES.iter().find(|(n, _)| *n == edge) else { return };
         let Some(next) = tile.next(*d) else { return };
+        // an edge the Settings entity no longer lists is closed; a world whose settings say
+        // nothing about edges stays open, as every world was before this rule
+        let closed = serde_json::from_str::<serde_json::Value>(&self.settings_now())
+            .ok()
+            .and_then(|s| s["atlas"]["edges"].as_array().map(|e| !e.iter().any(|x| x.as_str() == Some(edge))))
+            .unwrap_or(false);
+        if closed {
+            return;
+        }
         let Some(p) = self.players.get(&conn) else { return };
         let Some(at) = p.at else { return };
         let b = self.cfg.bounds;
@@ -1190,6 +1199,25 @@ impl WorldState {
                     ground: &ground,
                 };
                 edit::check_put(&ctx, old, component)?;
+                // a tile's Settings may close its edges (see over_edge), but may name only the
+                // ways this tile has; bad JSON is already refused by `validate` above
+                if let Component::Settings(s) = component
+                    && let Some(tile) = &self.cfg.tile
+                    && let Ok(v) = serde_json::from_str::<serde_json::Value>(&s.json)
+                    && let Some(field) = v.get("atlas").and_then(|a| a.get("edges"))
+                {
+                    // anything but a list would read as "says nothing" in over_edge, so every
+                    // edge would quietly open: refuse it instead
+                    let Some(edges) = field.as_array() else { return Err(EntityWhy::Invalid) };
+                    let allowed: Vec<&str> = tile.edges();
+                    let mut seen: Vec<&str> = Vec::new();
+                    for e in edges {
+                        match e.as_str() {
+                            Some(n) if allowed.contains(&n) && !seen.contains(&n) => seen.push(n),
+                            _ => return Err(EntityWhy::Invalid),
+                        }
+                    }
+                }
                 if let Some(from) = old.and_then(entities::position)
                     && !within_reach(at, cell_of(from))
                 {
