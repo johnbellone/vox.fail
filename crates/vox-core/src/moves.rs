@@ -17,8 +17,9 @@ pub const MAX_RISE: f32 = 9.0;
 pub const MAX_FALL: f32 = 70.0;
 /// How much unspent movement may be saved up: lag bunches moves together.
 pub const SLACK_SECONDS: f32 = 2.0;
-/// Arriving at the spawn is always allowed (falling out of the world puts you back there).
-pub const SPAWN_RADIUS: f32 = 2.0;
+/// Arriving within a metre of the spawn is always allowed (falling out of the world puts you
+/// back there). In blocks.
+pub const SPAWN_RADIUS: f32 = crate::in_blocks(1.0);
 
 /// One player's movement so far.
 #[derive(Clone, Debug, Default)]
@@ -91,7 +92,7 @@ impl Moves {
 mod tests {
     use super::*;
 
-    const B: f32 = 0.5; // half-metre blocks
+    const B: f32 = crate::BLOCK_M;
     const SPAWN: [f32; 3] = [0.5, 0.0, 0.5];
 
     fn walk(m: &mut Moves, from: [f32; 3], speed_ms: f32, secs: f64, step: f64) -> Result<(), [f32; 3]> {

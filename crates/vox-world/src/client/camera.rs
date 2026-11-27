@@ -14,7 +14,7 @@ pub(super) fn behind_spot(w: &WorldClient) -> Vec3 {
     let size = w.block_size;
     let f = facing(w.cam_yaw, w.cam_pitch);
     let right = Vec3::new(w.cam_yaw.cos(), 0.0, -w.cam_yaw.sin());
-    let head = (Vec3::from(w.body.pos) + Vec3::Y * (EYES + 0.4)) * size;
+    let head = (Vec3::from(w.body.pos) + Vec3::Y * (EYES + vox_core::in_blocks(0.2))) * size;
     let back = (-f * CAM_DIST + right * 0.45).normalize();
     let dist = (CAM_DIST * CAM_DIST + 0.45 * 0.45).sqrt();
     let hit = ray::raycast_with(|c| w.solid_at(c), (head / size).to_array(), back.to_array(), dist / size);
@@ -58,7 +58,7 @@ pub fn camera(
         return;
     }
     let ease = |rate: f32| 1.0 - (-dt * rate).exp();
-    let chest = (Vec3::from(w.body.pos) + Vec3::Y * 2.4) * size;
+    let chest = (Vec3::from(w.body.pos) + Vec3::Y * vox_core::in_blocks(1.2)) * size;
     let focus = match w.focus {
         Some(f) if f.distance(chest) < 6.0 => f.lerp(chest, ease(9.0)),
         _ => chest,

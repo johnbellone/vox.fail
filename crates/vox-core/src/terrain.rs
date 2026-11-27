@@ -11,10 +11,10 @@
 
 use crate::{Bounds, World};
 
-/// A tile is this many blocks across: a world's whole width (`Bounds::default`).
-pub const TILE: i32 = 512;
-/// Water fills up to this height (blocks).
-pub const SEA: i32 = 4;
+/// A tile is this many blocks across (256 m): a world's whole width (`Bounds::default`).
+pub const TILE: i32 = 1024;
+/// Water fills up to this height (blocks: 2 m).
+pub const SEA: i32 = 8;
 
 /// Which tile of which atlas.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,12 +115,12 @@ fn noise(seed: u64, o: u32, x: i32, z: i32, step: i32) -> i64 {
 }
 
 /// Ground height at atlas column `(x, z)`, blocks: plains and hills, with lakes and seas below
-/// `SEA`, from about -14 to 62.
+/// `SEA`, from about -28 to 124 (-7 m to 31 m).
 pub fn height(seed: u64, x: i32, z: i32) -> i32 {
-    // broad land and sea, then hills, then roughness
-    let n = noise(seed, 0, x, z, 512) * 6 + noise(seed, 1, x, z, 128) * 3 + noise(seed, 2, x, z, 32);
-    // 0..655360 → about -14..62
-    (n * 76 / 655_360 - 14) as i32
+    // broad land and sea (256 m), then hills (64 m), then roughness (16 m)
+    let n = noise(seed, 0, x, z, 1024) * 6 + noise(seed, 1, x, z, 256) * 3 + noise(seed, 2, x, z, 64);
+    // 0..655360 → about -28..124
+    (n * 152 / 655_360 - 28) as i32
 }
 
 /// Fill `world` with tile `t`'s ground: stone, then dirt, then grass (sand at the shore and
@@ -190,7 +190,7 @@ mod tests {
         // the same every time, different with another seed, and in range
         assert_eq!(height(7, 1000, -2000), height(7, 1000, -2000));
         let hs: Vec<i32> = (0..2000).map(|i| height(7, i * 37, i * 53)).collect();
-        assert!(hs.iter().all(|h| (-16..=64).contains(h)), "{:?}", hs.iter().minmax());
+        assert!(hs.iter().all(|h| (-32..=128).contains(h)), "{:?}", hs.iter().minmax());
         assert!(hs.iter().any(|&h| h < SEA) && hs.iter().any(|&h| h > SEA + 10), "some sea, some hills");
         assert!((0..200).any(|i| height(7, i * 41, 0) != height(8, i * 41, 0)));
         // neighbouring columns don't jump (walkable ground)

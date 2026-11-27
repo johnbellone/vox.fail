@@ -56,15 +56,15 @@ async fn over_the_edge() {
         }
     };
     // at the east edge: on to tile 1, 0, just inside its west edge, on its ground
-    let y = tile.height(254, 10).max(terrain::SEA) as f32 + 1.0;
-    ws.send(send(ToServer::Pose { at: [254.5, y, 10.5], blob: vec![] })).await.unwrap();
+    let y = tile.height(510, 10).max(terrain::SEA) as f32 + 1.0;
+    ws.send(send(ToServer::Pose { at: [510.5, y, 10.5], blob: vec![] })).await.unwrap();
     ws.send(send(ToServer::Through { portal: "edge:east".into(), side: 1 })).await.unwrap();
     let (to, arrive) = travel(&mut ws).await.expect("no way on");
     assert_eq!(to, "/w/atlas-earth-1-0/ws");
     let next = tile.next([1, 0]).unwrap();
-    assert_eq!(arrive[0], -254.0, "clamped a step inside");
+    assert_eq!(arrive[0], -508.0, "clamped a step inside");
     assert_eq!(arrive[2], 10.5);
-    assert_eq!(arrive[1], (next.height(-254, 10).max(terrain::SEA) + 1) as f32);
+    assert_eq!(arrive[1], (next.height(-508, 10).max(terrain::SEA) + 1) as f32);
     // the west edge is the edge of the map; and the east one only from near it
     tokio::time::sleep(Duration::from_millis(1100)).await;
     ws.send(send(ToServer::Through { portal: "edge:west".into(), side: 1 })).await.unwrap();
@@ -140,8 +140,8 @@ async fn atlas_closed_edge_refuses_travel_until_reopened() {
             }
         }
     };
-    let y = tile.height(254, 10).max(terrain::SEA) as f32 + 1.0;
-    ws.send(send(ToServer::Pose { at: [254.5, y, 10.5], blob: vec![] })).await.unwrap();
+    let y = tile.height(510, 10).max(terrain::SEA) as f32 + 1.0;
+    ws.send(send(ToServer::Pose { at: [510.5, y, 10.5], blob: vec![] })).await.unwrap();
 
     // close east: the Settings entity no longer lists it
     let expect = settings.seq;

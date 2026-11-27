@@ -60,7 +60,7 @@ use crate::input::{Action, Actions, UiMode};
 
 /// A new doorway's size, blocks (width, height): the size a Portal create asks for, and the
 /// default the page's form shows.
-pub const GHOST_SIZE: [f32; 2] = [4.0, 6.0];
+pub const GHOST_SIZE: [f32; 2] = vox_core::portal::DEFAULT_SIZE;
 
 /// Where a ghost doorway would be: its sill's middle, which way it faces, and its size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -627,8 +627,8 @@ mod tests {
         // a guest is not refused here: a world started with --editors-all lets guests edit, and
         // the client cannot tell that world from the others, so the server decides
         assert_eq!(check_portal(&known, &portal), Ok(()));
-        // out of reach: the doorway is 20 blocks off from the feet
-        let far = doorway(&ghost_for([0, 0, 18], [0.0, 0.0, 1.0]), "yard");
+        // out of reach: the doorway is half as far again as the reach from the feet
+        let far = doorway(&ghost_for([0, 0, (vox_core::edit::REACH * 1.5) as i32], [0.0, 0.0, 1.0]), "yard");
         assert_eq!(check_portal(&known, &far), Err(EntityWhy::TooFar));
     }
 
@@ -636,14 +636,15 @@ mod tests {
     fn editor_ghost_outside_the_world_is_refused() {
         let empty = BTreeMap::new();
         let no_blocks = |_: Cell| false;
+        // a little past where the default bounds end along x
+        let outside = Bounds::default().hi[0] + 44;
         let known = Known {
-            at: Some([300.0, 0.0, 0.0]),
+            at: Some([outside as f32, 0.0, 0.0]),
             bounds: Bounds::default(),
             entities: &empty,
             solid: &no_blocks,
         };
-        // the default bounds end at 256 blocks along x, so a doorway at x = 300 is outside
-        let out = doorway(&ghost_for([300, 0, 0], [0.0, 0.0, 1.0]), "yard");
+        let out = doorway(&ghost_for([outside, 0, 0], [0.0, 0.0, 1.0]), "yard");
         assert_eq!(check_portal(&known, &out), Err(EntityWhy::Outside));
         assert_eq!(tint(check_portal(&known, &out)), Tint::Red(EntityWhy::Outside));
     }
@@ -686,8 +687,9 @@ mod tests {
             solid: &no_blocks,
         };
         assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &free, &held), Ok(()));
-        // out of reach: 20 blocks from the feet
-        assert_eq!(check_prop(&known, &ghost_prop([5, 0, 180]), &pivot, &free, &held), Err(EntityWhy::TooFar));
+        // out of reach: half as far again as the reach from the feet
+        let far = (vox_core::edit::REACH * 1.5) as i32 * PROP_UNITS_PER_BLOCK;
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, far]), &pivot, &free, &held), Err(EntityWhy::TooFar));
     }
 
     #[test]

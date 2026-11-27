@@ -30,8 +30,9 @@ use serde::{Deserialize, Serialize};
 /// server (`Through`, `Travel`; `Notice` came after it); 7: voice (`ToServer::Voice`,
 /// `ToClient::Voice`); 8: the ground's water in weather keyframes (`Keyframe::ground`); 9:
 /// world entities (`ToServer::Put`, `Remove`, `Build`, `ToClient::Entities`,
-/// `ToClient::EntityRefused`, `ToClient::EntityDone`).
-pub const PROTOCOL: u32 = 9;
+/// `ToClient::EntityRefused`, `ToClient::EntityDone`); 10: quarter-metre blocks (every
+/// position, size and level is at the new scale, so an older client must not come in).
+pub const PROTOCOL: u32 = 10;
 
 /// Voice channel: heard by players near the speaker.
 pub const VOICE_NEARBY: u8 = 0;
@@ -228,7 +229,7 @@ mod tests {
                 you: 3,
                 world: "yard".into(),
                 palette: vec!["grass".into(), "stone".into()],
-                block_size: 0.5,
+                block_size: crate::BLOCK_M,
                 bounds: Bounds::default(),
                 spawn: [0.5, 0.0, 0.5],
                 settings: r#"{"sky":"void"}"#.into(),

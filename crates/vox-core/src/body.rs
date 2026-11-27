@@ -7,7 +7,18 @@ use std::collections::BTreeSet;
 use crate::entity::{PROP_YAWS, prop_cell};
 use crate::world::Cell;
 
+use crate::in_blocks;
+
 const EPS: f32 = 1e-3;
+
+/// A player's box: 0.6 m across (half of it either side of the feet) and 1.8 m tall, in blocks.
+pub const PLAYER_HALF: f32 = in_blocks(0.3);
+pub const PLAYER_HEIGHT: f32 = in_blocks(1.8);
+/// Eye height above the feet, in blocks (1.6 m).
+pub const EYES: f32 = in_blocks(1.6);
+/// Walking climbs onto anything up to this high without a jump, in blocks: half a metre and
+/// a little, so a half-metre step (two blocks) is walked up.
+pub const STEP_UP: f32 = in_blocks(0.525);
 /// Moves are cut into pieces this long so nothing tunnels through a block.
 const PIECE: f32 = 0.25;
 

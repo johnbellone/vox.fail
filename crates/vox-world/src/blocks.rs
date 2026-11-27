@@ -106,7 +106,10 @@ impl Palette {
     pub fn load(path: &Path) -> Result<Palette, String> {
         let text = crate::files::read_string(path).ok_or_else(|| format!("{}: can't read it", path.display()))?;
         let f: BlocksFile = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(Palette { size: f.block_size, defs: f.blocks })
+        // every size measured in blocks is worked out for vox_core::BLOCK_M
+        let size = vox_core::block_size(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        debug_assert_eq!(size, f.block_size);
+        Ok(Palette { size, defs: f.blocks })
     }
     pub fn id(&self, name: &str) -> Option<u16> {
         self.defs.iter().position(|d| d.name == name).map(|i| i as u16 + 1)
@@ -980,9 +983,11 @@ mod tests {
             let r = rects[t];
             uv[0] >= r[0] - 1e-6 && uv[0] <= r[2] + 1e-6 && uv[1] >= r[1] - 1e-6 && uv[1] <= r[3] + 1e-6
         };
-        let side_tiles = |y: f32, t: &str| m.pos.iter().zip(&m.uv).zip(&m.nrm).filter(|((p, uv), n)| n[1] == 0.0 && (p[1] - y).abs() < 0.3 && in_tile(**uv, t)).count();
-        assert!(side_tiles(0.125, "dirt") > 0 && side_tiles(0.125, "grass_side") == 0, "lower block: dirt sides");
-        assert!(side_tiles(0.625, "grass_side") > 0, "upper block: grass sides");
+        // positions are in metres: look near the foot of the lower block and of the upper one
+        let b = vox_core::BLOCK_M;
+        let side_tiles = |y: f32, t: &str| m.pos.iter().zip(&m.uv).zip(&m.nrm).filter(|((p, uv), n)| n[1] == 0.0 && (p[1] - y).abs() < 0.6 * b && in_tile(**uv, t)).count();
+        assert!(side_tiles(0.25 * b, "dirt") > 0 && side_tiles(0.25 * b, "grass_side") == 0, "lower block: dirt sides");
+        assert!(side_tiles(1.25 * b, "grass_side") > 0, "upper block: grass sides");
         // corner shading: a block on a floor is darker where it meets the floor
         let mut floor: HashMap<IVec3, u16> = HashMap::new();
         for x in -1..=1 {

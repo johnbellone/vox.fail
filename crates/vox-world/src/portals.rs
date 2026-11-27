@@ -92,17 +92,18 @@ pub fn parse(settings: &Value) -> Vec<PortalDef> {
     list.iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            let size = p.get("size").and_then(|s| s.as_array()).map_or(Vec2::new(4.0, 6.0), |s| {
+            let [dw, dh] = vox_core::portal::DEFAULT_SIZE;
+            let size = p.get("size").and_then(|s| s.as_array()).map_or(Vec2::new(dw, dh), |s| {
                 Vec2::new(
-                    s.first().and_then(|v| v.as_f64()).unwrap_or(4.0) as f32,
-                    s.get(1).and_then(|v| v.as_f64()).unwrap_or(6.0) as f32,
+                    s.first().and_then(|v| v.as_f64()).map_or(dw, |v| v as f32),
+                    s.get(1).and_then(|v| v.as_f64()).map_or(dh, |v| v as f32),
                 )
             });
             Some(PortalDef {
                 name: p.get("name").and_then(|v| v.as_str()).map_or_else(|| format!("portal {}", i + 1), String::from),
                 at: v3(p, "at")?,
                 along_x: p.get("axis").and_then(|v| v.as_str()) == Some("x"),
-                size: size.clamp(Vec2::splat(1.0), Vec2::splat(64.0)),
+                size: size.clamp(Vec2::splat(vox_core::portal::MIN_SIDE), Vec2::splat(vox_core::portal::MAX_SIDE)),
                 level: p.get("level")?.as_str()?.to_string(),
                 url: p.get("url").and_then(|v| v.as_str()).map(String::from),
                 arrive: v3(p, "arrive")?,
@@ -151,7 +152,7 @@ impl PortalDef {
     /// Is `p` (blocks, feet) in the doorway's opening, sideways and up?
     pub fn within(&self, p: Vec3) -> bool {
         let d = p - self.at;
-        d.dot(self.across()).abs() <= self.size.x * 0.5 && d.y >= -1.0 && d.y <= self.size.y - 1.0
+        d.dot(self.across()).abs() <= self.size.x * 0.5 && d.y >= -vox_core::portal::SILL_SLACK && d.y <= self.size.y - vox_core::portal::SILL_SLACK
     }
 
     /// Which side of the doorway `p` is on (blocks), signed distance.

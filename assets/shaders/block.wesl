@@ -112,7 +112,8 @@ fn relief_noise(seed: u32, o: u32, p: vec2<f32>, cell: i32) -> f32 {
 // noise is above 0.45 of its range.
 fn relief_depth(p: vec2<f32>) -> f32 {
     let seed = relief_at.x;
-    let v = (relief_noise(seed, 0u, p, 4) * 3.0 + relief_noise(seed, 1u, p, 1)) / (4.0 * 65535.0);
+    // the lattices are vox_core::relief::SWALE and ROUGH blocks apart (2 m and half a metre)
+    let v = (relief_noise(seed, 0u, p, 8) * 3.0 + relief_noise(seed, 1u, p, 2)) / (4.0 * 65535.0);
     let t = clamp((v - 0.45) / 0.55, 0.0, 1.0);
     return t * t;
 }

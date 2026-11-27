@@ -67,13 +67,13 @@ use crate::voice;
 use crate::proto::{self, Pose};
 use crate::pose::HZ;
 
-/// How far you can build, in blocks from the eyes (the server allows a little more).
-const REACH: f32 = 15.0;
+/// How far you can build, in blocks from the eyes: 7.5 m (the server allows a little more).
+const REACH: f32 = vox_core::in_blocks(7.5);
 /// Eye height in blocks (the server's reach check uses the same).
-const EYES: f32 = 3.2;
+const EYES: f32 = vox_core::body::EYES;
 /// The player's box, in blocks.
-const HALF_WIDTH: f32 = 0.6;
-const HEIGHT: f32 = 3.6;
+const HALF_WIDTH: f32 = vox_core::body::PLAYER_HALF;
+const HEIGHT: f32 = vox_core::body::PLAYER_HEIGHT;
 /// Speeds in metres per second; gravity in m/s².
 const WALK: f32 = 3.2;
 const RUN: f32 = 6.0;
@@ -411,7 +411,7 @@ impl Default for WorldClient {
             view: View::default(),
             names: Vec::new(),
             remap: Vec::new(),
-            block_size: 0.5,
+            block_size: vox_core::BLOCK_M,
             ready: false,
             dirty: HashSet::new(),
             meshes: HashMap::new(),
@@ -564,7 +564,7 @@ impl WorldClient {
     /// metres, so this divides by the block size to match [`WorldClient::listener`].
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn place_of(&self, player: u32) -> Option<[f32; 3]> {
-        let size = if self.block_size > 0.0 { self.block_size } else { 0.5 };
+        let size = if self.block_size > 0.0 { self.block_size } else { vox_core::BLOCK_M };
         self.others.get(&player)?.places.back().map(|(_, at, _)| (*at / size).to_array())
     }
 
@@ -763,10 +763,10 @@ impl WorldClient {
         }
         let (b, p) = (self.view.confirmed.bounds, self.body.pos);
         let at = |e: &str| match e {
-            "east" => p[0] >= b.hi[0] as f32 - 1.0,
-            "west" => p[0] <= b.lo[0] as f32 + 1.0,
-            "south" => p[2] >= b.hi[2] as f32 - 1.0,
-            "north" => p[2] <= b.lo[2] as f32 + 1.0,
+            "east" => p[0] >= b.hi[0] as f32 - vox_core::in_blocks(0.5),
+            "west" => p[0] <= b.lo[0] as f32 + vox_core::in_blocks(0.5),
+            "south" => p[2] >= b.hi[2] as f32 - vox_core::in_blocks(0.5),
+            "north" => p[2] <= b.lo[2] as f32 + vox_core::in_blocks(0.5),
             _ => false,
         };
         if let Some(e) = self.edges.iter().find(|e| at(e)).cloned() {
@@ -919,7 +919,7 @@ impl WorldClient {
         }
         let eye = [self.body.pos[0], self.body.pos[1] + EYES, self.body.pos[2]];
         let d2: f32 = (0..3).map(|i| (cell[i] as f32 + 0.5 - eye[i]).powi(2)).sum();
-        if d2 > (REACH + 0.5).powi(2) {
+        if d2 > (REACH + vox_core::in_blocks(0.25)).powi(2) {
             return self.notice(Why::TooFar.to_string());
         }
         match self.view.edit(cell, block) {
@@ -1016,8 +1016,8 @@ fn settings_key(v: &serde_json::Value) -> serde_json::Value {
 /// is standing in or just out of, if it is at one: out of the side it's on, or, right on the
 /// sill, the side `facing` (the yaw it came out with) looks to. `None` away from every doorway.
 fn away_from_doorway(portals: &[crate::portals::PortalDef], pos: Vec3, facing: f32) -> Option<f32> {
-    // how far out of a doorway still counts as coming out of it (blocks)
-    const NEAR: f32 = 4.0;
+    // how far out of a doorway still counts as coming out of it (blocks: 2 m)
+    const NEAR: f32 = vox_core::in_blocks(2.0);
     let (p, d) = portals
         .iter()
         .filter(|p| p.within(pos))
@@ -1075,8 +1075,9 @@ mod tests {
         w.cam_yaw = 1.25;
         w.yaw = 3.0; // the character's own heading must not matter
         let mut places = VecDeque::new();
-        // one block away from the listener: 50.5 m is block 101 at half a metre a block
-        places.push_back((1, Vec3::new(50.5, 0.0, 50.0), 0.0));
+        // one block away from the listener: poses are in metres, so scale the listener's place
+        let m = vox_core::BLOCK_M;
+        places.push_back((1, Vec3::new(101.0 * m, 0.0, 100.0 * m), 0.0));
         w.others.insert(7, Other { name: "Ann".into(), entity: None, stream: Stream::default(), places });
         assert_eq!(w.place_of(7), Some([101.0, 0.0, 100.0]));
         assert_eq!(w.place_of(8), None);

@@ -295,7 +295,7 @@ pub fn controls(
             w.vy -= GRAVITY / size * dt;
             vel.y = w.vy;
         }
-        let step = if w.grounded && !w.fly { 1.05 } else { 0.0 };
+        let step = if w.grounded && !w.fly { vox_core::body::STEP_UP } else { 0.0 };
         let mut body = w.body;
         let contact = {
             let wr: &WorldClient = &w;
@@ -317,7 +317,7 @@ pub fn controls(
     }
     // at a tile's edge that leads on: over it
     w.edge_check();
-    if w.body.pos[1] < w.view.confirmed.bounds.lo[1] as f32 - 20.0 {
+    if w.body.pos[1] < w.view.confirmed.bounds.lo[1] as f32 - vox_core::in_blocks(10.0) {
         w.body.pos = w.spawn;
         w.vy = 0.0;
         w.notice("Back to the start");
@@ -357,9 +357,9 @@ pub fn controls(
             let ahead = Vec3::new(w.yaw.sin(), 0.0, w.yaw.cos());
             let o = head;
             let d = (ahead * 2.2 - Vec3::Y * 1.6).normalize();
-            ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 8.0)
+            ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), vox_core::in_blocks(4.0))
         } else if let Some((o, d)) = w.pick {
-            ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 200.0).filter(in_reach)
+            ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), crate::editor::pick::PICK_REACH).filter(in_reach)
         } else {
             None
         }
@@ -368,7 +368,7 @@ pub fn controls(
         let cam = w.cam_at / size;
         // start the ray level with the head, so blocks between the camera and you don't count
         let start = cam + f * (head - cam).dot(f).max(0.0);
-        ray::raycast_with(|c| w.solid_at(c), start.to_array(), f.to_array(), REACH + 4.0).filter(in_reach)
+        ray::raycast_with(|c| w.solid_at(c), start.to_array(), f.to_array(), REACH + vox_core::in_blocks(2.0)).filter(in_reach)
     };
     if let Some(h) = w.target {
         if remove {

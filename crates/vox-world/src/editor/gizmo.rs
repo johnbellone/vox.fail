@@ -44,23 +44,24 @@ use crate::client::WorldClient;
 use crate::entities::WorldEntities;
 use crate::input::{Action, Actions, UiMode};
 
-/// The largest width a resize gives a doorway, blocks.
-pub const MAX_WIDTH: f32 = 8.0;
-/// The largest height a resize gives a doorway, blocks.
-pub const MAX_HEIGHT: f32 = 16.0;
-/// The furthest a move takes an entity from where its drag began (ground distance), blocks.
-pub const MAX_MOVE: f32 = 64.0;
+/// The largest width a resize gives a doorway, blocks (4 m).
+pub const MAX_WIDTH: f32 = vox_core::in_blocks(4.0);
+/// The largest height a resize gives a doorway, blocks (8 m).
+pub const MAX_HEIGHT: f32 = vox_core::in_blocks(8.0);
+/// The furthest a move takes an entity from where its drag began (ground distance), blocks
+/// (32 m).
+pub const MAX_MOVE: f32 = vox_core::in_blocks(32.0);
 
 /// How far from the centre a move disc is grabbed, blocks.
-const MOVE_R: f32 = 0.4;
+const MOVE_R: f32 = vox_core::in_blocks(0.2);
 /// How far from the corner a resize knob is grabbed, blocks.
-const KNOB_R: f32 = 0.5;
+const KNOB_R: f32 = vox_core::in_blocks(0.25);
 /// The radius of a doorway's turn ring, blocks.
-const DOORWAY_RING: f32 = 1.5;
+const DOORWAY_RING: f32 = vox_core::in_blocks(0.75);
 /// The radius of a prop's turn ring, blocks.
-const PROP_RING: f32 = 1.0;
+const PROP_RING: f32 = vox_core::in_blocks(0.5);
 /// How far either side of the ring the ring is grabbed, blocks.
-const RING_BAND: f32 = 0.25;
+const RING_BAND: f32 = vox_core::in_blocks(0.125);
 
 /// Which handle a drag moves with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -443,27 +444,28 @@ mod tests {
 
     #[test]
     fn editor_gizmo_ray_plane_rejects_hits_beyond_pick_reach() {
-        // a plane 300 blocks down is past the reach; one 150 blocks down is not
-        assert_eq!(ray_plane([0.0, 300.0, 0.0], [0.0, -1.0, 0.0], 1, 0.0), None);
-        assert!(ray_plane([0.0, 150.0, 0.0], [0.0, -1.0, 0.0], 1, 0.0).is_some());
+        // a plane half as far again as the reach is past it; one at three quarters is not
+        assert_eq!(ray_plane([0.0, PICK_REACH * 1.5, 0.0], [0.0, -1.0, 0.0], 1, 0.0), None);
+        assert!(ray_plane([0.0, PICK_REACH * 0.75, 0.0], [0.0, -1.0, 0.0], 1, 0.0).is_some());
         // a near-parallel ray meets the plane millions of blocks off
         assert_eq!(ray_plane([0.0, 0.0, 0.0], [1.0, 1e-6, 0.0], 1, 2.0), None);
     }
 
     #[test]
-    fn editor_gizmo_move_is_clamped_to_sixty_four_blocks() {
+    fn editor_gizmo_move_is_clamped_to_the_move_limit() {
         let start = portal([0.0, 0.0, 0.0], Axis::Z, [4.0, 6.0]);
-        // a ray straight down at x 100 is pulled back to x 64, from the drag's start
-        let moved = drag_to(Handle::Move, &start, 0.0, [100.0, 5.0, 0.0], [0.0, -1.0, 0.0]);
-        assert_eq!(moved, Some(portal([64.0, 0.0, 0.0], Axis::Z, [4.0, 6.0])));
+        // a ray straight down half as far again as the limit is pulled back to the limit, from
+        // the drag's start
+        let moved = drag_to(Handle::Move, &start, 0.0, [MAX_MOVE * 1.5, 5.0, 0.0], [0.0, -1.0, 0.0]);
+        assert_eq!(moved, Some(portal([MAX_MOVE, 0.0, 0.0], Axis::Z, [4.0, 6.0])));
         // a ray that misses the reach entirely gives nothing
-        assert_eq!(drag_to(Handle::Move, &start, 0.0, [1.3, 300.0, 0.0], [0.0, -1.0, 0.0]), None);
+        assert_eq!(drag_to(Handle::Move, &start, 0.0, [1.3, PICK_REACH * 1.5, 0.0], [0.0, -1.0, 0.0]), None);
     }
 
     #[test]
     fn editor_gizmo_clamp_size_limits_a_doorway() {
-        assert_eq!(clamp_size([0.2, 20.0]), Some([1.0, 16.0]));
-        assert_eq!(clamp_size([8.6, 6.4]), Some([8.0, 6.0]));
+        assert_eq!(clamp_size([0.2, MAX_HEIGHT + 4.0]), Some([1.0, MAX_HEIGHT]));
+        assert_eq!(clamp_size([MAX_WIDTH + 0.6, 6.4]), Some([MAX_WIDTH, 6.0]));
         assert_eq!(clamp_size([f32::NAN, 2.0]), None);
     }
 
@@ -506,14 +508,14 @@ mod tests {
     #[test]
     fn editor_gizmo_grab_finds_the_handle_under_the_ray() {
         let door = portal([0.0, 0.0, 10.0], Axis::Z, [4.0, 6.0]);
-        // the top right corner is (2, 6, 10): a ray straight at it grabs the knob
-        assert_eq!(grab(&door, [2.1, 6.0, 0.0], [0.0, 0.0, 1.0]).map(|g| g.0), Some(Handle::Resize));
+        // the top right corner is (2, 6, 10): a ray straight at it, a little off, grabs the knob
+        assert_eq!(grab(&door, [2.0 + KNOB_R / 2.0, 6.0, 0.0], [0.0, 0.0, 1.0]).map(|g| g.0), Some(Handle::Resize));
         // the sill's disc: straight down beside the middle
-        assert_eq!(grab(&door, [0.1, 5.0, 10.0], [0.0, -1.0, 0.0]).map(|g| g.0), Some(Handle::Move));
-        // the ring, 1.5 blocks out on the ground
-        assert_eq!(grab(&door, [1.5, 5.0, 10.0], [0.0, -1.0, 0.0]).map(|g| g.0), Some(Handle::Turn));
+        assert_eq!(grab(&door, [MOVE_R / 2.0, 5.0, 10.0], [0.0, -1.0, 0.0]).map(|g| g.0), Some(Handle::Move));
+        // the ring, out on the ground
+        assert_eq!(grab(&door, [DOORWAY_RING, 5.0, 10.0], [0.0, -1.0, 0.0]).map(|g| g.0), Some(Handle::Turn));
         // away from every handle: nothing
-        assert_eq!(grab(&door, [5.0, 5.0, 10.0], [0.0, -1.0, 0.0]), None);
+        assert_eq!(grab(&door, [DOORWAY_RING * 2.0, 5.0, 10.0], [0.0, -1.0, 0.0]), None);
     }
 
     #[test]

@@ -457,7 +457,7 @@ async fn editor_put_a_doorway_in_place_answers_no_travel() {
     assert_eq!(next_entities(&mut a.ws).await.len(), 1);
     send(&mut a.ws, &ToServer::Through { portal: "inner".into(), side: 1 }).await;
     // a refused edit after it is answered in order, so anything the walk sent came first
-    send(&mut a.ws, &ToServer::Edit { id: 9, cell: [0, -40, 0], block: 1 }).await;
+    send(&mut a.ws, &ToServer::Edit { id: 9, cell: [0, -70, 0], block: 1 }).await;
     let mut travelled = false;
     until(&mut a.ws, |m| match m {
         ToClient::Travel { .. } => {

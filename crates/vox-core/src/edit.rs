@@ -18,13 +18,12 @@ pub const MAX_ZONE_ENTITIES: usize = 4_000;
 pub const PORTALS_PER_PLOT: usize = 2;
 /// Most props one plot holds (docs/design/props.md, "Placing").
 pub const PROPS_PER_PLOT: usize = 64;
-/// How far, in blocks from the eyes, a player may edit. The same value as vox-server's REACH
-/// until the server switches to this module; its own copy is then removed.
-pub const REACH: f32 = 16.0;
-/// Eye height above the feet, in blocks. The same value as vox-server's EYES.
-pub const EYES: f32 = 3.2;
+/// How far, in blocks from the eyes, a player may edit: 8 m (the client stops a little short).
+pub const REACH: f32 = crate::in_blocks(8.0);
+/// Eye height above the feet, in blocks.
+pub use crate::body::EYES;
 /// A character's height, in blocks (vox-core::body's player box).
-const CHARACTER_HEIGHT: f32 = 3.6;
+const CHARACTER_HEIGHT: f32 = crate::body::PLAYER_HEIGHT;
 
 /// What a player may do in a world: a plot's builder (basic) or the world's owner or one of
 /// its editors (advanced).
@@ -671,8 +670,8 @@ mod tests {
     #[test]
     fn position_outside_bounds_is_outside() {
         let plots: [PlotArea; 0] = [];
-        let c = ctx(Role::Editor, Some(1), Some([299.0, 0.0, 0.0]), &plots, &floor);
-        let p = Component::Portal(portal([300.5, 0.0, 0.5], world_dest()));
+        let c = ctx(Role::Editor, Some(1), Some([599.0, 0.0, 0.0]), &plots, &floor);
+        let p = Component::Portal(portal([600.5, 0.0, 0.5], world_dest()));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Outside));
     }
 
@@ -758,8 +757,8 @@ mod tests {
     #[test]
     fn objective_outside_bounds_is_outside() {
         let plots: [PlotArea; 0] = [];
-        let c = ctx(Role::Editor, Some(1), Some([255.0, 0.0, 0.0]), &plots, &floor);
-        let o = Component::Objective(Objective { name: "altar".into(), at: [-300.5, 0.0, 0.5], radius: 3.0 });
+        let c = ctx(Role::Editor, Some(1), Some([511.0, 0.0, 0.0]), &plots, &floor);
+        let o = Component::Objective(Objective { name: "altar".into(), at: [-600.5, 0.0, 0.5], radius: 3.0 });
         assert_eq!(check_put(&c, None, &o), Err(EntityWhy::Outside));
     }
 

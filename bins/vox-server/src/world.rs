@@ -12,7 +12,7 @@ use vox_core::wire::EntityChange;
 
 /// How far from a doorway's plane (blocks) a player may be and still go through it: their last
 /// checked pose can be a step or two behind the client's.
-const THROUGH_SLACK: f32 = 3.0;
+const THROUGH_SLACK: f32 = vox_core::in_blocks(1.5);
 /// How often a world starts a build (`ToServer::Build`): one per this long.
 const BUILD_EVERY: Duration = Duration::from_secs(10);
 /// Blocks a build applies each tick (ticks come every 100 ms), so other players' edits
@@ -613,10 +613,11 @@ impl WorldState {
         if !self.cfg.trust_moves && !near {
             return;
         }
-        // the same place on the map, a step inside the next tile
+        // the same place on the map, a step (a metre) inside the next tile
         let t = vox_core::terrain::TILE as f32;
-        let mut x = (at[0] - d[0] as f32 * t).clamp(lo[0] + 2.0, hi[0] - 2.0);
-        let mut z = (at[2] - d[1] as f32 * t).clamp(lo[1] + 2.0, hi[1] - 2.0);
+        let step = vox_core::in_blocks(1.0);
+        let mut x = (at[0] - d[0] as f32 * t).clamp(lo[0] + step, hi[0] - step);
+        let mut z = (at[2] - d[1] as f32 * t).clamp(lo[1] + step, hi[1] - step);
         if !x.is_finite() || !z.is_finite() {
             (x, z) = (0.5, 0.5);
         }
@@ -1840,7 +1841,7 @@ fn settings_of(ents: &Entities) -> serde_json::Value {
 /// The world's objective, from its Objective entity (the first, if there are two).
 fn objective_of(ents: &Entities) -> Option<Objective> {
     ents.map.values().find_map(|(_, c)| match c {
-        Component::Objective(o) => Some(Objective { name: o.name.clone(), at: o.at, radius: o.radius.min(64.0) }),
+        Component::Objective(o) => Some(Objective { name: o.name.clone(), at: o.at, radius: o.radius.min(vox_core::in_blocks(32.0)) }),
         _ => None,
     })
 }

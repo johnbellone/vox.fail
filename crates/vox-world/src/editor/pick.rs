@@ -35,12 +35,13 @@ pub fn solid(w: &WorldClient) -> impl Fn(Cell) -> bool + '_ {
     move |c: Cell| w.floor.is_some_and(|f| c[1] < f) || w.view.solid(c)
 }
 
-/// How far a pick reaches, in blocks: the same reach as the cursor's ray in `client::controls`.
-pub const PICK_REACH: f32 = 200.0;
+/// How far a pick reaches, in blocks (100 m): the same reach as the cursor's ray in
+/// `client::controls`.
+pub const PICK_REACH: f32 = vox_core::in_blocks(100.0);
 
 /// A doorway's frame is this thick, in blocks, through its plane, so a ray finds it from either
 /// side and a ray grazing the plane still counts.
-pub const FRAME_THICKNESS: f32 = 0.5;
+pub const FRAME_THICKNESS: f32 = vox_core::in_blocks(0.25);
 
 /// An axis-aligned box, in blocks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -219,9 +220,10 @@ mod tests {
     #[test]
     fn editor_pick_portal_frame_front_edge_and_miss() {
         let b = frame_box([0.0, 0.0, 10.0], Axis::Z, [4.0, 6.0]);
-        // front: straight at the middle of the frame, it meets the near face at z = 9.75
+        // front: straight at the middle of the frame, it meets the near face half a frame
+        // thickness before the plane z = 10
         let t = ray_box([0.0, 3.0, 0.0], FWD, &b, 100.0).expect("the front is met");
-        assert!((t - 9.75).abs() < 1e-5, "{t}");
+        assert!((t - (10.0 - FRAME_THICKNESS / 2.0)).abs() < 1e-5, "{t}");
         // edge: along the frame's side at x = 2 (its right edge) and at its top at y = 6
         assert!(ray_box([2.0, 3.0, 0.0], FWD, &b, 100.0).is_some(), "the edge counts");
         assert!(ray_box([0.0, 6.0, 0.0], FWD, &b, 100.0).is_some(), "the top edge counts");
@@ -237,7 +239,7 @@ mod tests {
     fn editor_pick_portal_frame_of_an_x_doorway() {
         let b = frame_box([5.0, 0.0, 0.0], Axis::X, [4.0, 6.0]);
         let t = ray_box([0.0, 3.0, 0.0], [1.0, 0.0, 0.0], &b, 100.0).expect("the front is met");
-        assert!((t - 4.75).abs() < 1e-5, "{t}");
+        assert!((t - (5.0 - FRAME_THICKNESS / 2.0)).abs() < 1e-5, "{t}");
         // the frame is 4 wide along z, so z = 2.01 is past it
         assert!(ray_box([0.0, 3.0, 2.01], [1.0, 0.0, 0.0], &b, 100.0).is_none());
     }
@@ -253,7 +255,8 @@ mod tests {
         match pick([0.5, 3.5, 0.5], FWD, 100.0, wall, &[door], &[]) {
             Some(Hit::Entity { id, dist }) => {
                 assert_eq!(id, EntityId(2));
-                assert!((dist - 2.25).abs() < 1e-5, "{dist}");
+                // from z = 0.5 to the near face of a frame at z = 3
+                assert!((dist - (2.5 - FRAME_THICKNESS / 2.0)).abs() < 1e-5, "{dist}");
             }
             other => panic!("expected the doorway, got {other:?}"),
         }

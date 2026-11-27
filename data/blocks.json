@@ -1,5 +1,5 @@
 {
-  "block_size": 0.5,
+  "block_size": 0.25,
   "blocks": [
     { "name": "grass", "top": "grass_top", "side": "grass_side", "bottom": "dirt", "side_covered": "dirt", "roughness": 0.92, "bump": 1.0, "relief": 1.0, "soak": 0.6 },
     { "name": "dirt", "top": "dirt", "roughness": 0.95, "bump": 0.8, "relief": 1.0, "soak": 0.6 },

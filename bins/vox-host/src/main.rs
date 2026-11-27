@@ -66,7 +66,7 @@ async fn main() {
         let (id, seed, alias) = parse_world(w).unwrap_or_else(|e| panic!("--world {w}: {e}"));
         let seed = seed.map(PathBuf::from).unwrap_or_else(|| game.join(format!("levels/{id}.json")));
         let mut cfg = vox_server::Config::new(data_dir.join(format!("{id}.db")), palette.clone());
-        cfg.block_size = vox_core::block_size(&blocks);
+        cfg.block_size = vox_core::block_size(&blocks).unwrap_or_else(|e| panic!("{e}"));
         cfg.name = id.clone();
         cfg.seed = std::fs::read_to_string(&seed).ok();
         if cfg.seed.is_none() {
@@ -85,7 +85,7 @@ async fn main() {
         let dir = args.get(i + 1).filter(|v| !v.starts_with("--")).map_or_else(|| game.join("levels/dungeons"), PathBuf::from);
         let secret = std::env::var("VOX_WORLD_SECRET").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| panic!("--instances needs VOX_WORLD_SECRET (the directory's)"));
         let mut base = vox_server::Config::new(":memory:", palette.clone());
-        base.block_size = vox_core::block_size(&blocks);
+        base.block_size = vox_core::block_size(&blocks).unwrap_or_else(|e| panic!("{e}"));
         vox_server::flags::apply(&mut base, &args).unwrap_or_else(|e| panic!("{e}"));
         let minutes = |k: &str, d: f64| arg(k).map_or(d, |v| v.parse().ok().filter(|m: &f64| m.is_finite() && *m >= 1.0).unwrap_or_else(|| panic!("{k} takes minutes, at least 1")));
         let count = |k: &str, d: usize| arg(k).map_or(d, |v| v.parse().ok().filter(|n| *n > 0).unwrap_or_else(|| panic!("{k} takes a number")));
@@ -108,7 +108,7 @@ async fn main() {
             let (wd, ht) = dims.split_once('x').unwrap_or_else(|| bad_atlas(a));
             let n = |s: &str| s.parse::<i32>().ok().filter(|n| *n > 0).unwrap_or_else(|| bad_atlas(a));
             let mut base = vox_server::Config::new(data_dir.join(format!("atlas-{name}.db")), palette.clone());
-            base.block_size = vox_core::block_size(&blocks);
+            base.block_size = vox_core::block_size(&blocks).unwrap_or_else(|e| panic!("{e}"));
             vox_server::flags::apply(&mut base, &args).unwrap_or_else(|e| panic!("{e}"));
             let snapshots = base.snapshots.is_some();
             Atlas { name: name.into(), seed: seed.parse().unwrap_or_else(|_| bad_atlas(a)), size: [n(wd), n(ht)], base, data: data_dir.clone(), snapshots }

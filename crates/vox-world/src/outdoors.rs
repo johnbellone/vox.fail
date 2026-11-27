@@ -1121,7 +1121,7 @@ pub fn update(
                 near.push((at.distance_squared(me), at, Color::srgb(r, g, b), drive));
             }
         }
-        near.retain(|(d, _, _, _)| *d < 80.0 * 80.0);
+        near.retain(|(d, _, _, _)| *d < vox_core::in_blocks(40.0).powi(2));
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut drive = Vec::with_capacity(out.pool.len());
         for (i, e) in out.pool.iter().enumerate() {
