@@ -14,7 +14,9 @@ import { chooseBlock } from "./BlockPalette";
 import { EditorHeader, type Mode } from "./EditorHeader";
 import { EntityList } from "./EntityList";
 import { Inspector } from "./Inspector";
+import { chooseProp, useCatalogue } from "./PropCatalogue";
 import { NewPortal } from "./NewPortal";
+import { PlaceProp } from "./PlaceProp";
 import { ObjectivePanel, SpawnPanel } from "./SpawnObjective";
 import { SettingsPanel } from "./SettingsPanel";
 import {
@@ -24,6 +26,9 @@ import {
   type Edits,
   kindOf,
   type PanelKind,
+  propBytes,
+  propNameOf,
+  type PropSpot,
   refuseEdit,
   resendEdit,
   retryCommand,
@@ -57,6 +62,8 @@ export function EditorPage() {
   // the world's block names (from `ready`) and the one the page has chosen to paint with
   const [palette, setPalette] = useState<string[]>([]);
   const [block, setBlock] = useState<string>();
+  // the catalogue prop the Prop tool places, by hash
+  const [prop, setProp] = useState<string>();
   // the open portal edits, by ref (see state.ts); refs are numbered here and never reused
   const [edits, setEdits] = useState<Edits>(() => new Map());
   const editsRef = useRef(edits);
@@ -66,6 +73,11 @@ export function EditorPage() {
   const nextRef = useRef(1);
   // stable, so the new-portal form's close effect runs when its edit settles, not on every render
   const closeSpot = useCallback(() => setSpot(undefined), []);
+  // where the Prop tool last marked a spot: a place-prop form opens there, keyed by its number
+  const [propSpot, setPropSpot] = useState<{ id: number; spot: PropSpot }>();
+  const closePropSpot = useCallback(() => setPropSpot(undefined), []);
+  // the catalogue of accepted props, loaded once for the rail, the list and the inspector
+  const catalogue = useCatalogue();
   // where the Portal tool last marked a spot: a new-portal form opens there, keyed by its number
   const [spot, setSpot] = useState<{ id: number; spot: Spot }>();
   const spotSeq = useRef(0);
@@ -93,9 +105,11 @@ export function EditorPage() {
           setNotice(undefined);
           setEdits(new Map());
           setSpot(undefined);
+          setPropSpot(undefined);
           setPanelOpen(undefined);
           setPalette(e.palette);
           setBlock(undefined);
+          setProp(undefined);
           // a new world opens on the Select tool: the page and the client both go back to it, so the
           // rail's highlight and the client's tool agree
           setTool("select");
@@ -125,6 +139,12 @@ export function EditorPage() {
         case "spot":
           spotSeq.current += 1;
           setSpot({ id: spotSeq.current, spot: { at: e.at, axis: e.axis, size: e.size } });
+          setPropSpot(undefined);
+          break;
+        case "prop_spot":
+          spotSeq.current += 1;
+          setPropSpot({ id: spotSeq.current, spot: { prop: e.prop, at: e.at, yaw: e.yaw } });
+          setSpot(undefined);
           break;
         case "here":
           setHere(e.players.length);
@@ -244,6 +264,13 @@ export function EditorPage() {
     send(chooseBlock(name));
   };
 
+  // choosing a catalogue prop places it with the Prop tool: the prop is sent first, then the tool
+  const pickProp = (hash: string) => {
+    setProp(hash);
+    send(chooseProp(hash));
+    pickTool("prop");
+  };
+
   // the Node tool is hidden in Basic, so leaving Advanced while it is active puts the Select tool back
   const changeMode = (m: Mode) => {
     setMode(m);
@@ -307,6 +334,9 @@ export function EditorPage() {
           palette={palette}
           block={block}
           onBlock={pickBlock}
+          prop={prop}
+          onProp={pickProp}
+          catalogue={catalogue}
         />
         <Box flex={1} mih={420} pos="relative" style={{ minWidth: 0 }}>
           <canvas
@@ -331,6 +361,21 @@ export function EditorPage() {
                 retry={retry}
                 forget={forget}
                 onClose={closeSpot}
+              />
+            </Box>
+          )}
+          {propSpot && ready && world && (
+            <Box pos="absolute" top={8} right={8} w="min(340px, calc(100% - 16px))" style={{ zIndex: 1, maxHeight: "calc(100% - 16px)", overflowY: "auto" }}>
+              <PlaceProp
+                key={propSpot.id}
+                spot={propSpot.spot}
+                name={propNameOf(propBytes(propSpot.spot.prop), catalogue.entries ?? [])}
+                advanced={canAdvanced && mode === "advanced"}
+                edits={edits}
+                submit={submit}
+                retry={retry}
+                forget={forget}
+                onClose={closePropSpot}
               />
             </Box>
           )}
@@ -390,6 +435,7 @@ export function EditorPage() {
         ) : (
           <Inspector
             row={selectedRow}
+            catalogue={catalogue.entries ?? []}
             advanced={isAdvanced}
             worlds={worlds}
             items={items}
@@ -418,7 +464,7 @@ export function EditorPage() {
           )}
         </Group>
       )}
-      <EntityList rows={rows} selected={selected} onError={setNotice} />
+      <EntityList rows={rows} catalogue={catalogue.entries ?? []} selected={selected} onError={setNotice} />
     </Stack>
   );
 }

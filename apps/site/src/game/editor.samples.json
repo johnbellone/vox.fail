@@ -25,6 +25,10 @@
       "type": "block"
     },
     {
+      "prop": "0102030405060708090a0b0c0d0e0f10",
+      "type": "prop"
+    },
+    {
       "entity": 3,
       "type": "select"
     },
@@ -269,6 +273,16 @@
       "ref": 2,
       "seq": 13,
       "type": "done"
+    },
+    {
+      "at": [
+        25,
+        30,
+        -12
+      ],
+      "prop": "0102030405060708090a0b0c0d0e0f10",
+      "type": "prop_spot",
+      "yaw": 3
     },
     {
       "cell": [

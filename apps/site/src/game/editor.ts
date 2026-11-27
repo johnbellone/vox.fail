@@ -68,17 +68,38 @@ export interface Settings {
   json: string;
 }
 
+/** A placed prop (`vox-core::entity::Prop`). `prop` is the catalogue hash as 16 bytes (the bridge's
+ *  command carries it as 32 hex characters). `at` is in 5 cm units, integers. `owner` is set by the
+ *  server; the page sends null on create and the value it read on set, so a read owner that is not a
+ *  safe integer is read as null (the server keeps the real owner whatever is sent). */
+export interface Prop {
+  prop: number[];
+  at: [number, number, number];
+  /** facing, 15 degree steps: 0 to 23 */
+  yaw: number;
+  /** 0 to 7 */
+  variant: number;
+  /** 0 to 7 */
+  state: number;
+  channel: number | null;
+  /** at most 140 characters, no control characters */
+  text: string | null;
+  owner: number | null;
+}
+
 /** One entity's data (`vox-core::entity::Component`, externally tagged). */
 export type Component =
   | { Portal: Portal }
   | { Spawn: Spawn }
   | { Objective: Objective }
-  | { Settings: Settings };
+  | { Settings: Settings }
+  | { Prop: Prop };
 
 /** What the page asks the editor to do (`vox-world::editor::bridge::Command`). */
 export type Command =
   | { type: "tool"; tool: Tool }
   | { type: "block"; name: string }
+  | { type: "prop"; prop: string }
   | { type: "select"; entity: number | null }
   | { type: "create"; component: Component; ref?: number | null }
   | { type: "set"; entity: number; component: Component; expect: number | null; ref?: number | null }
@@ -104,6 +125,7 @@ export type Event =
   | { type: "done"; ref: number; entity: number; seq: number }
   | { type: "picked"; cell: [number, number, number] }
   | { type: "spot"; at: Vec3; axis: Axis; size: [number, number] }
+  | { type: "prop_spot"; prop: string; at: [number, number, number]; yaw: number }
   | { type: "here"; players: string[] };
 
 type Obj = Record<string, unknown>;
@@ -132,14 +154,25 @@ function has(v: unknown, keys: readonly string[]): v is Obj {
 const isFloat = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const isU32 = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xffff_ffff;
 const isU64 = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+const isIntVec3 = (v: unknown): v is [number, number, number] =>
+  Array.isArray(v) && v.length === 3 && v.every((x) => isI32(x));
 const isI32 = (v: unknown): v is number =>
   Number.isInteger(v) && (v as number) >= -0x8000_0000 && (v as number) <= 0x7fff_ffff;
 const isI64 = (v: unknown): v is number => Number.isSafeInteger(v);
 const isOpt = <T>(v: unknown, ok: (x: unknown) => x is T): v is T | null => v === null || ok(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isStrs = (v: unknown): v is string[] => Array.isArray(v) && v.every(isStr);
+const isU16 = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xffff;
 
 const isVec3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every(isFloat);
+/** A prop's version hash on the bridge: 32 hex characters (`Hash::from_hex` on the Rust side). */
+const isPropHash = (v: unknown): v is string => typeof v === "string" && /^[0-9a-fA-F]{32}$/.test(v);
+const isU8 = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xff;
+/** A prop's hash as the bytes the component carries: 16 integers 0 to 255. */
+const isPropBytes = (v: unknown): v is number[] => Array.isArray(v) && v.length === 16 && v.every(isU8);
+/** A prop's readable text: at most 140 characters, none of them a control character (`text` in entity.rs). */
+const isPropText = (v: unknown): v is string =>
+  typeof v === "string" && [...v].length <= 140 && !/\p{Cc}/u.test(v);
 /** A command's optional `ref`: absent, null or a u32. */
 const isRef = (v: unknown): boolean => v === undefined || v === null || isU32(v);
 const isTool = (v: unknown): v is Tool => ["select", "blocks", "portal", "prop", "node"].includes(v as string);
@@ -188,7 +221,25 @@ function isPortal(v: unknown): v is Portal {
 
 const isSize = (v: unknown): v is [number, number] => Array.isArray(v) && v.length === 2 && v.every(isFloat);
 
-/** A component as a command carries it: exactly one of the four kinds, exactly its fields. */
+/** A prop as a command carries it: exactly its fields, in range (the ranges `vox-core` checks). */
+function isProp(v: unknown): v is Prop {
+  return (
+    exact(v, ["prop", "at", "yaw", "variant", "state", "channel", "text", "owner"]) &&
+    isPropBytes(v.prop) &&
+    isIntVec3(v.at) &&
+    isU8(v.yaw) &&
+    v.yaw < 24 &&
+    isU8(v.variant) &&
+    v.variant <= 7 &&
+    isU8(v.state) &&
+    v.state <= 7 &&
+    isOpt(v.channel, isU16) &&
+    isOpt(v.text, isPropText) &&
+    isOpt(v.owner, isU64)
+  );
+}
+
+/** A component as a command carries it: exactly one of the five kinds, exactly its fields. */
 export function isComponent(v: unknown): v is Component {
   const t = tagged(v);
   if (!t) return false;
@@ -202,6 +253,8 @@ export function isComponent(v: unknown): v is Component {
       return exact(body, ["name", "at", "radius"]) && isStr(body.name) && isVec3(body.at) && isFloat(body.radius);
     case "Settings":
       return exact(body, ["json"]) && isStr(body.json);
+    case "Prop":
+      return isProp(body);
     default:
       return false;
   }
@@ -210,7 +263,7 @@ export function isComponent(v: unknown): v is Component {
 /** The tags a destination may have, in the order an event is read: the first present wins. */
 const DEST_TAGS = ["Here", "World", "Pair", "Dungeon", "Url"] as const;
 /** The tags a component may have, in the order an event is read: the first present wins. */
-const COMPONENT_TAGS = ["Portal", "Spawn", "Objective", "Settings"] as const;
+const COMPONENT_TAGS = ["Portal", "Spawn", "Objective", "Settings", "Prop"] as const;
 
 /** Reads a destination from an event: the first known tag in `DEST_TAGS`, with only its known
  *  fields, or null when there is no known tag or that tag's body is malformed. */
@@ -268,7 +321,31 @@ export function readComponent(v: unknown): Component | null {
         : null;
     case "Settings":
       return has(body, ["json"]) && isStr(body.json) ? { Settings: { json: body.json } } : null;
+    case "Prop":
+      return readProp(body);
   }
+}
+
+/** Reads a prop from an event, or null when a field is missing or out of range. An owner that is
+ *  not a safe integer is read as null: it is server-owned and the page only sends it back. */
+function readProp(v: unknown): Component | null {
+  if (!has(v, ["prop", "at", "yaw", "variant", "state", "channel", "text", "owner"])) return null;
+  if (!isPropBytes(v.prop) || !isIntVec3(v.at) || !isU8(v.yaw) || v.yaw >= 24) return null;
+  if (!isU8(v.variant) || v.variant > 7 || !isU8(v.state) || v.state > 7) return null;
+  if (!isOpt(v.channel, isU16) || !isOpt(v.text, isPropText)) return null;
+  const owner = isU64(v.owner) ? v.owner : null;
+  return {
+    Prop: {
+      prop: v.prop,
+      at: v.at,
+      yaw: v.yaw,
+      variant: v.variant,
+      state: v.state,
+      channel: v.channel,
+      text: v.text,
+      owner,
+    },
+  };
 }
 
 /** Whether a value is a command the bridge defines, field by field. */
@@ -279,6 +356,8 @@ export function isCommand(v: unknown): v is Command {
       return exact(v, ["type", "tool"]) && isTool(v.tool);
     case "block":
       return exact(v, ["type", "name"]) && isStr(v.name);
+    case "prop":
+      return exact(v, ["type", "prop"]) && isPropHash(v.prop);
     case "select":
       return exact(v, ["type", "entity"]) && isOpt(v.entity, isU32);
     case "create":
@@ -349,6 +428,10 @@ export function readEvent(v: unknown): Event | null {
     case "spot":
       return has(v, ["at", "axis", "size"]) && isVec3(v.at) && isAxis(v.axis) && isSize(v.size)
         ? { type: "spot", at: v.at, axis: v.axis, size: v.size }
+        : null;
+    case "prop_spot":
+      return has(v, ["prop", "at", "yaw"]) && isPropHash(v.prop) && isIntVec3(v.at) && isU8(v.yaw)
+        ? { type: "prop_spot", prop: v.prop, at: v.at, yaw: v.yaw }
         : null;
     case "here":
       return has(v, ["players"]) && isStrs(v.players) ? { type: "here", players: v.players } : null;

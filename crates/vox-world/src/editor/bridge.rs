@@ -35,7 +35,7 @@ impl Tool {
     /// Whether a click with this tool is the tool's own: it picks or places something, so the
     /// click neither breaks a block nor walks the player to the point under the pointer.
     pub fn consumes_click(self) -> bool {
-        matches!(self, Tool::Select | Tool::Portal)
+        matches!(self, Tool::Select | Tool::Portal | Tool::Prop)
     }
 }
 
@@ -47,6 +47,11 @@ pub enum Command {
     Tool { tool: Tool },
     /// paint with this block from the world's palette
     Block { name: String },
+    /// choose the catalogue prop the prop tool places: its version hash, 32 hex characters
+    Prop {
+        #[serde(with = "prop_hash")]
+        prop: [u8; 16],
+    },
     /// select an entity, or nothing
     Select { entity: Option<u32> },
     /// make a new entity from a form; it is placed where the component says
@@ -115,6 +120,15 @@ pub enum Event {
         entity: u32,
         seq: u64,
     },
+    /// a click on a prop ghost the rules allow: the prop, where it would stand (its position in
+    /// 5 cm units, on the top of the block the pointer is on) and its turn. The page makes the
+    /// prop (a Create) from its form, which adds the variant, state and text.
+    PropSpot {
+        #[serde(with = "prop_hash")]
+        prop: [u8; 16],
+        at: [i32; 3],
+        yaw: u8,
+    },
     /// the block the pointer is on, for forms that need a position
     Picked { cell: [i32; 3] },
     /// a click on a doorway ghost the rules allow: where the doorway would be (its sill's middle),
@@ -161,6 +175,22 @@ pub fn ref_of(text: &str) -> Option<u32> {
     u32::try_from(v.get("ref")?.as_u64()?).ok()
 }
 
+/// A prop's version hash on the bridge: 32 hex characters. Anything else is refused by
+/// `Hash::from_hex`, so a bad hash never reaches the rules as a prop that might exist.
+mod prop_hash {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+    use vox_format::Hash;
+
+    pub fn serialize<S: Serializer>(prop: &[u8; 16], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&Hash(*prop).hex())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 16], D::Error> {
+        let text = String::deserialize(d)?;
+        Hash::from_hex(&text).map(|h| h.0).map_err(|e| D::Error::custom(e.to_string()))
+    }
+}
+
 /// An event as the JSON text the page receives.
 pub fn event_json(e: &Event) -> String {
     // Serialising these types cannot fail: every field is plain data, and non-finite floats
@@ -174,6 +204,9 @@ mod tests {
     use vox_core::entity::{Dest, Portal};
 
     const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/site/src/game/editor.samples.json");
+
+    /// A catalogue prop's hash for the samples: 0102...10 in hex.
+    const SAMPLE_PROP: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
     /// The yard's `void` doorway, as its level file has it.
     fn yard_portal() -> Component {
@@ -197,6 +230,7 @@ mod tests {
             Command::Tool { tool: Tool::Prop },
             Command::Tool { tool: Tool::Node },
             Command::Block { name: "stone".into() },
+            Command::Prop { prop: SAMPLE_PROP },
             Command::Select { entity: Some(3) },
             Command::Select { entity: None },
             Command::Create { component: yard_portal(), r#ref: None },
@@ -226,6 +260,7 @@ mod tests {
             Event::Refused { id: 7, r#ref: Some(2), why: "TooFar".into(), text: "that's out of reach".into() },
             Event::Refused { id: 0, r#ref: None, why: "NotYet".into(), text: "build is not in the editor yet".into() },
             Event::Done { r#ref: 2, entity: 3, seq: 13 },
+            Event::PropSpot { prop: SAMPLE_PROP, at: [25, 30, -12], yaw: 3 },
             Event::Picked { cell: [1, -2, 30] },
             Event::Spot { at: [4.5, 3.0, -2.5], axis: Axis::X, size: [4.0, 6.0] },
             Event::Here { players: vec!["Sam".into()] },
@@ -301,6 +336,29 @@ mod tests {
     }
 
     #[test]
+    fn a_prop_command_carries_its_hash_as_hex() {
+        let text = r#"{"type":"prop","prop":"0102030405060708090a0b0c0d0e0f10"}"#;
+        assert_eq!(parse_command(text), Ok(Command::Prop { prop: SAMPLE_PROP }));
+    }
+
+    #[test]
+    fn a_bad_prop_hash_is_refused() {
+        // too short, too long, not hex, and empty
+        for bad in ["0102", "0102030405060708090a0b0c0d0e0f1011", "zz02030405060708090a0b0c0d0e0f10", ""] {
+            let text = format!(r#"{{"type":"prop","prop":"{bad}"}}"#);
+            assert!(parse_command(&text).is_err(), "{bad:?} should be refused");
+        }
+        // a number is not a hash either
+        assert!(parse_command(r#"{"type":"prop","prop":16}"#).is_err());
+    }
+
+    #[test]
+    fn a_prop_command_refuses_unknown_fields() {
+        let text = r#"{"type":"prop","prop":"0102030405060708090a0b0c0d0e0f10","variant":1}"#;
+        assert!(parse_command(text).is_err());
+    }
+
+    #[test]
     fn unknown_types_are_refused() {
         assert!(parse_command(r#"{"type":"explode"}"#).is_err());
         assert!(parse_command(r#"{"type":"tool","tool":"hammer"}"#).is_err());
@@ -310,8 +368,9 @@ mod tests {
     fn the_select_and_portal_tools_take_the_click() {
         assert!(Tool::Select.consumes_click());
         assert!(Tool::Portal.consumes_click());
+        // placing a prop takes its click too, so it does not break the block under the pointer
+        assert!(Tool::Prop.consumes_click());
         assert!(!Tool::Blocks.consumes_click());
-        assert!(!Tool::Prop.consumes_click());
         assert!(!Tool::Node.consumes_click());
     }
 

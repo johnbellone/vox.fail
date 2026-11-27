@@ -77,6 +77,8 @@ enum Slot {
 pub struct EditorState {
     pub tool: Option<Tool>,
     pub block: Option<String>,
+    /// the catalogue prop the prop tool places (its version hash), chosen on the page
+    pub prop: Option<[u8; 16]>,
     pub selected: Option<u32>,
     /// an entity the camera should fly to; taken by the edit camera
     pub fly_to: Option<u32>,
@@ -110,6 +112,8 @@ impl EditorState {
         self.snapshot_due = false;
         // a block chosen in one world is not carried into another
         self.block = None;
+        // a prop chosen in one world's catalogue is not carried into another
+        self.prop = None;
         // the selection and a pending fly-to name entities of the last world
         self.selected = None;
         self.fly_to = None;
@@ -273,6 +277,11 @@ fn apply_commands(
                         text: format!("there's no block called {}", shown(name)),
                     });
                 }
+                continue;
+            }
+            Command::Prop { prop } => {
+                // the hash is parsed by the bridge; the server checks it names a prop it accepts
+                state.prop = Some(*prop);
                 continue;
             }
             Command::Select { entity } => {

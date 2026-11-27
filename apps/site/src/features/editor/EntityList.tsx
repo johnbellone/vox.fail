@@ -3,10 +3,12 @@
 
 import { Button, Group, Stack, Text } from "@mantine/core";
 import { type Command, sendCommand } from "../../game/editor";
-import { labelOf, type Row } from "./state";
+import { labelOf, type PropEntry, type Row } from "./state";
 
 interface Props {
   rows: Row[];
+  /** the catalogue's props, for a prop's name */
+  catalogue: readonly PropEntry[];
   selected: number | null;
   onError: (text: string) => void;
 }
@@ -15,7 +17,7 @@ interface Props {
  *  rest are counted in a line instead. */
 const MAX_ROWS = 500;
 
-export function EntityList({ rows, selected, onError }: Props) {
+export function EntityList({ rows, catalogue, selected, onError }: Props) {
   const go = (entity: number) => {
     const commands: Command[] = [
       { type: "select", entity },
@@ -46,7 +48,7 @@ export function EntityList({ rows, selected, onError }: Props) {
                 variant={r.entity === selected ? "filled" : "default"}
                 onClick={() => go(r.entity)}
               >
-                {labelOf(r)}
+                {labelOf(r, catalogue)}
               </Button>
             ))}
           </Group>

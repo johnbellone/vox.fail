@@ -24,10 +24,10 @@ describe("editor samples", () => {
   test("the samples cover every command and event type", () => {
     const types = (xs: unknown[]) => new Set(xs.map((x) => (x as { type: string }).type));
     expect([...types(samples.commands)].sort()).toEqual(
-      ["block", "build", "create", "fly_to", "redo", "remove", "select", "set", "tool", "undo"],
+      ["block", "build", "create", "fly_to", "prop", "redo", "remove", "select", "set", "tool", "undo"],
     );
     expect([...types(samples.events)].sort()).toEqual(
-      ["done", "entities", "here", "picked", "ready", "refused", "selected", "spot"],
+      ["done", "entities", "here", "picked", "prop_spot", "ready", "refused", "selected", "spot"],
     );
   });
 });
@@ -72,6 +72,17 @@ describe("command guards", () => {
   test("an extra field inside a component is refused", () => {
     const spawn = { type: "create", component: { Spawn: { at: [0, 0, 0], yaw: 0, extra: 1 } } };
     expect(isCommand(spawn)).toBe(false);
+  });
+
+  test("a prop command carries exactly 32 hex characters", () => {
+    const hash = "0102030405060708090a0b0c0d0e0f10";
+    expect(isCommand({ type: "prop", prop: hash })).toBe(true);
+    expect(isCommand({ type: "prop", prop: hash.toUpperCase() })).toBe(true);
+    expect(isCommand({ type: "prop", prop: hash.slice(2) })).toBe(false);
+    expect(isCommand({ type: "prop", prop: `${hash}00` })).toBe(false);
+    expect(isCommand({ type: "prop", prop: `zz${hash.slice(2)}` })).toBe(false);
+    expect(isCommand({ type: "prop", prop: 16 })).toBe(false);
+    expect(isCommand({ type: "prop", prop: hash, variant: 1 })).toBe(false);
   });
 });
 
@@ -187,15 +198,102 @@ describe("event guards", () => {
     expect(isCommand({ ...base, ref: 5, extra: 1 })).toBe(false);
   });
 
-  test("an entities batch with a Prop and a Portal yields only the Portal change", () => {
+  test("a prop spot is a prop's hash, its place in 5 cm units and its turn; a bad one is refused", () => {
+    const hash = "0102030405060708090a0b0c0d0e0f10";
+    const spot: Event = { type: "prop_spot", prop: hash, at: [25, 30, -12], yaw: 3 };
+    expect(readEvent(spot)).toEqual(spot);
+    expect(readEvent({ ...spot, extra: 1 })).toEqual(spot);
+    expect(readEvent({ ...spot, at: [25.5, 30, -12] })).toBeNull();
+    expect(readEvent({ ...spot, yaw: 256 })).toBeNull();
+    expect(readEvent({ ...spot, prop: "nothex" })).toBeNull();
+    expect(readEvent({ type: "prop_spot", prop: hash, at: [0, 0, 0] })).toBeNull();
+  });
+
+  test("an entities batch with a kind this page does not know and a Portal yields only the Portal change", () => {
     const portal = (samples.commands.find((c) => (c as { type: string }).type === "create") as {
       component: Component;
     }).component;
-    const prop = { entity: 1, seq: 1, component: { Prop: { name: "lamp" } } };
+    const unknown = { entity: 1, seq: 1, component: { Node: { kind: "door" } } };
     const kept = { entity: 2, seq: 2, component: portal };
-    const batch = { type: "entities", changes: [prop, kept] };
+    const batch = { type: "entities", changes: [unknown, kept] };
     expect(isEvent(batch)).toBe(true);
     expect(readEvent(batch)).toEqual({ type: "entities", changes: [kept] });
+  });
+
+  test("a Prop change is read, and an owner that is not a safe integer is read as null", () => {
+    const prop = {
+      prop: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      at: [25, 30, -12] as [number, number, number],
+      yaw: 3,
+      variant: 1,
+      state: 0,
+      channel: null,
+      text: "Keep out",
+      owner: 9007199254740993,
+    };
+    const batch = { type: "entities", changes: [{ entity: 4, seq: 7, component: { Prop: prop } }] };
+    expect(readEvent(batch)).toEqual({
+      type: "entities",
+      changes: [{ entity: 4, seq: 7, component: { Prop: { ...prop, owner: null } } }],
+    });
+    expect(readEvent({ ...batch, changes: [{ entity: 4, seq: 7, component: { Prop: { ...prop, owner: 12 } } }] }))
+      .toEqual({ type: "entities", changes: [{ entity: 4, seq: 7, component: { Prop: { ...prop, owner: 12 } } }] });
+  });
+
+  test("a Prop with a bad field is filtered out of the batch", () => {
+    const good = {
+      prop: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      at: [0, 0, 0],
+      yaw: 0,
+      variant: 0,
+      state: 0,
+      channel: null,
+      text: null,
+      owner: null,
+    };
+    const bad = [
+      { ...good, yaw: 24 },
+      { ...good, variant: 8 },
+      { ...good, state: 8 },
+      { ...good, channel: 65536 },
+      { ...good, text: "a\u0007b" },
+      { ...good, text: "a".repeat(141) },
+      { ...good, at: [0.5, 0, 0] },
+      { ...good, prop: [1, 2, 3] },
+    ];
+    for (const b of bad) {
+      expect(readEvent({ type: "entities", changes: [{ entity: 1, seq: 1, component: { Prop: b } }] })).toEqual({
+        type: "entities",
+        changes: [],
+      });
+    }
+  });
+});
+
+describe("Prop command guard", () => {
+  const prop = {
+    prop: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    at: [25, 30, -12],
+    yaw: 23,
+    variant: 7,
+    state: 7,
+    channel: 65535,
+    text: "a".repeat(140),
+    owner: null,
+  };
+
+  test("a create with a Prop is a command; its fields must be exact and in range", () => {
+    expect(isCommand({ type: "create", component: { Prop: prop }, ref: 1 })).toBe(true);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, text: null, channel: null, owner: 5 } } })).toBe(true);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, extra: 1 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, yaw: 24 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, variant: 8 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, state: 8 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, channel: 65536 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, text: "a".repeat(141) } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, text: "tab\there" } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, owner: 9007199254740993 } } })).toBe(false);
+    expect(isCommand({ type: "create", component: { Prop: { ...prop, prop: [1, 2] } } })).toBe(false);
   });
 });
 

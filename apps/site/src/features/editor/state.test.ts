@@ -2,7 +2,7 @@
 // tombstone, and a new world (`ready`) starts from nothing.
 
 import { describe, expect, test } from "bun:test";
-import type { Change, Component } from "../../game/editor";
+import type { Change, Component, Prop } from "../../game/editor";
 import type { Dest, Event, Portal } from "../../game/editor";
 import { isCommand } from "../../game/editor";
 import type { Item } from "../../api/types";
@@ -41,6 +41,18 @@ import {
   spawnOf,
   objectiveFormOf,
   objectiveOf,
+  filterCatalogue,
+  readCatalogue,
+  type PropEntry,
+  type PropSpot,
+  labelOf,
+  type Row,
+  newPropAt,
+  propBytes,
+  propFormOf,
+  propHex,
+  propNameOf,
+  propOf,
   rowOfKind,
   MAX_SETTINGS_BYTES,
   MAX_RADIUS,
@@ -556,5 +568,145 @@ describe("atlas edges left as the world has them", () => {
     expect(form.edges).toEqual(["east"]);
     const out = settingsJsonOf(tile, form);
     expect(out.ok && JSON.parse(out.value).atlas.edges).toEqual(["east"]);
+  });
+});
+
+describe("the prop catalogue", () => {
+  const HASH = "0102030405060708090a0b0c0d0e0f10";
+  const good = (name: string, tags: string[] = []) => ({ hash: HASH, name, tags });
+
+  test("reads each well-formed entry, keyed by its id", () => {
+    const out = readCatalogue({ props: { crate: good("Crate", ["wood", "box"]) } });
+    expect(out).toEqual([{ id: "crate", hash: HASH, name: "Crate", tags: ["wood", "box"] }]);
+  });
+
+  test("skips an entry with a bad hash, a missing name or bad tags, and keeps the rest", () => {
+    const out = readCatalogue({
+      props: {
+        short: { hash: "0102", name: "Short", tags: [] },
+        upper: { hash: HASH.toUpperCase(), name: "Upper", tags: [] },
+        noName: { hash: HASH, tags: [] },
+        numTag: { hash: HASH, name: "Num", tags: [1] },
+        notArray: { hash: HASH, name: "Tags", tags: "wood" },
+        ok: good("Fine"),
+      },
+    });
+    expect(out.map((e) => e.id)).toEqual(["upper", "ok"]);
+  });
+
+  test("an entry with more than 64 tags, or a tag over 32 characters, is skipped", () => {
+    const many = Array.from({ length: 65 }, (_, i) => `t${i}`);
+    const long = "x".repeat(33);
+    const out = readCatalogue({
+      props: { many: good("Many", many), long: good("Long", [long]), edge: good("Edge", ["x".repeat(32)]) },
+    });
+    expect(out.map((e) => e.id)).toEqual(["edge"]);
+  });
+
+  test("anything that is not the catalogue's shape reads as no props", () => {
+    expect(readCatalogue(null)).toEqual([]);
+    expect(readCatalogue([])).toEqual([]);
+    expect(readCatalogue({})).toEqual([]);
+    expect(readCatalogue({ props: [] })).toEqual([]);
+    expect(readCatalogue({ props: "crate" })).toEqual([]);
+  });
+
+  const entries: PropEntry[] = [
+    { id: "crate", hash: HASH, name: "Crate", tags: ["wood"] },
+    { id: "lamp", hash: HASH, name: "Street lamp", tags: ["light", "metal"] },
+  ];
+
+  test("a blank filter keeps every prop", () => {
+    expect(filterCatalogue(entries, "   ")).toEqual(entries);
+  });
+
+  test("the filter matches a name or a tag, ignoring case", () => {
+    expect(filterCatalogue(entries, "LAMP").map((e) => e.id)).toEqual(["lamp"]);
+    expect(filterCatalogue(entries, "wood").map((e) => e.id)).toEqual(["crate"]);
+    expect(filterCatalogue(entries, "boat")).toEqual([]);
+  });
+});
+
+describe("props", () => {
+  const BYTES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+  const HEX = "0102030405060708090a0b0c0d0e0f10";
+  const catalogue: PropEntry[] = [{ id: "crate", hash: HEX, name: "Crate", tags: [] }];
+  const placed: Prop = {
+    prop: BYTES,
+    at: [25, 30, -12],
+    yaw: 3,
+    variant: 2,
+    state: 1,
+    channel: 7,
+    text: "Keep out",
+    owner: 42,
+  };
+  const row = (component: Component): Row => ({ entity: 1, seq: 1, component });
+
+  test("the hex and the bytes of a prop are each other's", () => {
+    expect(propHex(BYTES)).toBe(HEX);
+    expect(propBytes(HEX)).toEqual(BYTES);
+  });
+
+  test("a placed prop shows its catalogue name, or the first 8 hex characters when there is none", () => {
+    expect(propNameOf(BYTES, catalogue)).toBe("Crate");
+    expect(propNameOf(BYTES, [])).toBe("unknown prop 01020304");
+    expect(labelOf(row({ Prop: placed }), catalogue)).toBe('Prop "Crate"');
+    expect(labelOf(row({ Prop: placed }))).toBe('Prop "unknown prop 01020304"');
+  });
+
+  test("a prop sorts after the portals and before the objective", () => {
+    const e = applyChanges(cleared(), [
+      { entity: 4, seq: 1, component: { Spawn: { at: [0, 0, 0], yaw: 0 } } },
+      { entity: 3, seq: 1, component: { Prop: placed } },
+      { entity: 2, seq: 1, component: { Objective: { name: "o", at: [0, 0, 0], radius: 1 } } },
+    ]);
+    expect(sortedRows(e).map((r) => r.entity)).toEqual([3, 2, 4]);
+  });
+
+  test("a new prop at a spot has no look, state, text, channel or owner yet", () => {
+    const spot: PropSpot = { prop: HEX, at: [4, 6, -2], yaw: 5 };
+    expect(newPropAt(spot)).toEqual({
+      prop: BYTES,
+      at: [4, 6, -2],
+      yaw: 5,
+      variant: 0,
+      state: 0,
+      channel: null,
+      text: null,
+      owner: null,
+    });
+  });
+
+  test("a placed prop's form reads back as the same values", () => {
+    const form = propFormOf(placed);
+    expect(form).toEqual({ variant: "2", state: "1", text: "Keep out", channel: "7" });
+    const back = propOf(form, placed, true);
+    expect(back).toEqual({ ok: true, value: placed });
+  });
+
+  test("a form sets the look, state, text and, in Advanced, the channel; it keeps the owner", () => {
+    const out = propOf({ variant: "7", state: "0", text: "  Hi  ", channel: "65535" }, placed, true);
+    expect(out).toEqual({ ok: true, value: { ...placed, variant: 7, state: 0, text: "Hi", channel: 65535 } });
+    const blank = propOf({ variant: "0", state: "0", text: "   ", channel: "" }, placed, true);
+    expect(blank).toEqual({ ok: true, value: { ...placed, variant: 0, state: 0, text: null, channel: null } });
+  });
+
+  test("a Basic form keeps the channel the prop has", () => {
+    const out = propOf({ variant: "1", state: "1", text: "", channel: "9" }, placed, false);
+    expect(out).toEqual({ ok: true, value: { ...placed, variant: 1, state: 1, text: null } });
+  });
+
+  test("a form refuses a look, state, channel or text out of range", () => {
+    const ok = { variant: "1", state: "1", text: "", channel: "" };
+    expect(propOf({ ...ok, variant: "8" }, placed, true).ok).toBe(false);
+    expect(propOf({ ...ok, variant: "-1" }, placed, true).ok).toBe(false);
+    expect(propOf({ ...ok, variant: "1.5" }, placed, true).ok).toBe(false);
+    expect(propOf({ ...ok, state: "8" }, placed, true).ok).toBe(false);
+    expect(propOf({ ...ok, channel: "65536" }, placed, true).ok).toBe(false);
+    expect(propOf({ ...ok, channel: "x" }, placed, true).ok).toBe(false);
+    expect(propOf({ ...ok, text: "a".repeat(141) }, placed, true).ok).toBe(false);
+    expect(propOf({ ...ok, text: "a".repeat(140) }, placed, true).ok).toBe(true);
+    expect(propOf({ ...ok, text: "tab\there" }, placed, true).ok).toBe(false);
   });
 });

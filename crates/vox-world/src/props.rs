@@ -177,7 +177,7 @@ fn setup_material(mut commands: Commands, mut materials: ResMut<Assets<StandardM
 }
 
 /// Where a prop's blob lives: `data/props/<hash>.voxp`, relative to the game's files.
-fn blob_path(hash: [u8; 16]) -> std::path::PathBuf {
+pub(crate) fn blob_path(hash: [u8; 16]) -> std::path::PathBuf {
     files::base().join(format!("data/props/{}.voxp", Hash(hash).hex()))
 }
 

@@ -5,7 +5,19 @@
 // from before the removal, arriving late, cannot bring it back.
 
 import type { Item } from "../../api/types";
-import type { Axis, Change, Command, Component, Dest, Event, Objective, Portal, Spawn, Vec3 } from "../../game/editor";
+import type {
+  Axis,
+  Change,
+  Command,
+  Component,
+  Dest,
+  Event,
+  Objective,
+  Portal,
+  Prop,
+  Spawn,
+  Vec3,
+} from "../../game/editor";
 
 export interface Row {
   entity: number;
@@ -51,10 +63,11 @@ export function kindOf(component: Component): string {
   return Object.keys(component)[0] ?? "Unknown";
 }
 
-/** A short label for the entity list and the inspector heading. */
-export function labelOf(row: Row): string {
+/** A short label for the entity list and the inspector heading. A prop shows its catalogue name. */
+export function labelOf(row: Row, catalogue: readonly PropEntry[] = []): string {
   const c = row.component;
   if ("Portal" in c) return `Portal "${c.Portal.name}"`;
+  if ("Prop" in c) return `Prop "${propNameOf(c.Prop.prop, catalogue)}"`;
   if ("Objective" in c) return `Objective "${c.Objective.name}"`;
   if ("Spawn" in c) return "Spawn";
   return "Settings";
@@ -62,7 +75,7 @@ export function labelOf(row: Row): string {
 
 /** Sorts rows by kind, then by entity id, so the list keeps its order between batches. */
 export function sortedRows(entities: Entities): Row[] {
-  const order = ["Portal", "Objective", "Spawn", "Settings"];
+  const order = ["Portal", "Prop", "Objective", "Spawn", "Settings"];
   return [...entities.rows.values()].sort(
     (a, b) => order.indexOf(kindOf(a.component)) - order.indexOf(kindOf(b.component)) || a.entity - b.entity,
   );
@@ -692,3 +705,136 @@ export function objectiveOf(f: ObjectiveForm): Built<Objective> {
   return { ok: true, value: { name, at: at.value, radius } };
 }
 
+// The prop catalogue: the accepted props the server publishes as data/props/catalogue.json (the
+// shape `vox-format::prop::Catalogue` writes). The page only lists them; the client checks a
+// chosen prop's hash against the world's own rules.
+
+/** One accepted prop in the catalogue. */
+export interface PropEntry {
+  /** the catalogue's key for the prop */
+  id: string;
+  /** the prop's version hash: 32 hex characters, as the prop command carries it */
+  hash: string;
+  name: string;
+  tags: string[];
+}
+
+/** The largest catalogue the page reads, in bytes: a bigger response is not read. */
+export const MAX_CATALOGUE_BYTES = 1024 * 1024;
+const MAX_CATALOGUE_TAGS = 64;
+const MAX_CATALOGUE_TAG = 32;
+const PROP_HASH = /^[0-9a-fA-F]{32}$/;
+
+/** The catalogue's props, read strictly: an entry with a bad hash, name or tags is skipped, and
+ *  anything that is not the catalogue's shape yields none. */
+export function readCatalogue(json: unknown): PropEntry[] {
+  if (!isJsonObj(json) || !isJsonObj(json.props)) return [];
+  const out: PropEntry[] = [];
+  for (const [id, v] of Object.entries(json.props)) {
+    if (!isJsonObj(v) || !isStr(v.hash) || !PROP_HASH.test(v.hash) || !isStr(v.name)) continue;
+    const tags = v.tags;
+    if (!Array.isArray(tags) || tags.length > MAX_CATALOGUE_TAGS) continue;
+    if (!tags.every((t) => isStr(t) && [...t].length <= MAX_CATALOGUE_TAG)) continue;
+    out.push({ id, hash: v.hash, name: v.name, tags: [...tags] });
+  }
+  return out;
+}
+
+/** The entries whose name or a tag contains the text (case-insensitive); all when it is blank. */
+export function filterCatalogue(entries: readonly PropEntry[], text: string): PropEntry[] {
+  const q = text.trim().toLowerCase();
+  if (!q) return [...entries];
+  return entries.filter((e) => e.name.toLowerCase().includes(q) || e.tags.some((t) => t.toLowerCase().includes(q)));
+}
+
+// ---- Props: the placed ones, and the form that places or changes one ------------------------
+
+/** The most characters a prop's readable text may have (`MAX_PROP_TEXT` in vox-core). */
+export const MAX_PROP_TEXT = 140;
+/** The largest channel a switch or light may listen to (a u16). */
+const MAX_PROP_CHANNEL = 65535;
+
+/** A prop's 16 bytes as the lowercase hex the catalogue and the bridge use (32 characters). */
+export function propHex(bytes: readonly number[]): string {
+  return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A prop's 16 bytes from its 32 hex characters. The hex has been checked where it came in. */
+export function propBytes(hex: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+  return out;
+}
+
+/** The catalogue's name for a placed prop, or "unknown prop" with the first 8 hex characters of its
+ *  hash when the catalogue has no such prop (a prop from a level file, or one since removed). */
+export function propNameOf(bytes: readonly number[], catalogue: readonly PropEntry[]): string {
+  const hex = propHex(bytes);
+  return catalogue.find((e) => e.hash.toLowerCase() === hex)?.name ?? `unknown prop ${hex.slice(0, 8)}`;
+}
+
+/** A prop the Prop tool marked a spot for: the chosen catalogue prop (its hash as hex), where it
+ *  would stand (5 cm units) and its turn (15 degree steps). */
+export interface PropSpot {
+  prop: string;
+  at: [number, number, number];
+  yaw: number;
+}
+
+/** A new prop at a spot, before the form adds its look, state, text and channel. The server stamps
+ *  the owner, so a new prop carries none. */
+export function newPropAt(spot: PropSpot): Prop {
+  return { prop: propBytes(spot.prop), at: spot.at, yaw: spot.yaw, variant: 0, state: 0, channel: null, text: null, owner: null };
+}
+
+/** A placed prop's form: its look, state, readable text and channel, as the text fields show them. */
+export interface PropForm {
+  variant: string;
+  state: string;
+  text: string;
+  channel: string;
+}
+
+/** The form for a placed prop, as it stands. */
+export function propFormOf(p: Prop): PropForm {
+  return {
+    variant: String(p.variant),
+    state: String(p.state),
+    text: p.text ?? "",
+    channel: p.channel === null ? "" : String(p.channel),
+  };
+}
+
+/** A whole number from a text field, from 0 to `max`, or null. */
+function codeOf(s: string, max: number): number | null {
+  const t = s.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n <= max ? n : null;
+}
+
+/** A prop from its form, on the prop it stands on: the form sets the look, state, text and (in
+ *  Advanced) channel, and keeps the rest of `base`, its owner included. Blank text is no text; a
+ *  Basic form keeps the channel it has, since only Advanced sets it. */
+export function propOf(form: PropForm, base: Prop, advanced: boolean): Built<Prop> {
+  const variant = codeOf(form.variant, 7);
+  if (variant === null) return fail("The look is a number from 0 to 7.");
+  const state = codeOf(form.state, 7);
+  if (state === null) return fail("The state is a number from 0 to 7.");
+  const text = form.text.trim();
+  if ([...text].length > MAX_PROP_TEXT) return fail(`The text is at most ${MAX_PROP_TEXT} characters.`);
+  if (/\p{Cc}/u.test(text)) return fail("The text cannot have control characters.");
+  let channel = base.channel;
+  if (advanced) {
+    if (form.channel.trim() === "") {
+      channel = null;
+    } else {
+      channel = codeOf(form.channel, MAX_PROP_CHANNEL);
+      if (channel === null) return fail("The channel is a number from 0 to 65535, or blank.");
+    }
+  }
+  return {
+    ok: true,
+    value: { ...base, variant, state, channel, text: text === "" ? null : text },
+  };
+}
