@@ -97,6 +97,10 @@ pub fn receive(
                         w.focus = None;
                         // its portals; and if you came through one, where you come out
                         w.portals = crate::portals::parse(&set);
+                        w.edges = set["atlas"]["edges"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|e| e.as_str()).take(4).map(String::from).collect())
+                            .unwrap_or_default();
                         w.portals_gen = w.portals_gen.wrapping_add(1);
                         w.travel = None;
                         if let Some(a) = w.arrival.take() {

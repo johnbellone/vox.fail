@@ -113,6 +113,9 @@ pub struct Config {
     /// the host that makes instances of dungeons (`http://127.0.0.1:7790`, a `vox-host
     /// --instances`), asked with the world secret; None: no dungeons
     pub instance_host: Option<String>,
+    /// big maps of tiles (`--atlas earth=40x30`): their tiles (`atlas-earth-<i>-<j>`) are worlds
+    /// of this directory too, without each being listed
+    pub atlases: Vec<(String, [i32; 2])>,
 }
 
 impl WorldInfo {
@@ -198,6 +201,7 @@ struct Inner {
     world_secret: Option<String>,
     report_every: u64,
     instance_host: Option<String>,
+    atlases: Vec<(String, [i32; 2])>,
     tries: Mutex<HashMap<String, (u32, Instant)>>,
     /// password hashes being worked out at once (each takes about 19 MB and a core)
     hashing: tokio::sync::Semaphore,

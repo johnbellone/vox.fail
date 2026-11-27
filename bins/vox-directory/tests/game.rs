@@ -38,6 +38,7 @@ async fn serve_with(instance_host: Option<String>) -> (Directory, String) {
         world_secret: Some(SECRET.into()),
         report_every: 0,
         instance_host,
+        atlases: vec![("earth".into(), [3, 2])],
     };
     let d = Directory::open(cfg).unwrap();
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -478,4 +479,24 @@ async fn dungeons_for_parties() {
     // once won it's done: reaching it again pays nothing more
     assert_eq!(reached(&id, json!([ann.id, bob.id])).await.1["raid"], false);
     assert_eq!(bob.authority().await, before + game::RAID_REWARD);
+}
+
+#[tokio::test]
+async fn tickets_between_tiles() {
+    let (_d, base) = serve().await;
+    let ann = P::new(&base, "Ann").await;
+    let key = auth::key_from_seed([7; 32]).verifying_key();
+    let trip = |from: &str, to: &str| json!({ "world": from, "account": ann.id, "to": to, "arrive": [-254.0, 9.0, 10.5] });
+    // over an edge: a ticket for the next tile, which isn't listed but is a tile of the atlas
+    let (st, v) = travel(&base, SECRET, trip("atlas-earth-0-0", "/w/atlas-earth-1-0/ws")).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!((v["world"].as_str(), v["url"].as_str()), (Some("atlas-earth-1-0"), Some("/w/atlas-earth-1-0/ws")));
+    let t = auth::verify_ticket(v["ticket"].as_str().unwrap(), &key, "atlas-earth-1-0", now()).unwrap();
+    assert_eq!(t.arrive, [-254.0, 9.0, 10.5]);
+    // into the atlas from a world, and back out
+    assert_eq!(travel(&base, SECRET, trip("void", "/w/atlas-earth-0-0/ws")).await.0, 200);
+    assert_eq!(travel(&base, SECRET, trip("atlas-earth-2-1", ":7780")).await.1["world"], "void");
+    // off the map, or not a tile
+    assert_eq!(travel(&base, SECRET, trip("atlas-earth-2-1", "/w/atlas-earth-3-1/ws")).await.0, 404);
+    assert_eq!(travel(&base, SECRET, trip("atlas-earth-9-9", ":7780")).await.0, 400);
 }

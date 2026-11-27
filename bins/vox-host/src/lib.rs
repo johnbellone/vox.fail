@@ -63,6 +63,41 @@ pub struct Options {
     pub idle: Option<Duration>,
     /// make instances when the directory asks; None: no instances here
     pub instances: Option<Instances>,
+    /// big maps made of tiles, each tile a world made on its first visit
+    pub atlases: Vec<Atlas>,
+}
+
+/// A big map of tiles (`docs/design/world-network.md`, *The atlas*): tile `(i, j)` is the
+/// world `atlas-<name>-<i>-<j>`, made the first time someone goes there, its ground generated
+/// from the seed, kept in `<data>/atlas-<name>/<i>-<j>.db`, and stopped when idle like any.
+pub struct Atlas {
+    pub name: String,
+    pub seed: u64,
+    /// tiles east to west, north to south
+    pub size: [i32; 2],
+    /// what a tile's world is configured from (the shared flags); its name, database and
+    /// ground are its own
+    pub base: Config,
+    /// where the tiles are kept
+    pub data: PathBuf,
+    /// snapshots next to each tile's database
+    pub snapshots: bool,
+}
+
+impl Atlas {
+    /// The world for `id`, if it's one of this atlas's tiles.
+    fn world(&self, id: &str) -> Option<World> {
+        let tile = vox_core::terrain::Tile::from_id(id, &self.name, self.seed, self.size)?;
+        let dir = self.data.join(format!("atlas-{}", self.name));
+        let mut cfg = self.base.clone();
+        cfg.name = id.to_string();
+        cfg.db = dir.join(format!("{}-{}.db", tile.at[0], tile.at[1]));
+        cfg.snapshots = self.snapshots.then(|| dir.join(format!("{}-{}.db.snapshots", tile.at[0], tile.at[1])));
+        cfg.seed = None;
+        cfg.level = format!("atlas-{}", self.name);
+        cfg.tile = Some(tile);
+        Some(World::new(id.to_string(), vec![], false, None, cfg))
+    }
 }
 
 /// Making instances of dungeons.
@@ -173,6 +208,7 @@ struct Worlds {
 pub struct Host {
     worlds: Arc<RwLock<Worlds>>,
     instances: Option<Arc<Instances>>,
+    atlases: Arc<Vec<Atlas>>,
 }
 
 impl Host {
@@ -201,7 +237,12 @@ impl Host {
             }
             worlds.order.push(w);
         }
-        let host = Host { worlds: Arc::new(RwLock::new(worlds)), instances: options.instances.map(Arc::new) };
+        for a in &options.atlases {
+            if !a.name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) || a.name.is_empty() || a.size.iter().any(|&n| !(1..=100_000).contains(&n)) {
+                return Err(format!("atlas \"{}\": a name of lower-case letters and digits, and a size of 1 to 100000 tiles each way", a.name));
+            }
+        }
+        let host = Host { worlds: Arc::new(RwLock::new(worlds)), instances: options.instances.map(Arc::new), atlases: Arc::new(options.atlases) };
         for w in host.all().into_iter().filter(|w| w.keep) {
             if let Err(e) = w.ensure().await {
                 host.shutdown().await;
@@ -253,6 +294,31 @@ impl Host {
     fn world(&self, name: &str) -> Option<Arc<World>> {
         self.worlds.read().unwrap_or_else(|e| e.into_inner()).names.get(name).cloned()
     }
+
+    /// A world by name, or (the first time it's asked for) a tile of an atlas, made now.
+    fn world_or_tile(&self, name: &str) -> Option<Arc<World>> {
+        if let Some(w) = self.world(name) {
+            return Some(w);
+        }
+        let made = self.atlases.iter().find_map(|a| a.world(name))?;
+        if let Some(dir) = made.cfg.db.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let mut ws = self.worlds.write().unwrap_or_else(|e| e.into_inner());
+        // asked for twice at once: the first one made it
+        if let Some(w) = ws.names.get(name) {
+            return Some(w.clone());
+        }
+        let w = Arc::new(made);
+        ws.names.insert(name.to_string(), w.clone());
+        ws.order.push(w.clone());
+        Some(w)
+    }
+
+    /// Is this the name of an atlas's tile (made or not)?
+    fn is_tile(&self, name: &str) -> bool {
+        self.atlases.iter().any(|a| vox_core::terrain::Tile::from_id(name, &a.name, a.seed, a.size).is_some())
+    }
 }
 
 /// Every so often: stop what's unused (worlds after `idle`, instances after `instance_idle` or
@@ -276,7 +342,7 @@ async fn look_after(worlds: Weak<RwLock<Worlds>>, idle: Option<Duration>, instan
 }
 
 async fn connect(State(host): State<Host>, Path(name): Path<String>, ws: WebSocketUpgrade) -> Response {
-    let Some(w) = host.world(&name) else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(w) = host.world_or_tile(&name) else { return StatusCode::NOT_FOUND.into_response() };
     match w.ensure().await {
         Ok(server) => server.accept(ws),
         // a stopped instance is gone, not asleep: it doesn't start again
@@ -290,7 +356,13 @@ async fn connect(State(host): State<Host>, Path(name): Path<String>, ws: WebSock
 
 /// A world's status, without starting it.
 async fn status(State(host): State<Host>, Path(name): Path<String>) -> Response {
-    let Some(w) = host.world(&name) else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(w) = host.world(&name) else {
+        // a tile nobody has been to yet: there, but not made
+        if host.is_tile(&name) {
+            return Json(serde_json::json!({ "world": name, "running": false })).into_response();
+        }
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let stopped = || Json(serde_json::json!({ "world": w.id, "running": false })).into_response();
     let Some(server) = w.running().await else { return stopped() };
     match server.status().await {

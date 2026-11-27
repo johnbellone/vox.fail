@@ -1,6 +1,6 @@
 # Design: a network of worlds, and instances
 
-Status: **proposed** · 2026-11-26 · phases 1 to 4 built (templates are level files, not yet snapshots); the atlas and several hosts not yet
+Status: **proposed** · 2026-11-26 · phases 1 to 4 built (templates are level files, not yet snapshots), and the first part of 5 (tiles, generated ground, edges); several hosts not yet
 
 Related: [world-scaling.md](world-scaling.md) (one world up to 60 km: regions, generated terrain,
 streaming), [world-format.md](world-format.md) (region blobs, content-addressed snapshots),
@@ -239,6 +239,16 @@ serve without the tile running. People near a seam are the cost of this design; 
 message; events that need more people than a tile holds use instances.
 
 Tile edges only exist on atlas worlds. Hand-made worlds and their portals don't change.
+
+Built so far: tiles are 512 blocks (256 m) across, a world's present size, so a tile is an
+ordinary world. `vox-core::terrain` generates the ground (integer value noise over atlas
+coordinates; plains, hills, water up to a sea level); a tile's ground is generated into its
+world the first time it's made and then kept like any edits (about a second for a tile). The
+world's settings say which edges lead on (`"atlas": {"edges": [...]}`); the client asks
+`edge:<name>` within a block of one, and the world sends it to the same place on the map, a step
+inside the next tile, standing on its ground. `vox-host --atlas earth=40x30@7` makes tiles on
+first visit; the directory's `--atlas earth=40x30` knows them. Not yet: the next tile's terrain
+seen across the edge, storing only edits (world-scaling.md, phase 3), larger tiles.
 
 ### 6. Several machines
 

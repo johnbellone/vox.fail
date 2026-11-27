@@ -146,12 +146,17 @@ impl Directory {
 
     /// A world of this directory, or one of its instances: who may report and ask for tickets.
     fn known_world(&self, id: &str) -> Res<()> {
-        if self.0.worlds.iter().any(|w| w.id == id) {
+        if self.0.worlds.iter().any(|w| w.id == id) || self.tile(id) {
             return Ok(());
         }
         let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
         let found = db.query_row("SELECT 1 FROM instances WHERE id = ?1", params![id], |_| Ok(())).optional().map_err(oops)?;
         found.ok_or_else(|| bad("there's no such world"))
+    }
+
+    /// Is `id` a tile of one of this directory's atlases (`atlas-earth-3-7`)?
+    fn tile(&self, id: &str) -> bool {
+        self.0.atlases.iter().any(|(name, size)| vox_core::terrain::Tile::from_id(id, name, 0, *size).is_some())
     }
 
     /// The world secret checks out.
@@ -973,6 +978,11 @@ pub(crate) async fn travel(State(d): State<Directory>, h: HeaderMap, Json(t): Js
     let (to_id, to_url) = match t.to.strip_prefix(DUNGEON) {
         Some(template) => {
             let id = instance_for(&d, t.account, template).await?;
+            (id.clone(), format!("/w/{id}/ws"))
+        }
+        // a tile of an atlas (over its edge): known by its name, not listed
+        None if way(&t.to).is_some_and(|w| d.tile(&w)) => {
+            let id = way(&t.to).unwrap_or_default();
             (id.clone(), format!("/w/{id}/ws"))
         }
         None => {

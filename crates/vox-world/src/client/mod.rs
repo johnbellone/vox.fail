@@ -351,6 +351,9 @@ pub struct WorldClient {
     // ---- portals
     /// this world's portals (from its settings), and a number that changes with each world
     pub portals: Vec<crate::portals::PortalDef>,
+    /// on a tile of an atlas: the edges that lead on to the next tile (`east`, `west`, `south`,
+    /// `north`); walking up to one asks the world the way (`edge:<name>`)
+    pub edges: Vec<String>,
     pub portals_gen: u32,
     /// where to come out in the next world (going through a portal)
     arrival: Option<Arrival>,
@@ -453,6 +456,7 @@ impl Default for WorldClient {
             auto: None,
             auto_jump: false,
             portals: Vec::new(),
+            edges: Vec::new(),
             portals_gen: 0,
             arrival: None,
             travel: None,
@@ -645,6 +649,26 @@ impl WorldClient {
         a.pos = arrive;
         self.ticket = ticket;
         self.travel(url, a);
+    }
+
+    /// At an edge of a tile that leads on: ask the world the way over it. Once per trip: an
+    /// unanswered ask waits (see [`WorldClient::travel_check`]).
+    pub fn edge_check(&mut self) {
+        if self.edges.is_empty() || !self.ready || self.travel.is_some() || self.asked.is_some() {
+            return;
+        }
+        let (b, p) = (self.view.confirmed.bounds, self.body.pos);
+        let at = |e: &str| match e {
+            "east" => p[0] >= b.hi[0] as f32 - 1.0,
+            "west" => p[0] <= b.lo[0] as f32 + 1.0,
+            "south" => p[2] >= b.hi[2] as f32 - 1.0,
+            "north" => p[2] <= b.lo[2] as f32 + 1.0,
+            _ => false,
+        };
+        if let Some(e) = self.edges.iter().find(|e| at(e)).cloned() {
+            let a = self.arrival(p, 0.0);
+            self.through(&format!("edge:{e}"), 1.0, "", a);
+        }
     }
 
     /// The way through a portal was closed (no world answered): go back where you were.

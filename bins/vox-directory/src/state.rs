@@ -104,6 +104,7 @@ impl Directory {
                 world_secret: cfg.world_secret.filter(|s| !s.trim().is_empty()),
                 report_every: cfg.report_every,
                 instance_host: cfg.instance_host.map(|h| h.trim_end_matches('/').to_string()),
+                atlases: cfg.atlases,
                 tries: Mutex::new(HashMap::new()),
                 hashing: tokio::sync::Semaphore::new(HASHING_AT_ONCE),
                 dummy: Argon2::default()

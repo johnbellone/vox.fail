@@ -264,6 +264,8 @@ pub fn controls(
             w.goal = None;
         }
     }
+    // at a tile's edge that leads on: over it
+    w.edge_check();
     if w.body.pos[1] < w.view.confirmed.bounds.lo[1] as f32 - 20.0 {
         w.body.pos = w.spawn;
         w.vy = 0.0;

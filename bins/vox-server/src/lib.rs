@@ -114,6 +114,9 @@ pub struct Config {
     pub guests: bool,
     /// the level it was made from (`void`), which portals to it show as their echo
     pub level: String,
+    /// a tile of an atlas: a new world is filled with its generated ground (not `seed`), and its
+    /// edges lead to the next tiles (`edge:east` and so on, through the directory like portals)
+    pub tile: Option<vox_core::terrain::Tile>,
     /// the directory to report to and take plots and portals from (`http://127.0.0.1:7700`),
     /// with the secret it shares with its worlds
     pub directory_url: Option<String>,
@@ -144,6 +147,7 @@ impl Config {
             directory: None,
             guests: false,
             level: String::new(),
+            tile: None,
             directory_url: None,
             world_secret: None,
             report_every: Duration::from_secs(60),

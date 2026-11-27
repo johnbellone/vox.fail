@@ -118,6 +118,13 @@ port on the same host. To try them all (or run `tools/dev/play-local.sh`):
 If nobody answers on the other side, you're put back where you were. `world:portal:<name>`
 goes through by command.
 
+**Atlases:** a big map made of tiles, each a world 256 m across: `vox-host --atlas
+earth=40x30@7` (and the directory's `--atlas earth=40x30`) makes tile `atlas-earth-<i>-<j>` the
+first time someone goes there, its ground generated from the seed (hills, plains, lakes and
+seas). Walk off a tile's edge and you're on the next one, in the same place on the map. Give
+players a way in with a portal to `/w/atlas-earth-0-0/ws`, or list a tile:
+`--world "earth=Earth=/w/atlas-earth-0-0/ws"`.
+
 **Weather:** each world runs a small simulation of its air (wind, temperature, humidity,
 clouds, rain), shared by everyone in it. A world without air (orbit, `"weather": "none"`) runs none
 and sends none: no readout, no wind, rain or fog. It sets how far you can see, the fog round you, the

@@ -79,6 +79,16 @@ async fn main() {
         world_secret: env("VOX_WORLD_SECRET"),
         report_every: 50,
         instance_host: arg("--instances-at"),
+        // `--atlas earth=40x30[@seed]`, as given to vox-host (the seed is the host's business)
+        atlases: all("--atlas")
+            .iter()
+            .filter_map(|a| {
+                let (name, rest) = a.split_once('=')?;
+                let dims = rest.split('@').next()?;
+                let (w, h) = dims.split_once('x')?;
+                Some((name.to_string(), [w.parse().ok()?, h.parse().ok()?]))
+            })
+            .collect(),
     };
     let offered = cfg.social.offered();
     let dir = Directory::open(cfg).unwrap_or_else(|e| panic!("{e}"));

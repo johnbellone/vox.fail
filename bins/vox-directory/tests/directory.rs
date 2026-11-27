@@ -26,6 +26,7 @@ async fn serve() -> (Directory, String) {
         world_secret: None,
         report_every: 0,
         instance_host: None,
+        atlases: vec![("earth".into(), [3, 2])],
     };
     let d = Directory::open(cfg).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
