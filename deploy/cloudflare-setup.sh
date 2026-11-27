@@ -121,14 +121,15 @@ fi
 HAVE="$("$CF" workers secrets list --worker "$WORKER" | q '" ".join(r["name"] for r in rows)')"
 has() { [[ " $HAVE " == *" $1 "* ]]; }
 put() { # name; the value on stdin, sent from a private file and removed
-  local dir
-  dir="$(mktemp -d)"
   python3 -I -c 'import json, sys; print(json.dumps({"name": sys.argv[1], "text": sys.stdin.read().strip(), "type": "secret_text"}))' "$1" \
-    > "$dir/body.json"
-  "$CF" workers secrets update "$1" --worker "$WORKER" --body "@$dir/body.json" >/dev/null
-  rm -rf "$dir"
+    > "$TMP/body.json"
+  "$CF" workers secrets update "$1" --worker "$WORKER" --body "@$TMP/body.json" >/dev/null
+  rm -f "$TMP/body.json"
   log "secret $1 set"
 }
+# one private folder for every temporary file, removed however the script ends
+TMP="$(umask 077 && mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 (umask 077
   has VOX_DIRECTORY_KEY || openssl rand -hex 32 | put VOX_DIRECTORY_KEY
   has VOX_WORLD_SECRET || openssl rand -hex 32 | put VOX_WORLD_SECRET
@@ -139,15 +140,17 @@ put() { # name; the value on stdin, sent from a private file and removed
   # access key and the SHA-256 of its value the secret key.
   if ! has LITESTREAM_ACCESS_KEY_ID || ! has LITESTREAM_SECRET_ACCESS_KEY; then
     body='{"name":"vox-data (Litestream in the vox-edge container)","policies":[{"effect":"allow","resources":{"com.cloudflare.edge.r2.bucket.'"$ACCOUNT_ID"'_default_'"$BUCKET"'":"*"},"permission_groups":[{"id":"2efd5506f9c8494dacb1fa10a3e7d5b6"},{"id":"6a018a9f2fc74eb6b293b0c548f38b39"}]}]}'
-    keys="$(mktemp)"
+    # both keys are in hand before either is sent, so a failure can't leave one set without
+    # the other (a re-run would make a second token)
+    keys="$TMP/r2-keys"
     "$CF" accounts tokens create --body "$body" | python3 -I -c '
 import hashlib, json, sys
 raw = sys.stdin.read(); d = json.loads(raw[raw.find("{"):]); r = d.get("result") or d
 if not (r.get("id") and r.get("value")): sys.exit("cloudflare-setup: making the R2 token failed")
 print(r["id"]); print(hashlib.sha256(r["value"].encode()).hexdigest())' > "$keys"
-    sed -n 1p "$keys" | put LITESTREAM_ACCESS_KEY_ID
+    [ "$(wc -l < "$keys")" = 2 ] || { log "making the R2 token gave no keys"; exit 1; }
     sed -n 2p "$keys" | put LITESTREAM_SECRET_ACCESS_KEY
-    rm -f "$keys"
+    sed -n 1p "$keys" | put LITESTREAM_ACCESS_KEY_ID
     log "R2 token for $BUCKET made (Workers R2 Storage Bucket Item Read and Write on it only)"
   fi
 )

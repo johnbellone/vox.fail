@@ -1,30 +1,37 @@
 ---
 type: Design
-title: "Design (proposed): vox.fail on Cloudflare Containers"
-description: "One basic container (directory and vox-host) behind the edge Worker as a Durable Object, sleeping when idle; SQLite kept and streamed to R2 by Litestream; the Worker serves the site; the dev server and tunnel retired."
+title: "Design (built, not yet live): vox.fail on Cloudflare Containers"
+description: "One basic container (directory and vox-host) behind the edge Worker as a Durable Object, sleeping when idle; SQLite streamed to R2 by Litestream; the Worker serves the site; releases deploy with wrangler. Built 2026-11-27; first deploy waits on Workers Paid."
 tags: [design, deployment, cloudflare, containers, litestream, r2]
-generated: { by: agent/mcp, at: "2026-11-27T16:35:18Z" }
-status: draft
+generated: { by: agent/mcp, at: "2026-11-27T17:27:02Z" }
+status: stable
 ---
 
-Proposed 2026-11-27; the full design is `docs/design/cloudflare-hosting.md`. Nothing is built yet.
+Approved and built 2026-11-27; the full design and its as-built notes are in `docs/design/cloudflare-hosting.md`. It isn't live yet: the first deploy needs the Workers Paid plan, and then a `v*` tag.
 
 ## The owner's choices (2026-11-27)
 
-- **Storage:** keep SQLite; Litestream streams each database to an R2 bucket and restores on start. Rewriting the directory's roughly 24 tables and 130 queries for D1 was rejected.
-- **Uptime:** the container sleeps when idle, after about 15 minutes without requests or open world sockets. Pages and game files are served by the Worker, so browsing doesn't wake it.
+- **Storage:** keep SQLite; Litestream 0.5.18 streams every `*.db` in the data folder to the R2 bucket `vox-data` and restores on start. Rewriting the directory for D1 was rejected.
+- **Uptime:** the container sleeps after 15 idle minutes. World sockets are relayed and counted by the Durable Object, and an alarm keeps the container awake while any are open. Pages and game files come from the Worker, so browsing doesn't wake it.
 - **Size:** the basic instance (¼ vCPU, 1 GiB), raised after measuring.
-- **The dev server and tunnel are retired.** The server-pull deploy goes; the systemd units, image and Helm chart stay for self-hosting.
+- **The dev server, tunnel and server-pull deploy are retired.** The systemd units, image, Helm chart and tunnel config stay for self-hosting.
+
+## What's where
+
+- **The container's start:** `deploy/docker/start.sh` writes the signing key from a secret, restores from R2 (a failed restore stops the start), then runs `litestream replicate` with `vox-supervise` (the directory, then vox-host, with production's flags from `directory.args` and `host.args`).
+- **The Worker** (`apps/edge`, configured with Wrangler because `cf` 1.0 doesn't take containers):
+  - serves the site, sending the 51 MB `.wasm` from its brotli or gzip copy;
+  - refuses `/api/world/` and `/api/host/`;
+  - sends `/api/`, `/auth/` and `/w/` to the Durable Object `VoxServers`.
+- **Releases:** `release.yml` builds the image once, pushes it to Cloudflare's registry pinned by digest, and runs `wrangler deploy`.
+- **Cloudflare setup:** `deploy/cloudflare-setup.sh` (zone, DNS, R2 and its token, secrets).
 
 ## Why not Containers' own storage
 
-Container disks are temporary. Container snapshots (beta) are tied to one image version, so a release would strand the data. They also expire after 30 days and can't be listed. So the data lives in R2, through Litestream.
+Container disks are temporary. Container snapshots (beta) are tied to one image version, so a release would strand the data. They also expire after 30 days.
 
-## Key constraints for building
+## Still to measure
 
-- `start.sh` must start the directory with production's flags (`--secure`, `--behind-proxy`, `--public-url`) before vox-host, which needs `directory.key.pub`.
-- The Durable Object must pass `cf-connecting-ip` on, or sign-in rate limits collapse into one bucket.
-- `/api/world/*` and `/api/host/*` stay refused at the Worker.
-- The Durable Object switches images itself, so two containers never write the same replica.
+Cold start, memory on the basic instance, and the cost of a real month.
 
-See [[decisions/edge-worker-offline-page]], [[decisions/cloudflare-managed-tunnel]] and [[architecture/deployment]].
+See [[decisions/edge-worker-offline-page]] and [[architecture/deployment]].

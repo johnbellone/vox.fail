@@ -1,10 +1,10 @@
 ---
 type: Decision
 title: "Decision: Pull-Based Automatic Deploys from Version Tags"
-description: "A v* tag builds a release bundle in GitHub Actions; a systemd timer on the vox.fail server pulls, verifies, swaps a symlink, restarts, health-checks and purges Cloudflare's cache."
+description: "Superseded 2026-11-27: vox.fail moved to Cloudflare Containers; releases deploy with wrangler from GitHub Actions. Was: a v* tag built a bundle that a timer on the server pulled and installed."
 tags: [decision, deployment, cloudflare, release, ci]
-generated: { by: agent/mcp, at: "2026-11-27T14:03:07Z" }
-status: stable
+generated: { by: agent/mcp, at: "2026-11-27T17:27:02Z" }
+status: deprecated
 ---
 
 ## Decision

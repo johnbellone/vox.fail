@@ -53,10 +53,10 @@ Two products share one Cargo workspace:
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
 | `apps/site/` | (Bun) | The vox.fail pages: React 19, Mantine 9, built with Bun into `dist/`. `public/pkg/` is the wasm client (generated, ignored). See its README. |
-| `apps/edge/` | (Bun) | vox.fail's Cloudflare Worker: passes requests on to the server, and shows an offline page (sharing the home page's text) when it can't be reached. Deployed by `.github/workflows/edge.yml`. See its README. |
+| `apps/edge/` | (Bun) | vox.fail's Cloudflare Worker: serves the site, runs the servers' container behind a Durable Object (`src/container.ts`), and shows an offline page when they can't start. Configured in `wrangler.jsonc`; deployed by `.github/workflows/release.yml`. See its README. |
 | `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands, sea, orbit), clip manifests. |
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
-| `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail, and automatic deploys from version tags (`vox-update.sh`, `.github/workflows/release.yml`; see `deploy/README.md`); the container image (`docker/Dockerfile`) and a Helm chart for Kubernetes (`helm/vox`, see `helm/README.md`). |
+| `deploy/` | | vox.fail on Cloudflare: `cloudflare-setup.sh` (zone, DNS, R2, secrets), and the container's start (`docker/start.sh`, `vox-supervise`, `litestream.yml`, the args files). Self-hosting: systemd units, a Cloudflare Tunnel config, the container image (`docker/Dockerfile`) and a Helm chart (`helm/vox`). See `deploy/README.md`. |
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
 | `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen), `screenshots.sh` (the README's pictures, drawn by the real client into `docs/screenshots/`; run by hand when the look changes). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
@@ -131,9 +131,11 @@ ignores `*.db`).
   tiles.
 - **Worlds -> directory:** each world reports who is present once a minute (authority, raids,
   plots) over localhost with `VOX_WORLD_SECRET`. Those endpoints (`/api/world/*`) must not be
-  exposed publicly; the tunnel config refuses them.
-- **Production:** one machine runs the directory and worlds on localhost behind a Cloudflare
-  Tunnel at vox.fail. Details and the order to start things: `deploy/README.md`.
+  exposed publicly; the edge Worker refuses them (as does the self-hosting tunnel config).
+- **Production:** vox.fail runs on Cloudflare. The edge Worker (`apps/edge`) serves the site and
+  passes `/api/`, `/auth/` and `/w/` to one container (the directory and vox-host) behind a
+  Durable Object. The container sleeps when idle, and Litestream keeps its SQLite databases in
+  R2. Details: `deploy/README.md`, `docs/design/cloudflare-hosting.md`.
 
 ## Conventions
 

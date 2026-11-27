@@ -1,14 +1,18 @@
-name: Server release
+name: Release
 
-# Builds what vox.fail runs (the directory, the world servers, the browser client, the pages,
-# assets and data) for a version tag and attaches it to the GitHub release as
-# vox-linux-x86_64.tar.gz, with its SHA-256 and a build provenance attestation. The server
-# picks it up on its own: deploy/vox-update.sh, run by vox-update.timer, installs the newest
-# release, restarts the services and purges Cloudflare's cache (deploy/README.md).
+# Ships vox.fail for a version tag (docs/design/cloudflare-hosting.md). One build of the image
+# (deploy/docker/Dockerfile) gives both halves:
+#   - the container that runs the directory and the worlds: pushed to Cloudflare's registry and
+#     pinned by digest;
+#   - the edge Worker's files (the site with the browser client, assets, data), taken out of the
+#     image's /opt/vox.
+# Then one `wrangler deploy` (apps/edge) puts the Worker, its Durable Object and the container
+# image live. A running container keeps its image until it next sleeps, so nobody playing is cut
+# off; the next start uses the new one.
 #
-# The bundle is /opt/vox from the container image (deploy/docker/Dockerfile), so the image and
-# the bundle are always the same build. Debian bookworm's glibc: runs on bookworm, Ubuntu 22.04
-# and newer.
+# The deploy job uses the "production" environment (main and v* tags only), which holds
+# CLOUDFLARE_API_TOKEN ("vox-edge CI": Workers Scripts, Workers Containers and Cloudchamber Write
+# on the account; Workers Routes Write and Zone Read on vox.fail) and CLOUDFLARE_ACCOUNT_ID.
 
 on:
   push:
@@ -16,18 +20,20 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # attach to the release
-  id-token: write # sign the attestation
-  attestations: write
+  contents: read
 
 concurrency:
-  group: server-release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
+env:
+  WRANGLER_SEND_METRICS: "false"
+
 jobs:
-  bundle:
+  release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 150
+    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,31 +48,62 @@ jobs:
           tags: vox:release
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Bundle /opt/vox
+      - name: Take the site, assets and data out of the image
         run: |
           id=$(docker create vox:release)
-          docker cp "$id:/opt/vox" bundle
+          mkdir -p "$RUNNER_TEMP/vox"
+          for d in web assets data; do docker cp "$id:/opt/vox/$d" "$RUNNER_TEMP/vox/$d"; done
           docker rm "$id"
-          test -x bundle/bin/vox-directory && test -x bundle/bin/vox-server && test -x bundle/bin/vox-host
-          test -f bundle/web/index.html && test -f bundle/web/pkg/vox_client_bg.wasm
-          echo "${GITHUB_REF_NAME}" > bundle/RELEASE
-          tar -C bundle --owner=0 --group=0 --numeric-owner -czf vox-linux-x86_64.tar.gz .
-          sha256sum vox-linux-x86_64.tar.gz > vox-linux-x86_64.tar.gz.sha256
-          cat vox-linux-x86_64.tar.gz.sha256
-      - name: Attest
-        uses: actions/attest-build-provenance@v2
+          test -f "$RUNNER_TEMP/vox/web/index.html" && test -f "$RUNNER_TEMP/vox/web/pkg/vox_client.js"
+      - uses: oven-sh/setup-bun@v2
         with:
-          subject-path: vox-linux-x86_64.tar.gz
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vox-linux-x86_64
-          path: |
-            vox-linux-x86_64.tar.gz
-            vox-linux-x86_64.tar.gz.sha256
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            vox-linux-x86_64.tar.gz
-            vox-linux-x86_64.tar.gz.sha256
+          bun-version: 1.4.5
+      - run: bun install --frozen-lockfile
+      - name: Test the Worker and build its files
+        working-directory: apps/edge
+        env:
+          VOX_SITE: ${{ runner.temp }}/vox/web
+          VOX_ASSETS: ${{ runner.temp }}/vox/assets
+          VOX_DATA: ${{ runner.temp }}/vox/data
+          VOX_REQUIRE_PKG: "1"
+        run: |
+          bun test
+          bun run typecheck
+          bun run build
+      - name: Push the image to Cloudflare's registry
+        id: image
+        working-directory: apps/edge
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          [[ "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "odd ref name: $VERSION"; exit 1; }
+          docker tag vox:release "vox:$VERSION"
+          bunx wrangler containers push "vox:$VERSION" | tee "$RUNNER_TEMP/push.log"
+          # the registry reference, pinned by digest (the durable_object policy takes no other):
+          # from Docker's record of the push, or failing that (a containerd image store keeps
+          # none) from what the push printed
+          ref=$(docker image inspect "vox:$VERSION" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep '^registry.cloudflare.com/' | head -1 || true)
+          if [ -z "$ref" ]; then
+            ref=$(grep -oE 'registry\.cloudflare\.com/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}' "$RUNNER_TEMP/push.log" | head -1 || true)
+          fi
+          [[ "$ref" =~ ^registry\.cloudflare\.com/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$ ]] || { echo "no digest-pinned registry reference: '$ref'"; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Deploy the Worker, Durable Object and container
+        working-directory: apps/edge
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IMAGE: ${{ steps.image.outputs.ref }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # the same config, with the pushed image in place of the Dockerfile (built above)
+          python3 - <<'EOF'
+          import os, re
+          s = open("wrangler.jsonc").read()
+          s, n = re.subn(r'"vox": \{ "dockerfile": [^}]*\}', '"vox": { "image": "%s" }' % os.environ["IMAGE"], s)
+          assert n == 1, "the image entry in wrangler.jsonc has changed shape"
+          open("wrangler.release.jsonc", "w").write(s)
+          EOF
+          bunx wrangler deploy -c wrangler.release.jsonc --message "$VERSION"

@@ -10,7 +10,11 @@ Workers Paid plan and Docker to deploy for real. **Phase 5 done** (2026-11-27,
 `deploy/cloudflare-setup.sh`): the bucket `vox-data` and its token, the secrets
 `VOX_DIRECTORY_KEY`, `VOX_WORLD_SECRET` and Litestream's two R2 keys. The tunnel is deleted and
 `vox.fail` is a proxied placeholder. The Discord and Steam secrets wait for their values.
-Phases 6 and 7 are not built.
+**Phase 6 built**: `release.yml` builds the image once, pushes it to Cloudflare's registry and
+deploys with Wrangler. The CI token has Containers and Cloudchamber Write, and `v*` tags may
+use the `production` environment. **Phase 7**: the server path is retired (`vox-update.*` and
+`deploy.env` removed, `deploy/README.md` rewritten). The measuring waits for the first deploy,
+which needs the Workers Paid plan.
 
 As built:
 - Litestream **0.5.18**, which replicates the whole data folder (`dir`, `watch`, `recursive`).

@@ -1,4 +1,7 @@
 ## 2026-11-27
+* **Update** [2026-11-27T17:27:02Z]: Updated concept `architecture/cloudflare-hosting-design.md`. — Phases 1-7 built; Cloudflare set up; tunnel and server-pull deploy retired.
+* **Deprecation** [2026-11-27T17:27:02Z]: Deprecated concept `decisions/cloudflare-managed-tunnel.md`. — Tunnel deleted by deploy/cloudflare-setup.sh; vox.fail is a proxied placeholder answered by the Worker.
+* **Deprecation** [2026-11-27T17:27:02Z]: Deprecated concept `decisions/pull-based-auto-deploy.md`. — Superseded by architecture/cloudflare-hosting-design: the server and its pull deploy are retired.
 * **Relate** [2026-11-27T16:35:18Z]: Linked `architecture/deployment.md` to `architecture/cloudflare-hosting-design.md` (Where hosting is going: Cloudflare Containers with SQLite streamed to R2 (proposed).).
 * **Creation** [2026-11-27T16:35:18Z]: Documented concept `architecture/cloudflare-hosting-design.md` (Design (proposed): vox.fail on Cloudflare Containers). — Owner's choices for moving vox.fail onto Cloudflare; design doc proposed, not built.
 * **Relate** [2026-11-27T16:11:44Z]: Linked `architecture/deployment.md` to `decisions/cloudflare-managed-tunnel.md` (How vox.fail's zone, rules, tunnel and DNS are set up: one cf script, tunnel managed in Cloudflare.).
