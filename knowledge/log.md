@@ -1,4 +1,5 @@
 ## 2026-11-27
+* **Update** [2026-11-27T11:53:58Z]: Updated concept `decisions/world-voice-chat.md`. — Tried on real devices: speakers matched (0.974); the mic's DC offset and hiss held the open-mic gate open, fixed with a DC blocker and a noise-floor gate in the packetizer
 * **Update** [2026-11-27T11:17:07Z]: Updated concept `decisions/world-voice-chat.md`. — Voice landed on main as PROTOCOL 7 (after travel's 6); radius from the world, immediate mute, non-blocking device start; wire-protocol and related concepts updated
 * **Relate** [2026-11-27T04:40:31Z]: Linked `decisions/bevy-0-20-upgrade.md` to `technologies/bevy-ecosystem.md` (The analysis that preceded the upgrade, and the crates still waiting on 0.20 releases.).
 * **Relate** [2026-11-27T04:40:31Z]: Linked `decisions/bevy-0-20-upgrade.md` to `decisions/bevy-0-19-1-pin.md` (The rule this supersedes.).

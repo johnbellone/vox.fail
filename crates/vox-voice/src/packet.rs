@@ -4,6 +4,12 @@
 //! [`Packetizer`] takes 16 kHz mono samples (in chunks of any size; the caller resamples first),
 //! cuts them into [`PACKET`]-sample packets and drops quiet ones after a short hangover, so
 //! silence costs nothing on the wire. Push-to-talk ([`Packetizer::set_ptt`]) bypasses the gate.
+//!
+//! Two things keep a real microphone from holding the gate open in a quiet room (both found on
+//! a laptop mic: a DC offset of -0.26 and a hiss right at [`QUIET`]): a DC blocker (a one-pole
+//! high-pass near 13 Hz, below anything a voice makes, so the voice itself is not changed) runs
+//! before the gate and the coder, and the gate opens only well above the room's own noise
+//! floor, which it follows.
 //! [`Packet::decode`] checks every size and state value a packet claims before it decodes it.
 
 use crate::adpcm::Adpcm;
@@ -11,6 +17,15 @@ use crate::{PACKET, RATE};
 
 /// Quieter than this (RMS of a packet) counts as silence.
 const QUIET: f32 = 0.004;
+/// The gate opens at this many times the room's noise floor (12 dB above it).
+const OVER_FLOOR: f32 = 4.0;
+/// The noise floor follows a quieter packet at once and rises at most this much per packet
+/// (doubling in about 2.8 s), so speech, which pauses, never becomes the floor.
+const FLOOR_RISE: f32 = 1.005;
+/// The floor never rises past this: a room this loud still lets a raised voice through.
+const FLOOR_MAX: f32 = 0.05;
+/// DC blocker pole: cutoff (1 - R) * 16000 / 2pi, about 13 Hz.
+const DC_POLE: f32 = 0.995;
 /// Keep sending this many packets after it goes quiet (300 ms), so word ends aren't clipped.
 const HANGOVER: u32 = 15;
 /// Most audio kept while waiting for a whole packet: 1 s. Older samples are dropped, so a caller
@@ -57,6 +72,11 @@ pub struct Packetizer {
     /// packets since the last loud one; starts past the hangover, so silence at the start sends nothing
     quiet_for: u32,
     ptt: Option<bool>,
+    /// the room's noise floor (RMS of its quietest recent packets)
+    floor: f32,
+    /// DC blocker state: the last input and output (`None` until the first sample, which
+    /// seeds it, so a mic's offset does not start with a click)
+    dc: Option<(f32, f32)>,
 }
 
 impl Default for Packetizer {
@@ -73,6 +93,8 @@ impl Packetizer {
             seq: 0,
             quiet_for: HANGOVER,
             ptt: None,
+            floor: QUIET,
+            dc: None,
         }
     }
 
@@ -91,8 +113,13 @@ impl Packetizer {
         if self.ptt == Some(false) {
             return;
         }
-        self.pending
-            .extend(mono16k.iter().map(|&v| if v.is_finite() { v } else { 0.0 }));
+        for &v in mono16k {
+            let x = if v.is_finite() { v } else { 0.0 };
+            let (px, py) = self.dc.unwrap_or((x, 0.0));
+            let y = x - px + DC_POLE * py;
+            self.dc = Some((x, y));
+            self.pending.push(y);
+        }
         if self.pending.len() > MAX_PENDING {
             let drop = self.pending.len() - MAX_PENDING;
             self.pending.drain(..drop);
@@ -101,10 +128,15 @@ impl Packetizer {
             let chunk: Vec<f32> = self.pending.drain(..PACKET).collect();
             self.seq = self.seq.wrapping_add(1);
             let rms = (chunk.iter().map(|v| v * v).sum::<f32>() / PACKET as f32).sqrt();
-            self.quiet_for = if rms >= QUIET {
+            self.quiet_for = if rms >= QUIET.max(self.floor * OVER_FLOOR) {
                 0
             } else {
                 self.quiet_for.saturating_add(1)
+            };
+            self.floor = if rms < self.floor {
+                rms
+            } else {
+                (self.floor * FLOOR_RISE).min(FLOOR_MAX)
             };
             let send = self.ptt == Some(true) || self.quiet_for <= HANGOVER;
             if !send {
@@ -161,6 +193,40 @@ mod tests {
         );
         assert_eq!(out[0].seq, 11, "sequence numbers count gated packets too");
         assert_eq!(out[14].seq, 25);
+    }
+
+    /// A quiet room through an offset mic: hiss just over the fixed threshold, on -0.26 of DC.
+    /// A deterministic noise (xorshift), so the test does not depend on luck.
+    fn offset_hiss(n: usize, seed: u32) -> Vec<f32> {
+        let mut s = seed.max(1);
+        (0..n)
+            .map(|_| {
+                s ^= s << 13;
+                s ^= s >> 17;
+                s ^= s << 5;
+                // uniform in -0.0085..0.0085: RMS about 0.0049, over QUIET
+                -0.26 + (s as f32 / u32::MAX as f32 - 0.5) * 0.017
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_offset_hissing_mic_in_a_quiet_room_soon_stops_sending() {
+        let mut p = Packetizer::new();
+        let mut out = vec![];
+        p.push(&offset_hiss(PACKET * 250, 7), &mut out);
+        // the floor starts at QUIET and has to find the room first; after that, nothing
+        assert!(out.len() < 40, "sent {} of 250 quiet packets", out.len());
+        out.clear();
+        p.push(&offset_hiss(PACKET * 100, 9), &mut out);
+        assert!(out.is_empty(), "once the floor is known a quiet room sends nothing");
+        // and speech over the same room still gets through, with the offset gone
+        let x: Vec<f32> = tone(PACKET * 10, 0.2).iter().zip(offset_hiss(PACKET * 10, 11)).map(|(a, b)| a + b).collect();
+        p.push(&x, &mut out);
+        assert!(out.len() >= 9, "speech sent: {} of 10", out.len());
+        let s = out.last().unwrap().decode().unwrap();
+        let mean = s.iter().sum::<f32>() / s.len() as f32;
+        assert!(mean.abs() < 0.01, "the DC offset is removed: mean {mean}");
     }
 
     #[test]
