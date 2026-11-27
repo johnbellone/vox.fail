@@ -1,6 +1,7 @@
 //! The in-world editor: the edit mode a player turns on in a world they may change. It is
 //! made of the [`bridge`] (the messages between the page and the client), the [`camera`] (the
-//! edit flight and fly-to), and, in later steps, picking, ghosts, gizmos and undo.
+//! edit flight and fly-to), picking, the ghosts and the gizmos (the handles that move, turn and
+//! resize the selection), and, in later steps, undo.
 //!
 //! [`EditorPlugin`] is added only when the client starts in edit mode. Its systems take the
 //! page's commands from [`EditorInbox`], send the entity changes to the server, and put what
@@ -18,6 +19,7 @@
 
 pub mod bridge;
 pub mod camera;
+pub mod gizmo;
 pub mod ghost;
 pub mod pick;
 
@@ -175,9 +177,12 @@ impl Plugin for EditorPlugin {
             .init_resource::<EditorOutbox>()
             .init_resource::<EditorState>()
             .init_resource::<camera::EditFly>()
+            .init_resource::<gizmo::GizmoDrag>()
             .add_systems(Update, (apply_commands, send_changes).chain().in_set(EditorSystems).after(receive))
             .add_systems(Update, camera::fly_to.after(EditorSystems).before(crate::client::controls))
             // after the controls, so the click that captures the mouse is known (pointer_claimed)
+            // gizmos before the pick, so a press on a handle claims the click and is not a pick
+            .add_systems(Update, gizmo::gizmo.after(EditorSystems).after(crate::client::controls).before(pick::select))
             .add_systems(Update, pick::select.after(EditorSystems).after(crate::client::controls))
             .add_systems(Update, ghost::ghost.after(EditorSystems).after(crate::client::controls));
     }
