@@ -1,4 +1,6 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T16:35:18Z]: Linked `architecture/deployment.md` to `architecture/cloudflare-hosting-design.md` (Where hosting is going: Cloudflare Containers with SQLite streamed to R2 (proposed).).
+* **Creation** [2026-11-27T16:35:18Z]: Documented concept `architecture/cloudflare-hosting-design.md` (Design (proposed): vox.fail on Cloudflare Containers). — Owner's choices for moving vox.fail onto Cloudflare; design doc proposed, not built.
 * **Relate** [2026-11-27T16:11:44Z]: Linked `architecture/deployment.md` to `decisions/cloudflare-managed-tunnel.md` (How vox.fail's zone, rules, tunnel and DNS are set up: one cf script, tunnel managed in Cloudflare.).
 * **Creation** [2026-11-27T16:11:44Z]: Documented concept `decisions/cloudflare-managed-tunnel.md` (Decision: vox.fail's Cloudflare Side Is Scripted, With a Tunnel Managed in Cloudflare). — First-time Cloudflare setup for vox.fail, scripted with cf.
 * **Update** [2026-11-27T16:02:00Z]: Updated concept `decisions/edge-worker-offline-page.md`. — Deployed with the cf CLI (cloudflare.config.ts); placeholder DNS record until the tunnel is routed.

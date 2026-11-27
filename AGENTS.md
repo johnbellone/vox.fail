@@ -270,6 +270,9 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [controls-and-hud.md](docs/design/controls-and-hud.md): block-game controls on an action
   layer, gamepad out of the box with brand-matched button hints, HUD (hotbar, health), menus
   with controller navigation, server-side inventory and health.
+- [cloudflare-hosting.md](docs/design/cloudflare-hosting.md): vox.fail on Cloudflare Containers: one
+  container (directory and vox-host) behind the edge Worker as a Durable Object, sleeping when
+  idle; SQLite kept, streamed to R2 by Litestream; the Worker serves the site; the server path retired.
 
 ## Known gaps (not yet done)
 
