@@ -1,8 +1,9 @@
 //! vox-format: how a Vox world is stored and sent (see `docs/design/world-format.md`).
 //!
 //! - [`zone`]: a zone (16 × 16 chunk columns, 256 m across at half-metre blocks) as one
-//!   compressed blob: its edited chunks in vox-core's run-length encoding, compressed together,
-//!   with a hash that is its address.
+//!   compressed blob: its edited chunks in vox-core's run-length encoding, and its entities
+//!   (portals, spawns, objectives, settings) as postcard records, each section compressed
+//!   separately, with a hash that is its address.
 //! - [`region`]: a region (32 × 32 zones, 8,192 m across, an atlas tile) as a small blob of its
 //!   zones' hashes, itself addressed by hash.
 //! - [`store`]: where blobs live (a folder, or an Oxen repository with a commit per snapshot,
@@ -10,7 +11,8 @@
 //!   kept for a week, restorable.
 //! - [`oxen`]: the Oxen store, with history older than the week squashed away.
 //!
-//! Phase 1 holds blocks only; entities, structures and levels as files come next.
+//! Zones carry their entities (format 2; format 1 blobs still read). Structures and levels as
+//! files come next.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod oxen;

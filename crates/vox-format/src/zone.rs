@@ -4,28 +4,45 @@
 //! ```text
 //! "VOXR"        magic (zones were called regions when the format was made; the bytes stay,
 //!               so every blob already stored keeps its hash)
-//! u16           format version
+//! u16           format version: 1 (chunks only) or 2 (chunks and entities)
 //! i32, i32      zone key (x, z, in zones)
 //! u16           block palette version (which list of blocks the ids refer to)
 //! u32           chunks
-//! u32           compressed length
+//! u32           compressed length of the chunk section
 //! [u8]          zstd frame: for each chunk, in (y, z, x) order:
 //!                   varint chunk x, z within the zone (0-15), varint chunk y (zigzag)
 //!                   varint chunk version, varint length, the run-length bytes
+//! -- version 2 only, after the chunk section --
+//! u32           entities
+//! u32           compressed length of the entity section
+//! [u8]          zstd frame: for each entity, in id order:
+//!                   u32 entity id, u16 name length, the name ("vox::Portal"),
+//!                   u16 component version, u32 length, the postcard bytes of the Component
 //! ```
 //!
-//! The hash (BLAKE3, first 16 bytes) is over the header and the *uncompressed* chunk data, so
-//! compressing differently doesn't change a zone's identity. Reading is safe on untrusted
-//! input: sizes are checked before anything is allocated, decompression stops at a cap, and
-//! every chunk goes through vox-core's bounds-checked decoder.
+//! The hash (BLAKE3, first 16 bytes) is over the header and the *uncompressed* data, so
+//! compressing differently doesn't change a zone's identity. A version 2 hash also covers the
+//! entity count and the uncompressed entity records. A version 1 blob hashes exactly as it did
+//! before entities existed. Reading is safe on untrusted input: sizes are checked before
+//! anything is allocated, decompression stops at a cap, and every chunk and entity goes through
+//! its bounds-checked decoder and validation.
 
-use vox_core::{Chunk, ChunkKey};
+use std::collections::BTreeSet;
+
+use vox_core::{
+    Chunk, ChunkKey,
+    entity::{Component, EntityId},
+    wire,
+};
 
 use crate::{Error, err, store::Hash};
 
 /// Kept from when zones were called regions: changing it would change every stored hash.
 const MAGIC: &[u8; 4] = b"VOXR";
-pub const FORMAT_VERSION: u16 = 1;
+/// The format new zones are written in. Version 1 (chunks only) is still read.
+pub const FORMAT_VERSION: u16 = 2;
+/// The format before zones carried entities; still read, and written back unchanged.
+const VERSION_CHUNKS_ONLY: u16 = 1;
 /// Chunk columns along each side of a zone.
 pub const ZONE_CHUNKS: i32 = 16;
 /// Most chunks a zone may hold (16 × 16 columns, 16 chunks tall).
@@ -33,7 +50,20 @@ pub const MAX_CHUNKS: u32 = 16 * 16 * 16;
 /// Most bytes a zone's chunk data may decompress to (a run-length chunk is at most about
 /// 6 bytes a block in the worst case; real ones are under 1 KB).
 pub const MAX_DATA: usize = 64 << 20;
+/// Most entities a zone may hold.
+pub const MAX_ZONE_ENTITIES: u32 = 4_000;
+/// Longest component name a record may carry, in bytes.
+pub const MAX_ENTITY_NAME: usize = 64;
+/// Largest postcard payload one entity may be, in bytes.
+pub const MAX_ENTITY_BYTES: usize = 64 << 10;
+/// Most bytes a zone's entity records may decompress to.
+pub const MAX_ENTITY_DATA: usize = 64 << 20;
+/// Fixed bytes of one entity record before its name and payload: id, name length, component
+/// version, payload length. A count the section cannot hold is refused before allocating.
+const RECORD_MIN: usize = 4 + 2 + 2 + 4;
 const HEADER: usize = 4 + 2 + 4 + 4 + 2 + 4 + 4;
+/// The entity section's own header: its count and its compressed length.
+const ENTITY_HEADER: usize = 4 + 4;
 
 /// Which zone: chunk columns `x * 16 .. x * 16 + 16` and the same along z.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -61,20 +91,26 @@ pub fn zone_of(k: ChunkKey) -> ZoneKey {
     ZoneKey { x: k.0[0].div_euclid(ZONE_CHUNKS), z: k.0[2].div_euclid(ZONE_CHUNKS) }
 }
 
-/// A zone's chunks, ready to write or just read.
+/// A zone's chunks and entities, ready to write or just read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
     pub key: ZoneKey,
     pub palette_version: u16,
     /// (chunk, its version, its run-length bytes), any order (written sorted)
     pub chunks: Vec<(ChunkKey, u32, Vec<u8>)>,
+    /// The entities in this zone, any order (written sorted by id). Only a version 2 zone can
+    /// hold any.
+    pub entities: Vec<(EntityId, Component)>,
+    /// The format this zone is written in: [`FORMAT_VERSION`] when made here, 1 when read from
+    /// an older blob (which keeps its hash and has no entities).
+    pub version: u16,
 }
 
 impl Zone {
-    /// A zone from chunks (encoded with vox-core's run-length encoding).
+    /// A zone from chunks (encoded with vox-core's run-length encoding), with no entities.
     pub fn from_chunks<'a>(key: ZoneKey, palette_version: u16, chunks: impl IntoIterator<Item = (ChunkKey, &'a Chunk)>) -> Zone {
         let chunks = chunks.into_iter().filter(|(_, c)| !c.is_empty()).map(|(k, c)| (k, c.version, c.encode())).collect();
-        Zone { key, palette_version, chunks }
+        Zone { key, palette_version, chunks, entities: Vec::new(), version: FORMAT_VERSION }
     }
 
     /// The chunks, decoded.
@@ -88,10 +124,23 @@ impl Zone {
         v
     }
 
+    /// Refuses what this zone's format cannot hold, before anything is written or hashed.
+    fn check(&self) -> Result<(), Error> {
+        match self.version {
+            VERSION_CHUNKS_ONLY if !self.entities.is_empty() => return err("a version 1 zone can't hold entities"),
+            VERSION_CHUNKS_ONLY | FORMAT_VERSION => {}
+            v => return err(format!("can't write zone format {v}")),
+        }
+        if self.entities.len() as u32 > MAX_ZONE_ENTITIES {
+            return err("too many entities for a zone");
+        }
+        Ok(())
+    }
+
     fn header(&self, chunks: u32, compressed: u32) -> Vec<u8> {
         let mut h = Vec::with_capacity(HEADER);
         h.extend_from_slice(MAGIC);
-        h.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        h.extend_from_slice(&self.version.to_le_bytes());
         h.extend_from_slice(&self.key.x.to_le_bytes());
         h.extend_from_slice(&self.key.z.to_le_bytes());
         h.extend_from_slice(&self.palette_version.to_le_bytes());
@@ -117,18 +166,51 @@ impl Zone {
         Ok(out)
     }
 
+    /// The uncompressed entity records, sorted by id. Each value is validated here, so an
+    /// invalid entity is never written or hashed.
+    fn entity_data(&self) -> Result<Vec<u8>, Error> {
+        let mut sorted: Vec<&(EntityId, Component)> = self.entities.iter().collect();
+        sorted.sort_by_key(|(id, _)| id.0);
+        if sorted.windows(2).any(|w| w[0].0 == w[1].0) {
+            return err("an entity id is listed twice");
+        }
+        let mut out = Vec::new();
+        for (id, c) in sorted {
+            c.validate().map_err(|e| Error(format!("entity {}: {e}", id.0)))?;
+            let name = c.name();
+            let payload = wire::encode(c);
+            if payload.len() > MAX_ENTITY_BYTES {
+                return err(format!("entity {} is too big", id.0));
+            }
+            out.extend_from_slice(&id.0.to_le_bytes());
+            out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(&c.version().to_le_bytes());
+            out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            out.extend_from_slice(&payload);
+        }
+        Ok(out)
+    }
+
     /// The zone's identity: its hash (the same however it's compressed).
     pub fn hash(&self) -> Result<Hash, Error> {
+        self.check()?;
         let data = self.data()?;
         let mut h = blake3::Hasher::new();
         h.update(&self.header(self.chunks.len() as u32, 0));
         h.update(&data);
+        if self.version >= FORMAT_VERSION {
+            // the count is fixed-width, so the records after it can't be mistaken for chunk data
+            h.update(&(self.entities.len() as u32).to_le_bytes());
+            h.update(&self.entity_data()?);
+        }
         Ok(Hash::from_blake3(h.finalize()))
     }
 
     /// The blob, and its hash.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn encode(&self) -> Result<(Vec<u8>, Hash), Error> {
+        self.check()?;
         if self.chunks.len() as u32 > MAX_CHUNKS {
             return err("too many chunks for a zone");
         }
@@ -136,6 +218,12 @@ impl Zone {
         let packed = zstd::bulk::compress(&data, 9)?;
         let mut out = self.header(self.chunks.len() as u32, packed.len() as u32);
         out.extend_from_slice(&packed);
+        if self.version >= FORMAT_VERSION {
+            let packed_entities = zstd::bulk::compress(&self.entity_data()?, 9)?;
+            out.extend_from_slice(&(self.entities.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(packed_entities.len() as u32).to_le_bytes());
+            out.extend_from_slice(&packed_entities);
+        }
         Ok((out, self.hash()?))
     }
 
@@ -147,8 +235,8 @@ impl Zone {
         let u16_at = |i: usize| u16::from_le_bytes([blob[i], blob[i + 1]]);
         let u32_at = |i: usize| u32::from_le_bytes([blob[i], blob[i + 1], blob[i + 2], blob[i + 3]]);
         let version = u16_at(4);
-        if version != FORMAT_VERSION {
-            return err(format!("zone format {version}, this build reads {FORMAT_VERSION}"));
+        if version != VERSION_CHUNKS_ONLY && version != FORMAT_VERSION {
+            return err(format!("zone format {version}, this build reads {VERSION_CHUNKS_ONLY} and {FORMAT_VERSION}"));
         }
         let key = ZoneKey { x: u32_at(6) as i32, z: u32_at(10) as i32 };
         let palette_version = u16_at(14);
@@ -157,13 +245,34 @@ impl Zone {
         if count > MAX_CHUNKS {
             return err("too many chunks");
         }
-        if blob.len() != HEADER + compressed {
-            return err("the zone's length is wrong");
-        }
+        let len_err = || Error("the zone's length is wrong".into());
+        // checked, not wrapping: on wasm32 a usize is 32 bits, so a crafted length must not wrap
+        let chunks_end = HEADER.checked_add(compressed).ok_or_else(len_err)?;
+        // where the entity records start, and how many there are (none in a version 1 blob)
+        let (entities_at, ent_count) = if version == VERSION_CHUNKS_ONLY {
+            if blob.len() != chunks_end {
+                return Err(len_err());
+            }
+            (chunks_end, 0)
+        } else {
+            let at = chunks_end.checked_add(ENTITY_HEADER).ok_or_else(len_err)?;
+            if blob.len() < at {
+                return Err(len_err());
+            }
+            let ent_count = u32_at(chunks_end);
+            let ent_len = u32_at(chunks_end + 4) as usize;
+            if ent_count > MAX_ZONE_ENTITIES {
+                return err("too many entities");
+            }
+            if at.checked_add(ent_len) != Some(blob.len()) {
+                return Err(len_err());
+            }
+            (at, ent_count)
+        };
         // checked, not wrapping: a crafted key near i32::MAX must not overflow on wasm32 either
         let base = |v: i32| v.checked_mul(ZONE_CHUNKS).ok_or_else(|| Error("a zone key out of range".into()));
         let (bx, bz) = (base(key.x)?, base(key.z)?);
-        let data = unzstd(&blob[HEADER..], MAX_DATA)?;
+        let data = unzstd(&blob[HEADER..chunks_end], MAX_DATA)?;
         let mut pos = 0;
         let mut chunks = Vec::with_capacity(count as usize);
         for _ in 0..count {
@@ -188,8 +297,69 @@ impl Zone {
         if pos != data.len() {
             return err("extra bytes after the chunks");
         }
-        Ok(Zone { key, palette_version, chunks })
+        let entities = if version == VERSION_CHUNKS_ONLY { Vec::new() } else { parse_entities(&blob[entities_at..], ent_count)? };
+        Ok(Zone { key, palette_version, chunks, entities, version })
     }
+}
+
+/// Decodes a version 2 entity section (its zstd frame), checking every record before the
+/// next is read. A name must be a component this build knows, its version must be the one
+/// this build reads, and its value must pass [`Component::validate`] and re-encode to the
+/// same bytes (so one entity has one blob).
+fn parse_entities(src: &[u8], count: u32) -> Result<Vec<(EntityId, Component)>, Error> {
+    let data = unzstd(src, MAX_ENTITY_DATA)?;
+    let n = count as usize;
+    if n.saturating_mul(RECORD_MIN) > data.len() {
+        return err("more entities than the section holds");
+    }
+    let mut pos = 0;
+    let mut ids = BTreeSet::new();
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let id = u32::from_le_bytes(take_array(&data, &mut pos)?);
+        let name_len = u16::from_le_bytes(take_array(&data, &mut pos)?) as usize;
+        if name_len > MAX_ENTITY_NAME {
+            return err("an entity's name is too long");
+        }
+        let name = std::str::from_utf8(take(&data, &mut pos, name_len)?).map_err(|_| Error("an entity's name isn't text".into()))?;
+        let version = u16::from_le_bytes(take_array(&data, &mut pos)?);
+        let len = u32::from_le_bytes(take_array(&data, &mut pos)?) as usize;
+        if len > MAX_ENTITY_BYTES {
+            return err(format!("entity {id} is too big"));
+        }
+        let payload = take(&data, &mut pos, len)?;
+        let c: Component = wire::decode(payload).map_err(|e| Error(format!("entity {id}: {e}")))?;
+        if c.name() != name {
+            return err(format!("entity {id}: {name:?} isn't a component this build knows"));
+        }
+        if c.version() != version {
+            return err(format!("entity {id}: {name} version {version}, this build reads {}", c.version()));
+        }
+        c.validate().map_err(|e| Error(format!("entity {id}: {e}")))?;
+        if wire::encode(&c) != payload {
+            return err(format!("entity {id}: its data isn't in canonical form"));
+        }
+        if !ids.insert(id) {
+            return err(format!("entity {id} is listed twice"));
+        }
+        out.push((EntityId(id), c));
+    }
+    if pos != data.len() {
+        return err("extra bytes after the entities");
+    }
+    Ok(out)
+}
+
+/// The next `n` bytes, advancing the position; refused (not panicked) past the end.
+fn take<'a>(b: &'a [u8], pos: &mut usize, n: usize) -> Result<&'a [u8], Error> {
+    let end = pos.checked_add(n).filter(|&e| e <= b.len()).ok_or_else(|| Error("an entity runs past the end".into()))?;
+    let s = &b[*pos..end];
+    *pos = end;
+    Ok(s)
+}
+
+fn take_array<const N: usize>(b: &[u8], pos: &mut usize) -> Result<[u8; N], Error> {
+    take(b, pos, N)?.try_into().map_err(|_| Error("an entity runs past the end".into()))
 }
 
 /// Decompress a zstd frame (pure Rust, so the browser can too), refusing more than `cap` bytes.
@@ -236,7 +406,11 @@ fn read_varint(b: &[u8], pos: &mut usize) -> Result<u32, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vox_core::{World, world::Bounds};
+    use vox_core::{
+        World,
+        entity::{Axis, Dest, Objective, Portal, Settings, Spawn},
+        world::Bounds,
+    };
 
     fn world() -> World {
         let mut w = World::new(Bounds { lo: [-600, -64, -600], hi: [600, 128, 600] }, 9);
@@ -258,6 +432,43 @@ mod tests {
         }
         m
     }
+
+    /// One zone of the test world, with chunks and no entities.
+    fn a_zone() -> Zone {
+        let w = world();
+        let (key, ks) = zones(&w).into_iter().next().unwrap();
+        Zone::from_chunks(key, 1, ks.iter().map(|k| (*k, w.chunk(*k).unwrap())))
+    }
+
+    fn entities() -> Vec<(EntityId, Component)> {
+        vec![
+            (EntityId(9), Component::Settings(Settings { json: r#"{"sky":"earth","time":16.5}"#.into() })),
+            (
+                EntityId(2),
+                Component::Portal(Portal {
+                    name: "void".into(),
+                    at: [0.0, 0.0, 11.5],
+                    axis: Axis::Z,
+                    size: [8.0, 16.0],
+                    yaw: 0.0,
+                    level: "void".into(),
+                    to: Dest::World { world: "yard".into() },
+                    key: Some(7),
+                }),
+            ),
+            (EntityId(5), Component::Objective(Objective { name: "the altar".into(), at: [0.0, 0.0, -9.0], radius: 3.0 })),
+            (EntityId(7), Component::Spawn(Spawn { at: [1.0, 2.0, 3.0], yaw: 90.0 })),
+        ]
+    }
+
+    /// A version 1 blob written by the encoder before entities existed (a six-block test zone,
+    /// palette 3), with the hash it had then.
+    const V1_FIXTURE: &[u8] = &[
+        0x56, 0x4f, 0x58, 0x52, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x23, 0x00, 0x00, 0x00, 0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x1a, 0xd1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x15, 0x40, 0x00,
+        0x01, 0x01, 0x01, 0x02, 0x01, 0x03, 0x01, 0x04, 0x01, 0x05, 0x9e, 0x48, 0x00, 0x01, 0x02, 0x9c, 0xb7, 0x01, 0x00,
+    ];
+    const V1_HASH: &str = "2e34dd26017d5022d13a0d1276e0d3f7";
 
     #[test]
     fn zones_round_trip_with_the_same_blocks() {
@@ -321,5 +532,142 @@ mod tests {
         far[6..10].copy_from_slice(&i32::MAX.to_le_bytes());
         assert!(Zone::decode(&far).is_err(), "a key that overflows is refused");
         assert!(Zone::decode(b"nope").is_err());
+    }
+
+    #[test]
+    fn a_version_1_blob_reads_with_no_entities_and_keeps_its_hash() {
+        let z = Zone::decode(V1_FIXTURE).unwrap();
+        assert_eq!(z.version, VERSION_CHUNKS_ONLY);
+        assert!(z.entities.is_empty());
+        assert!(!z.chunks.is_empty());
+        assert_eq!(z.hash().unwrap().hex(), V1_HASH);
+        let (blob, hash) = z.encode().unwrap();
+        assert_eq!(blob, V1_FIXTURE, "written back as version 1, byte for byte");
+        assert_eq!(hash.hex(), V1_HASH);
+    }
+
+    #[test]
+    fn a_version_1_zone_cannot_hold_entities() {
+        let mut z = Zone::decode(V1_FIXTURE).unwrap();
+        z.entities = entities();
+        assert!(z.encode().is_err());
+        assert!(z.hash().is_err());
+    }
+
+    #[test]
+    fn version_2_round_trips_portal_settings_objective_and_spawn() {
+        let mut z = a_zone();
+        z.entities = entities();
+        let (blob, hash) = z.encode().unwrap();
+        let back = Zone::decode(&blob).unwrap();
+        assert_eq!(back.version, FORMAT_VERSION);
+        let mut want = entities();
+        want.sort_by_key(|(id, _)| id.0);
+        assert_eq!(back.entities, want);
+        assert_eq!(back.hash().unwrap(), hash, "the hash survives the trip");
+        assert_eq!(back.chunks.len(), z.chunks.len());
+    }
+
+    #[test]
+    fn changing_an_entity_changes_the_hash() {
+        let mut a = a_zone();
+        a.entities = entities();
+        let before = a.hash().unwrap();
+        let mut b = a.clone();
+        if let Component::Objective(o) = &mut b.entities[2].1 {
+            o.radius = 4.0;
+        }
+        assert_ne!(before, b.hash().unwrap());
+        let mut c = a.clone();
+        c.entities.pop();
+        assert_ne!(before, c.hash().unwrap());
+        let mut d = a.clone();
+        d.entities.reverse();
+        assert_eq!(before, d.hash().unwrap(), "order does not matter");
+    }
+
+    /// A version 2 zone with no chunks and the given raw entity section.
+    fn zone_with_section(count: u32, raw: &[u8]) -> Vec<u8> {
+        let no_chunks = zstd::bulk::compress(&[], 9).unwrap();
+        let packed = zstd::bulk::compress(raw, 9).unwrap();
+        let mut out = Vec::new();
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        out.extend_from_slice(&0i32.to_le_bytes());
+        out.extend_from_slice(&0i32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&(no_chunks.len() as u32).to_le_bytes());
+        out.extend_from_slice(&no_chunks);
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&(packed.len() as u32).to_le_bytes());
+        out.extend_from_slice(&packed);
+        out
+    }
+
+    fn record(id: u32, name: &[u8], version: u16, payload: &[u8]) -> Vec<u8> {
+        let mut r = Vec::new();
+        r.extend_from_slice(&id.to_le_bytes());
+        r.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        r.extend_from_slice(name);
+        r.extend_from_slice(&version.to_le_bytes());
+        r.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        r.extend_from_slice(payload);
+        r
+    }
+
+    fn spawn_payload() -> Vec<u8> {
+        wire::encode(&Component::Spawn(Spawn { at: [1.0, 2.0, 3.0], yaw: 90.0 }))
+    }
+
+    #[test]
+    fn a_hand_built_entity_section_is_read_when_it_is_valid() {
+        let blob = zone_with_section(1, &record(1, b"vox::Spawn", 1, &spawn_payload()));
+        let z = Zone::decode(&blob).unwrap();
+        assert_eq!(z.entities, vec![(EntityId(1), Component::Spawn(Spawn { at: [1.0, 2.0, 3.0], yaw: 90.0 }))]);
+    }
+
+    #[test]
+    fn crafted_entity_sections_are_refused_not_crashed_on() {
+        // a count over the cap, with nothing after it: refused before anything is allocated
+        assert!(Zone::decode(&zone_with_section(MAX_ZONE_ENTITIES + 1, &[])).is_err());
+        // a count the section cannot hold
+        assert!(Zone::decode(&zone_with_section(2, &record(1, b"vox::Spawn", 1, &spawn_payload()))).is_err());
+        // a record whose length runs past the end (the length field sits after id, name and version)
+        let mut past = record(1, b"vox::Spawn", 1, &[1, 2, 3]);
+        past[18..22].copy_from_slice(&1000u32.to_le_bytes());
+        assert!(Zone::decode(&zone_with_section(1, &past)).is_err());
+        // a name that is not a component this build knows
+        assert!(Zone::decode(&zone_with_section(1, &record(1, b"vox::Nope", 1, &spawn_payload()))).is_err());
+        // a payload that is not postcard for its component
+        assert!(Zone::decode(&zone_with_section(1, &record(1, b"vox::Spawn", 1, &[0xff]))).is_err());
+        // a value that fails validate (a non-finite yaw)
+        let nan = wire::encode(&Component::Spawn(Spawn { at: [0.0; 3], yaw: f32::NAN }));
+        assert!(Zone::decode(&zone_with_section(1, &record(1, b"vox::Spawn", 1, &nan))).is_err());
+        // a version this build does not know
+        assert!(Zone::decode(&zone_with_section(1, &record(1, b"vox::Spawn", 2, &spawn_payload()))).is_err());
+        // a payload over the byte cap
+        let huge = vec![0u8; MAX_ENTITY_BYTES + 1];
+        assert!(Zone::decode(&zone_with_section(1, &record(1, b"vox::Spawn", 1, &huge))).is_err());
+        // a name over the cap
+        let long = vec![b'a'; MAX_ENTITY_NAME + 1];
+        assert!(Zone::decode(&zone_with_section(1, &record(1, &long, 1, &spawn_payload()))).is_err());
+        // the same id twice
+        let twice = [record(1, b"vox::Spawn", 1, &spawn_payload()), record(1, b"vox::Spawn", 1, &spawn_payload())].concat();
+        assert!(Zone::decode(&zone_with_section(2, &twice)).is_err());
+        // bytes after the last record
+        let mut trailing = record(1, b"vox::Spawn", 1, &spawn_payload());
+        trailing.push(0);
+        assert!(Zone::decode(&zone_with_section(1, &trailing)).is_err());
+        // bytes after the entity section
+        let mut good = a_zone();
+        good.entities = entities();
+        let (blob, _) = good.encode().unwrap();
+        let mut junk = blob.clone();
+        junk.push(0);
+        assert!(Zone::decode(&junk).is_err());
+        for n in 0..blob.len().min(4000) {
+            let _ = Zone::decode(&blob[..n]);
+        }
     }
 }
