@@ -17,6 +17,10 @@ ARG WASM_BINDGEN=0.2.130
 # checksum file: this is the SHA-256 of the file as first downloaded, to catch a change)
 ARG OXEN_VERSION=0.68.2
 ARG OXEN_SHA256=c2d2c03d566c4aca04a0b8672b7690eca24359cd34c8cbb7f1c695c10978d799
+# Litestream, which streams the databases to R2 on Cloudflare (start.sh); the SHA-256 is the one
+# in the release's checksums.txt
+ARG LITESTREAM_VERSION=0.5.18
+ARG LITESTREAM_SHA256=d3687b9fd0f2e9426bbd3da828429ff3f1dfc5c9b74d54fdf028e4ee510e7dea
 
 # ---- the servers
 FROM rust:${RUST_VERSION}-${DEBIAN} AS servers
@@ -66,6 +70,15 @@ RUN curl -fsSL -o /tmp/oxen.tar.gz "https://github.com/Oxen-AI/Oxen/releases/dow
     && echo "${OXEN_SHA256}  /tmp/oxen.tar.gz" | sha256sum -c - \
     && mkdir -p /out && tar xzf /tmp/oxen.tar.gz -C /out oxen
 
+# ---- litestream
+FROM debian:${DEBIAN}-slim AS litestream
+ARG LITESTREAM_VERSION
+ARG LITESTREAM_SHA256
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL -o /tmp/litestream.tar.gz "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.tar.gz" \
+    && echo "${LITESTREAM_SHA256}  /tmp/litestream.tar.gz" | sha256sum -c - \
+    && mkdir -p /out && tar xzf /tmp/litestream.tar.gz -C /out litestream
+
 # ---- what runs
 FROM debian:${DEBIAN}-slim
 RUN apt-get update \
@@ -75,6 +88,11 @@ RUN apt-get update \
 WORKDIR /opt/vox
 COPY --from=servers /out/ /opt/vox/bin/
 COPY --from=oxen /out/oxen /opt/vox/bin/oxen
+# on Cloudflare the container starts with start.sh instead of the CMD below
+# (docs/design/cloudflare-hosting.md): restore from R2, then the servers under Litestream
+COPY --from=litestream /out/litestream /opt/vox/bin/litestream
+COPY --chmod=755 deploy/docker/start.sh deploy/docker/vox-supervise /opt/vox/bin/
+COPY deploy/docker/litestream.yml deploy/docker/directory.args deploy/docker/host.args /opt/vox/etc/
 COPY assets /opt/vox/assets
 COPY data /opt/vox/data
 COPY --from=site /src/apps/site/dist /opt/vox/web

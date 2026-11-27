@@ -1,0 +1,28 @@
+# vox-host's flags on Cloudflare, one per line (vox-supervise reads them; start.sh restores the
+# worlds named here). The same as deploy/vox-host.service, except it listens on every address
+# (the Durable Object connects from outside) and keeps no snapshot folders: Litestream's copy in
+# R2 is the history, and the disk is gone at every restart.
+--listen
+0.0.0.0:7790
+--data
+/var/lib/vox
+--directory-key
+/var/lib/vox/directory.key.pub
+--directory-url
+http://127.0.0.1:7700
+--idle-stop
+10
+--keep
+void
+--instances
+--no-snapshots
+--world
+void@7780
+--world
+yard@7781
+--world
+islands@7782
+--world
+sea@7783
+--world
+orbit@7784

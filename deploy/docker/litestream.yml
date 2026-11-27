@@ -1,0 +1,27 @@
+# Litestream for vox.fail on Cloudflare Containers (docs/design/cloudflare-hosting.md): every
+# SQLite database under the data folder (the directory's, each world's, atlas tiles in their
+# folders) is streamed to R2 as it changes, and restored by start.sh when the container starts.
+#
+# Filled in from the environment when Litestream reads it:
+#   VOX_DATA                    the data folder (/var/lib/vox)
+#   VOX_R2_BUCKET, VOX_R2_PREFIX  where in R2 (vox-data, vox)
+#   VOX_R2_ENDPOINT             https://<account id>.r2.cloudflarestorage.com
+#   LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY  an R2 token for that bucket only
+
+dbs:
+  - dir: ${VOX_DATA}
+    pattern: "*.db"
+    recursive: true # atlas tiles live in atlas-<name>/
+    watch: true # databases made after start (a new world, a tile) are picked up
+    meta-dir: ${VOX_DATA}/.litestream
+    replica:
+      url: s3://${VOX_R2_BUCKET}/${VOX_R2_PREFIX}
+      endpoint: ${VOX_R2_ENDPOINT}
+
+# A full copy each day, and a week of history to restore from (the world format's week).
+snapshot:
+  interval: 24h
+  retention: 168h
+
+# On SIGTERM: the servers save first (they're Litestream's child), then this last sync.
+shutdown-sync-timeout: 30s
