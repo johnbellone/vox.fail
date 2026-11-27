@@ -687,9 +687,17 @@ impl WorldState {
         if !p.edits.take(now) || p.pending.is_some() {
             return self.refuse_entity(conn, &tx, id, EntityWhy::TooFast);
         }
-        // a new prop's owner is stamped here, as the account judging it (owners come from the
-        // server, like portal keys), so whatever owner the client sent is overwritten
-        let edit = stamp_prop_owner(edit, account.or_else(|| self.cfg.editors_all.then(|| guest_account(conn))));
+        // a prop's owner comes from the server, like a portal's key: a new prop is stamped with the
+        // account judging it, an existing one keeps the owner it has, so whatever owner the client
+        // sent is overwritten (a page holds ids as JavaScript numbers, which lose a large id)
+        let kept = match &edit {
+            Edit::Put { entity: Some(id), .. } => match self.entities.map.get(id) {
+                Some((_, Component::Prop(o))) => Some(o.owner),
+                _ => None,
+            },
+            _ => None,
+        };
+        let edit = stamp_prop_owner(edit, account.or_else(|| self.cfg.editors_all.then(|| guest_account(conn))), kept);
         // a guest is judged as a builder, which the rules refuse; on a local `--editors-all`
         // world (no directory) a guest is an editor, judged as its local account (`guest_account`)
         let Some(account) = account else {
@@ -1494,10 +1502,13 @@ fn guest_account(conn: u64) -> u64 {
 }
 
 /// A new prop is owned by the account placing it (`judged`), whatever owner the client named.
-/// Edits of an existing prop are left alone: `vox_core::edit` keeps the owner it had.
-fn stamp_prop_owner(mut edit: Edit, judged: Option<u64>) -> Edit {
-    if let (Edit::Put { entity: None, component: Component::Prop(p), .. }, Some(account)) = (&mut edit, judged) {
-        p.owner = Some(account);
+/// An edit of an existing prop keeps the owner that prop has (`kept`), so nobody hands a prop
+/// over or takes one; `vox_core::edit` still checks the owner is unchanged.
+fn stamp_prop_owner(mut edit: Edit, judged: Option<u64>, kept: Option<Option<u64>>) -> Edit {
+    match (&mut edit, judged, kept) {
+        (Edit::Put { entity: None, component: Component::Prop(p), .. }, Some(account), _) => p.owner = Some(account),
+        (Edit::Put { entity: Some(_), component: Component::Prop(p), .. }, _, Some(owner)) => p.owner = owner,
+        _ => {}
     }
     edit
 }

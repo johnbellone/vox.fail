@@ -523,6 +523,25 @@ async fn editor_prop_a_guest_on_an_editors_all_world_places_a_prop() {
     assert_eq!(next_done(&mut g.ws).await.0, 1);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_an_edit_keeps_the_owner_whatever_the_client_sends() {
+    let f = folder("keep-owner", false);
+    let mut c = config(&f.dir);
+    c.directory = None;
+    c.editors_all = true;
+    let (_server, url) = serve(c).await;
+    let mut g = join_as(&url, "Gus", None).await;
+    send(&mut g.ws, &pose(g.spawn)).await;
+    send(&mut g.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [25, 0, 25], 0, 0) }).await;
+    let owner = owner_of(&next_entities(&mut g.ws).await);
+    let (_, entity, seq) = next_done(&mut g.ws).await;
+    // a page holds the guest's large account as a JavaScript number and sends it back rounded:
+    // the edit still applies, and the prop keeps the owner it had
+    send(&mut g.ws, &ToServer::Put { id: 2, entity: Some(entity), expect: Some(seq), component: prop(f.crate_box, [25, 0, 25], 3, 12345) }).await;
+    assert_eq!(owner_of(&next_entities(&mut g.ws).await), owner);
+    assert_eq!(next_done(&mut g.ws).await.0, 2);
+}
+
 /// A builder places a prop that names `sent` as its owner (or none): it comes back owned by the
 /// builder, account 8, since the owner is stamped by the server.
 async fn builder_places_as_its_own(tag: &str, sent: Option<u64>) {
