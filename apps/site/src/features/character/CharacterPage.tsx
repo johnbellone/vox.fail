@@ -13,7 +13,6 @@ import type { Worn } from "./preview";
 const GROUPS: [string, string][] = [
   ["Main", "Vox's own"],
   ["Cast", "The cast"],
-  ["Roast", "The roast"],
   ["Animals", "Animals"],
 ];
 const SLOTS: [Slot, string][] = [
@@ -86,18 +85,41 @@ export function CharacterPage() {
                 <Text c="moon.5">Pick someone to be, then something to wear. You can change it whenever you like.</Text>
               </div>
               {GROUPS.map(([g, label]) => {
-                const people = cat.data!.characters.filter((c) => c.group === g);
-                if (!people.length) return null;
+                const families = familiesOf(cat.data!.characters.filter((c) => c.group === g));
+                if (!families.length) return null;
+                const open = families.find((f) => f.some((c) => c.model === model));
                 return (
                   <Stack key={g} gap="xs">
                     <Title order={3} fz="md">
                       {label}
                     </Title>
                     <SimpleGrid cols={{ base: 3, xs: 4, sm: 5, lg: 6 }} spacing="xs" role="group" aria-label={label}>
-                      {people.map((c) => (
-                        <CastButton key={c.model} c={c} picked={c.model === model} onPick={() => setModel(c.model)} />
+                      {families.map((f) => (
+                        <CastButton
+                          key={f[0].model}
+                          family={f}
+                          picked={f === open}
+                          shown={(f === open && who) || f[0]}
+                          onPick={() => f !== open && setModel(f[0].model)}
+                        />
                       ))}
                     </SimpleGrid>
+                    {open && open.length > 1 && (
+                      <Stack gap={4}>
+                        <Text fz="sm" fw={700} id={`outfit-${g}`}>
+                          {open[0].family_name ?? open[0].name}: outfit
+                        </Text>
+                        <Chip.Group multiple={false} value={model ?? ""} onChange={(v) => v && setModel(v)}>
+                          <Group gap={6} role="group" aria-labelledby={`outfit-${g}`}>
+                            {open.map((c) => (
+                              <Chip key={c.model} value={c.model} size="sm">
+                                {c.outfit ?? c.name}
+                              </Chip>
+                            ))}
+                          </Group>
+                        </Chip.Group>
+                      </Stack>
+                    )}
                   </Stack>
                 );
               })}
@@ -149,12 +171,29 @@ export function CharacterPage() {
   );
 }
 
-function CastButton({ c, picked, onPick }: { c: CastMember; picked: boolean; onPick: () => void }) {
+/** Characters grouped by family, in catalogue order: a character without one is a family of one. */
+type Family = [CastMember, ...CastMember[]];
+
+function familiesOf(cs: CastMember[]): Family[] {
+  const by = new Map<string, Family>();
+  for (const c of cs) {
+    const k = c.family ?? c.model;
+    const f = by.get(k);
+    if (f) f.push(c);
+    else by.set(k, [c]);
+  }
+  return [...by.values()];
+}
+
+function CastButton({ family, shown, picked, onPick }: { family: Family; shown: CastMember; picked: boolean; onPick: () => void }) {
+  const name = family[0].family_name ?? family[0].name;
+  const more = family.length > 1 ? `${family.length} outfits` : undefined;
   return (
     <UnstyledButton
       onClick={onPick}
       aria-pressed={picked}
-      title={c.about || c.name}
+      aria-label={more ? `${name}, ${more}` : name}
+      title={shown.about || shown.name}
       p={6}
       style={{
         borderRadius: 10,
@@ -163,10 +202,15 @@ function CastButton({ c, picked, onPick }: { c: CastMember; picked: boolean; onP
         textAlign: "center",
       }}
     >
-      <Image src={`/assets/${c.portrait}`} alt="" loading="lazy" radius="sm" />
+      <Image src={`/assets/${shown.portrait}`} alt="" loading="lazy" radius="sm" />
       <Text fz="xs" fw={700} mt={4} lineClamp={1}>
-        {c.name}
+        {name}
       </Text>
+      {more && (
+        <Text fz={10} c="moon.5" lineClamp={1}>
+          {more}
+        </Text>
+      )}
     </UnstyledButton>
   );
 }
