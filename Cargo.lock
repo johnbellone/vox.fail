@@ -7108,6 +7108,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vox-props"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vox-art",
+ "vox-format",
+]
+
+[[package]]
 name = "vox-relay"
 version = "0.1.0"
 dependencies = [

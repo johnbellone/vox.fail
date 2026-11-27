@@ -1,0 +1,11 @@
+[package]
+name = "vox-props"
+version.workspace = true
+edition.workspace = true
+description = "Builds the accepted props (data/props) from the prop recipes in source/props: VOXP blobs, a catalogue and thumbnails."
+
+[dependencies]
+vox-art = { path = "../../crates/vox-art" }
+vox-format.workspace = true
+serde.workspace = true
+serde_json.workspace = true

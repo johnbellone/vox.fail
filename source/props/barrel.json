@@ -1,0 +1,18 @@
+{
+    "def": {
+        "id": "barrel",
+        "name": "Barrel",
+        "tags": ["container", "furniture"],
+        "pivot": [4, 0, 4],
+        "place": { "on": ["floor"], "footprint": [[0, 0], [1, 0], [0, 1], [1, 1]], "height": 2 },
+        "collide": "footprint",
+        "palette_version": 1
+    },
+    "recipe": {
+        "version": 1, "scale": "prop", "seed": 1, "size": [8, 10, 8],
+        "ops": [
+            { "lathe": { "axis_at": [4, 4], "from_y": 0, "profile": [3, 4, 4, 4, 4, 4, 3], "mat": "wood", "tone": 1 } },
+            { "lathe": { "axis_at": [4, 4], "from_y": 0, "profile": [4, 0, 0, 0, 0, 0, 4], "mat": "iron", "tone": 0 } }
+        ]
+    }
+}

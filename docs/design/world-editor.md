@@ -284,7 +284,7 @@ the editor says how many. World-wide undo is the owner's snapshot restore
 Built as props.md phases 1 to 3 describe (no change to that design):
 
 1. `crates/vox-art`: grid, palette, seeded RNG, `PropDef`, the `.vox` reader and importer, the
-   checks; the existing `source/vox/props/` imported as the seed catalogue.
+   checks; the seed catalogue is built from the prop recipes in `source/props/` by `vox-props` (`source/vox/props/` does not exist yet).
 2. Prop recipe operations and golden tests (native and wasm).
 3. `VOXP` blobs, the `Prop` entity, the server's placement checks (props.md *Placing*),
    meshing, batching and prop occupancy in the clients.
