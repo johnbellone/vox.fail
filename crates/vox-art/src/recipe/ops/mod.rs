@@ -7,8 +7,10 @@ pub mod box_;
 pub mod cut;
 pub mod lathe;
 pub mod legs;
+pub mod openings;
 pub mod part;
 pub mod roof;
+pub mod trim;
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +31,8 @@ pub enum Op {
     Box(box_::Box),
     Roof(roof::Roof),
     Cut(cut::Cut),
+    Openings(openings::Openings),
+    Trim(trim::Trim),
 }
 
 impl Op {
@@ -41,6 +45,8 @@ impl Op {
             Op::Box(op) => op.check(size, palette),
             Op::Roof(op) => op.check(size, palette),
             Op::Cut(op) => op.check(size, palette),
+            Op::Openings(op) => op.check(size, palette),
+            Op::Trim(op) => op.check(size, palette),
         }
     }
 
@@ -54,6 +60,8 @@ impl Op {
             Op::Box(op) => op.writes(),
             Op::Roof(op) => op.writes(),
             Op::Cut(op) => op.writes(),
+            Op::Openings(op) => op.writes(),
+            Op::Trim(op) => op.writes(),
         }
     }
 
@@ -66,6 +74,8 @@ impl Op {
             Op::Box(op) => op.apply(env, rng),
             Op::Roof(op) => op.apply(env, rng),
             Op::Cut(op) => op.apply(env, rng),
+            Op::Openings(op) => op.apply(env, rng),
+            Op::Trim(op) => op.apply(env, rng),
         }
     }
 }

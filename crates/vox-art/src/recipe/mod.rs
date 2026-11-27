@@ -6,8 +6,9 @@
 //! operations overwrite earlier ones. The operations are closed: an unknown one is a parse
 //! error, so a recipe can only ask for what this crate knows how to build.
 //!
-//! Only the prop operations exist so far (lathe, legs, part). New variants go at the end of
-//! [`Op`], so the meaning of the existing ones never changes.
+//! The operations come at two scales: prop-scale (lathe, legs, part) and world-scale (box, roof,
+//! cut, openings, trim). New variants are appended after `Trim`, never reordered: the JSON names
+//! them, and the order is kept for stability.
 
 pub mod eval;
 pub mod ops;

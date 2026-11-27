@@ -540,4 +540,144 @@ mod tests {
         assert_eq!(errors[0].op, Some(0));
         assert!(errors[0].message.contains("outside a grid"));
     }
+
+    #[test]
+    fn golden_gable_roof_over_an_odd_width() {
+        // The ridge runs along z, so the layers shrink across x: 7 wide, then 5, 3 and 1, each 3
+        // deep. 21 + 15 + 9 + 3 = 48 voxels.
+        let json = r#"{"version":1,"scale":"world","seed":1,"size":[7,4,3],
+            "ops":[{"roof":{"over":[0,0,6,2],"at_y":0,"style":"gable","along_x":false,"mat":"wood","tone":0}}]}"#;
+        let built = eval(&recipe(json), &building_palette()).unwrap();
+        assert_eq!(built.grid.len(), 48);
+        assert_eq!(voxel_hash(&built.grid), "27de4e180c9884ab");
+    }
+
+    /// Brick, wood and glass: glass is palette index 4.
+    const FRONT_PALETTE: &str = r#"{
+        "version": 1,
+        "materials": [
+            { "name": "brick", "colours": [[150, 70, 50, 255]] },
+            { "name": "wood", "colours": [[90, 50, 20, 255], [140, 90, 40, 255]] },
+            { "name": "glass", "colours": [[160, 200, 220, 255]] }
+        ]
+    }"#;
+
+    fn front_palette() -> Palette {
+        Palette::from_json(FRONT_PALETTE).unwrap()
+    }
+
+    /// A hollow brick box 10 by 6 by 8 with two glass windows in its front wall (the z = 0 face).
+    /// Every 4 from the edge: the first starts at x = 2, the second at x = 6, and a third would
+    /// start at x = 10, past the wall, so it is left out. Each window is 2 wide and 2 high, its
+    /// bottom one voxel above the floor.
+    const FRONT: &str = r#"{
+        "version": 1, "scale": "world", "seed": 1, "size": [10, 6, 8],
+        "ops": [
+            { "box": { "from": [0, 0, 0], "to": [9, 5, 7], "mat": "brick", "tone": 0, "hollow": true } },
+            { "openings": { "face": "-z", "of": [0, 0, 0, 9, 5, 7], "every": 4, "size": [2, 2], "sill": 1, "mat": "glass", "tone": 0 } }
+        ]
+    }"#;
+
+    #[test]
+    fn golden_house_front_with_two_glass_windows() {
+        let built = eval(&recipe(FRONT), &front_palette()).unwrap();
+        // The hollow shell keeps 288 voxels, and the windows replace 2 * 2 * 2 = 8 of them with
+        // glass, so the count stays 288.
+        assert_eq!(built.grid.len(), 288);
+        let glass = built.grid.iter().filter(|&(_, index)| index == 4).count();
+        assert_eq!(glass, 8);
+        assert_eq!(built.grid.get([2, 1, 0]), Some(4));
+        assert_eq!(built.grid.get([7, 2, 0]), Some(4));
+        assert_eq!(built.grid.get([4, 1, 0]), Some(1));
+        assert_eq!(voxel_hash(&built.grid), "257cf149806c53fa");
+    }
+
+    #[test]
+    fn openings_without_a_material_leave_holes() {
+        let json = FRONT.replace(r#", "mat": "glass", "tone": 0"#, "");
+        let built = eval(&recipe(&json), &front_palette()).unwrap();
+        assert_eq!(built.grid.len(), 280);
+        assert_eq!(built.grid.get([2, 1, 0]), None);
+    }
+
+    #[test]
+    fn openings_every_below_two_is_refused() {
+        let json = FRONT.replace(r#""every": 4"#, r#""every": 1"#);
+        let errors = eval(&recipe(&json), &front_palette()).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].op, Some(1));
+        assert!(errors[0].message.contains("at least 2"));
+    }
+
+    #[test]
+    fn openings_with_a_zero_size_are_refused() {
+        let json = FRONT.replace(r#""size": [2, 2]"#, r#""size": [0, 2]"#);
+        let errors = eval(&recipe(&json), &front_palette()).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].op, Some(1));
+        assert!(errors[0].message.contains("at least 1 by 1"));
+    }
+
+    #[test]
+    fn openings_sticking_out_of_the_box_top_are_refused() {
+        // The box's top is at y = 5. A sill of 5 puts the top of the 2-high window at y = 6.
+        let json = FRONT.replace(r#""sill": 1"#, r#""sill": 5"#);
+        let errors = eval(&recipe(&json), &front_palette()).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].op, Some(1));
+        assert!(errors[0].message.contains("past the box's top"));
+    }
+
+    #[test]
+    fn openings_on_a_box_outside_the_grid_are_refused() {
+        let json = FRONT.replace(r#""of": [0, 0, 0, 9, 5, 7]"#, r#""of": [0, 0, 0, 9, 5, 8]"#);
+        let errors = eval(&recipe(&json), &front_palette()).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].op, Some(1));
+        assert!(errors[0].message.contains("outside a grid"));
+    }
+
+    /// A solid brick block 4 by 3 by 4, its edges trimmed in wood (palette index 2).
+    const TRIM: &str = r#"{
+        "version": 1, "scale": "world", "seed": 1, "size": [4, 3, 4],
+        "ops": [
+            { "box": { "from": [0, 0, 0], "to": [3, 2, 3], "mat": "brick", "tone": 0 } },
+            { "trim": { "of": [0, 0, 0, 3, 2, 3], "edges": "corners", "mat": "wood", "tone": 0 } }
+        ]
+    }"#;
+
+    fn trimmed(edges: &str) -> Built {
+        let json = TRIM.replace(r#""edges": "corners""#, &format!(r#""edges": "{edges}""#));
+        eval(&recipe(&json), &building_palette()).unwrap()
+    }
+
+    fn wood_count(built: &Built) -> usize {
+        built.grid.iter().filter(|&(_, index)| index == 2).count()
+    }
+
+    #[test]
+    fn golden_trim_corners_paints_the_four_columns() {
+        let built = eval(&recipe(TRIM), &building_palette()).unwrap();
+        // The block keeps its 48 voxels. The four corner columns are 3 high, so 12 are wood.
+        assert_eq!(built.grid.len(), 48);
+        assert_eq!(wood_count(&built), 12);
+        assert_eq!(built.grid.get([0, 1, 0]), Some(2));
+        assert_eq!(built.grid.get([1, 1, 0]), Some(1));
+        assert_eq!(voxel_hash(&built.grid), "f4ab6367beb847bb");
+    }
+
+    #[test]
+    fn trim_top_paints_only_the_rim() {
+        let built = trimmed("top");
+        // The rim of a 4 by 4 top is 12 voxels, all at height 2.
+        assert_eq!(wood_count(&built), 12);
+        assert_eq!(built.grid.get([0, 0, 0]), Some(1));
+        assert_eq!(built.grid.get([0, 2, 0]), Some(2));
+    }
+
+    #[test]
+    fn trim_all_paints_columns_and_top_rim() {
+        // The columns give 12 and the top rim adds its 8 voxels that are not corners: 20.
+        assert_eq!(wood_count(&trimmed("all")), 20);
+    }
 }
