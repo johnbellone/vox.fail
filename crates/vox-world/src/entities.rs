@@ -17,7 +17,8 @@ pub struct WorldEntities {
     pub map: BTreeMap<EntityId, (u64, Component)>,
     /// a portal entity was added, changed or removed since the doorways were last built
     pub portals_changed: bool,
-    /// the Settings entity changed since it was last applied (a later step applies it live)
+    /// a Settings entity was added, changed or removed since the receive step last looked; it
+    /// clears this there and applies the new settings (`WorldClient::apply_live_settings`)
     pub settings_changed: bool,
 }
 
@@ -69,6 +70,16 @@ impl WorldEntities {
         self.map.clear();
         self.portals_changed = true;
         self.settings_changed = true;
+    }
+
+    /// The Settings entity's json, parsed. A world has one Settings entity; if it ever had
+    /// more, the first by id is used. `None` when the world has no settings entity, or its
+    /// text does not parse (the checks in `apply` already refuse that).
+    pub fn settings_json(&self) -> Option<serde_json::Value> {
+        self.map.values().find_map(|(_, c)| match c {
+            Component::Settings(s) => serde_json::from_str::<serde_json::Value>(&s.json).ok(),
+            _ => None,
+        })
     }
 
     /// The portal entities as doorways. The server decides where a traveller really arrives,
@@ -183,6 +194,26 @@ mod tests {
         e.apply(&[change(1, 1, Some(Component::Settings(Settings { json: "{}".into() })))]);
         assert!(e.settings_changed);
         assert!(!e.portals_changed);
+    }
+
+    #[test]
+    fn settings_live() {
+        let mut e = WorldEntities::default();
+        assert!(e.settings_json().is_none());
+
+        e.apply(&[change(1, 1, Some(Component::Settings(Settings { json: r#"{"sky":"earth"}"#.into() })))]);
+        assert!(e.settings_changed);
+        assert_eq!(e.settings_json().unwrap()["sky"], "earth");
+
+        // a later change replaces the settings, and sets the flag again
+        e.settings_changed = false;
+        e.apply(&[change(2, 1, Some(Component::Settings(Settings { json: r#"{"sky":"dusk"}"#.into() })))]);
+        assert!(e.settings_changed);
+        assert_eq!(e.settings_json().unwrap()["sky"], "dusk");
+
+        // removed: nothing to apply
+        e.apply(&[change(3, 1, None)]);
+        assert!(e.settings_json().is_none());
     }
 
     #[test]

@@ -293,6 +293,9 @@ pub struct WorldClient {
     liquid: Vec<bool>,
     /// the world's settings (its sky, its time), until the sky takes them
     settings: Option<serde_json::Value>,
+    /// the settings as last applied (Welcome, or a live change), through `settings_key`: a
+    /// Settings entity that matches this is not applied again
+    settings_seen: Option<serde_json::Value>,
     /// `world:time:` and `world:clouds:` for the sky
     pub sky_cmds: Vec<(String, String)>,
     /// the time of day (kept here for the state page)
@@ -420,6 +423,7 @@ impl Default for WorldClient {
             lamp_id: 0,
             fire_id: 0,
             settings: None,
+            settings_seen: None,
             liquid: Vec::new(),
             sky_cmds: Vec::new(),
             hours: 0.0,
@@ -584,6 +588,74 @@ impl WorldClient {
     /// The world's settings, once, when they've just arrived.
     pub fn take_settings(&mut self) -> Option<serde_json::Value> {
         self.settings.take()
+    }
+
+    /// The world's settings, changed while you are in it: the outdoors system applies them
+    /// as it does on joining (it takes them with [`Self::take_settings`]).
+    pub fn set_settings(&mut self, s: serde_json::Value) {
+        self.settings = Some(s);
+    }
+
+    /// Applies a world's settings: the endless floor, the fixed cameras, the block bar and
+    /// voice range. On joining (`join`) it also sets the camera's starting angle and zoom. A
+    /// live change leaves the camera where you have it, and keeps the hotbar slot in range.
+    pub fn apply_settings(&mut self, set: &serde_json::Value, join: bool) {
+        self.floor = set.get("floor").and_then(|v| v.as_i64()).map(|f| f as i32);
+        self.shots = set
+            .get("cameras")
+            .and_then(|v| v.as_array())
+            .map(|l| l.iter().filter_map(Shot::from_json).collect())
+            .unwrap_or_default();
+        // the last world's shots are gone; a live change may also have shortened the list
+        self.shot = None;
+        self.last_shot = None;
+        self.forced_shot = None;
+        if join {
+            self.shot_blend = 0.0;
+        }
+        if join || set.get("voice_radius").is_some() {
+            self.voice_radius = crate::voice::plugin::radius_from(set.get("voice_radius"));
+        }
+        if join && let Some(c) = set.get("camera") {
+            if let Some(y) = c.get("yaw").and_then(|v| v.as_f64()) {
+                self.cam_yaw = (y as f32).to_radians();
+            }
+            if let Some(p) = c.get("pitch").and_then(|v| v.as_f64()).filter(|p| p.is_finite()) {
+                self.cam_pitch = (p as f32).to_radians().clamp(-1.45, 1.3);
+            }
+            if let Some(z) = c.get("zoom").and_then(|v| v.as_f64()) {
+                self.zoom = (z as f32).clamp(4.0, 45.0);
+                self.zoom_now = self.zoom;
+            }
+        }
+        // a world may choose its own block bar
+        let names: Vec<String> = set
+            .get("hotbar")
+            .and_then(|v| v.as_array())
+            .map(|l| l.iter().filter_map(|n| n.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let ids: Vec<u16> = names.iter().filter_map(|n| self.block_id(n)).take(9).collect();
+        if !ids.is_empty() {
+            self.hotbar = ids;
+            if join {
+                self.slot = 0;
+            }
+        }
+        self.slot = self.slot.min(self.hotbar.len().saturating_sub(1));
+    }
+
+    /// A Settings entity changed while you are in the world. Applied unless it matches what
+    /// you have (`settings_key`), which is what a world's Welcome already gave you. Returns
+    /// whether it was applied.
+    pub fn apply_live_settings(&mut self, new: serde_json::Value) -> bool {
+        let key = settings_key(&new);
+        if self.settings_seen.as_ref() == Some(&key) {
+            return false;
+        }
+        self.apply_settings(&new, false);
+        self.set_settings(new);
+        self.settings_seen = Some(key);
+        true
     }
 
     fn light_kind(&self, id: u16) -> Option<LightKind> {
@@ -920,6 +992,18 @@ impl WorldClient {
     }
 }
 
+/// A world's settings as the Settings entity holds them: without the keys the server merges
+/// into a Welcome's copy (`voice_radius`, `portals`), so the two compare equal when nothing
+/// changed.
+fn settings_key(v: &serde_json::Value) -> serde_json::Value {
+    let mut v = v.clone();
+    if let Some(o) = v.as_object_mut() {
+        o.remove("voice_radius");
+        o.remove("portals");
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1025,5 +1109,64 @@ mod tests {
         assert_eq!(w.selected(), 2);
         run_command(&mut w, "look:90:-30");
         assert!((w.cam_yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+    }
+
+    fn settings_world() -> WorldClient {
+        let mut w = WorldClient::new(None, "me".into());
+        w.names = vec!["grass".into(), "dirt".into(), "stone".into()];
+        w
+    }
+
+    #[test]
+    fn settings_key_drops_only_the_keys_the_server_merges() {
+        let s = serde_json::json!({"floor": -3, "voice_radius": 20.0, "portals": [], "sky": "dusk"});
+        assert_eq!(settings_key(&s), serde_json::json!({"floor": -3, "sky": "dusk"}));
+    }
+
+    #[test]
+    fn unchanged_settings_after_welcome_are_not_applied_again() {
+        let mut w = settings_world();
+        // what Welcome gives: the merged copy, with voice_radius and portals
+        let welcome = serde_json::json!({"floor": -3, "hotbar": ["stone"], "voice_radius": 20.0, "portals": []});
+        w.apply_settings(&welcome, true);
+        w.settings_seen = Some(settings_key(&welcome));
+        // the Settings entity itself has the same json, without the merged keys
+        let entity = serde_json::json!({"floor": -3, "hotbar": ["stone"]});
+        assert!(!w.apply_live_settings(entity), "identical: skipped");
+        assert!(w.settings.is_none(), "nothing handed to the outdoors system");
+    }
+
+    #[test]
+    fn changed_hotbar_is_applied_and_slot_stays_in_range() {
+        let mut w = settings_world();
+        w.hotbar = vec![1, 2, 3, 1, 2, 3];
+        w.slot = 5;
+        assert!(w.apply_live_settings(serde_json::json!({"hotbar": ["stone"]})));
+        assert_eq!(w.hotbar(), &[3]);
+        assert_eq!(w.slot, 0);
+
+        w.hotbar = vec![1, 2, 3];
+        w.slot = 2;
+        assert!(w.apply_live_settings(serde_json::json!({"hotbar": ["grass", "dirt"]})));
+        assert_eq!(w.hotbar(), &[1, 2]);
+        assert_eq!(w.slot, 1);
+    }
+
+    #[test]
+    fn live_change_without_voice_radius_keeps_it_and_the_camera() {
+        let mut w = settings_world();
+        w.voice_radius = 20.0;
+        w.cam_yaw = 1.0;
+        w.cam_pitch = -0.3;
+        w.zoom = 13.0;
+        assert!(w.apply_live_settings(serde_json::json!({"floor": 0, "camera": {"yaw": 90.0, "zoom": 30.0}})));
+        assert_eq!(w.floor, Some(0), "applied");
+        assert_eq!(w.voice_radius, 20.0, "not in the change, so unchanged");
+        assert_eq!(w.cam_yaw, 1.0);
+        assert_eq!(w.cam_pitch, -0.3);
+        assert_eq!(w.zoom, 13.0);
+
+        assert!(w.apply_live_settings(serde_json::json!({"voice_radius": 8.0})));
+        assert_eq!(w.voice_radius, 8.0);
     }
 }

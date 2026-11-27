@@ -69,35 +69,16 @@ pub fn receive(
                         }
                         w.welcome(you, world, palette, block_size, bounds, spawn, local);
                         w.settings = Some(serde_json::from_str(&settings).unwrap_or(serde_json::json!({})));
-                        // the endless floor, fixed cameras and the camera's starting angle
                         let set = w.settings.clone().unwrap_or_default();
-                        w.floor = set.get("floor").and_then(|v| v.as_i64()).map(|f| f as i32);
-                        w.voice_radius = crate::voice::plugin::radius_from(set.get("voice_radius"));
-                        w.shots = set
-                            .get("cameras")
-                            .and_then(|v| v.as_array())
-                            .map(|l| l.iter().filter_map(Shot::from_json).collect())
-                            .unwrap_or_default();
-                        // the last world's shots are gone
-                        w.shot = None;
-                        w.last_shot = None;
-                        w.forced_shot = None;
-                        w.shot_blend = 0.0;
-                        if let Some(c) = set.get("camera") {
-                            if let Some(y) = c.get("yaw").and_then(|v| v.as_f64()) {
-                                w.cam_yaw = (y as f32).to_radians();
-                            }
-                            if let Some(p) = c.get("pitch").and_then(|v| v.as_f64()).filter(|p| p.is_finite()) {
-                                w.cam_pitch = (p as f32).to_radians().clamp(-1.45, 1.3);
-                            }
-                            if let Some(z) = c.get("zoom").and_then(|v| v.as_f64()) {
-                                w.zoom = (z as f32).clamp(4.0, 45.0);
-                                w.zoom_now = w.zoom;
-                            }
-                        }
+                        // the endless floor, fixed cameras, the camera's starting angle and the block bar
+                        w.apply_settings(&set, true);
+                        w.settings_seen = Some(settings_key(&set));
                         w.focus = None;
                         // the last world's entities are gone; this world's come in Entities
                         entities.clear();
+                        // Welcome carries the settings itself, so the flag clear() just set
+                        // does not need a second apply
+                        entities.settings_changed = false;
                         // its portals (from the settings, until its entities say otherwise);
                         // and if you came through one, where you come out
                         w.portals = crate::portals::parse(&set);
@@ -109,19 +90,6 @@ pub fn receive(
                         w.travel = None;
                         if let Some(a) = w.arrival.take() {
                             w.arrive(a);
-                        }
-                        // a world may choose its own block bar
-                        let names: Vec<String> = w
-                            .settings
-                            .as_ref()
-                            .and_then(|s| s.get("hotbar"))
-                            .and_then(|v| v.as_array())
-                            .map(|l| l.iter().filter_map(|n| n.as_str().map(String::from)).collect())
-                            .unwrap_or_default();
-                        let ids: Vec<u16> = names.iter().filter_map(|n| w.block_id(n)).take(9).collect();
-                        if !ids.is_empty() {
-                            w.hotbar = ids;
-                            w.slot = 0;
                         }
                         w.status = format!("Loading {}", w.world);
                     }
@@ -238,7 +206,16 @@ pub fn receive(
                     }
                     ToClient::Travel { url, ticket, arrive } => w.travelled(&url, ticket, arrive),
                     // world entities (protocol 9); the portals are drawn from them in portals.rs
-                    ToClient::Entities(changes) => entities.apply(&changes),
+                    ToClient::Entities(changes) => {
+                        entities.apply(&changes);
+                        // a Settings entity that changed while you are here applies live
+                        if entities.settings_changed {
+                            entities.settings_changed = false;
+                            if let Some(s) = entities.settings_json() {
+                                w.apply_live_settings(s);
+                            }
+                        }
+                    }
                     // the editor work uses these; nothing draws them yet
                     ToClient::EntityRefused { .. } => {}
                     ToClient::Notice { text } => {
