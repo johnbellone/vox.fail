@@ -380,14 +380,19 @@ struct WorldState {
     /// where trips go to get a ticket from the directory (None: no directory; players go on
     /// without one)
     trips: Option<mpsc::Sender<Trip>>,
-    /// the place to reach (a dungeon's level names one: `"objective": {"name", "at", "radius"}`),
-    /// and whether it has been; reaching it ends a raid on the dungeon
+    /// the place to reach (the world's Objective entity, see `refresh_from_entities`), and
+    /// whether it has been; reaching it ends a raid on the dungeon
     objective: Option<Objective>,
     reached: bool,
     /// where "the objective was reached, by these accounts" goes (to the directory)
     goals: Option<mpsc::Sender<Vec<u64>>>,
     /// the world's entities (doorways, spawn, objective, settings), written with the blocks
     entities: entities::Entities,
+    /// the settings the ground, climate and sun were last built from
+    applied: serde_json::Value,
+    /// the settings moved on from what `meta('settings')` holds, so the next flush writes them
+    /// (a flush with nothing else dirty would otherwise skip them)
+    settings_unsaved: bool,
 }
 
 /// A place in a world to reach: a dungeon's objective.
@@ -401,17 +406,6 @@ pub(crate) struct Objective {
 }
 
 impl Objective {
-    /// From a world's settings: `"objective": {"name": "the altar", "at": [0, 0, -9], "radius": 3}`.
-    pub(crate) fn from_settings(settings: &serde_json::Value) -> Option<Objective> {
-        let o = settings.get("objective")?;
-        let a = o.get("at")?.as_array()?;
-        let at = [a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32, a.get(2)?.as_f64()? as f32];
-        let radius = o.get("radius").and_then(|r| r.as_f64()).unwrap_or(3.0) as f32;
-        let name = o.get("name").and_then(|n| n.as_str()).unwrap_or("the objective");
-        let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
-        (at.iter().all(|v| v.is_finite()) && radius.is_finite() && radius > 0.0).then(|| Objective { name, at, radius: radius.min(64.0) })
-    }
-
     fn holds(&self, p: [f32; 3]) -> bool {
         (0..3).map(|i| (p[i] - self.at[i]).powi(2)).sum::<f32>() <= self.radius * self.radius
     }

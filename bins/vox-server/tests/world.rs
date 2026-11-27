@@ -404,9 +404,17 @@ async fn the_yard_entities_seed_once_and_stay_gone() {
     // a world from before entities: no entity rows and no seed mark. It is seeded once,
     // from its stored settings, and a second reopen leaves it as it is.
     {
+        // a world from before entities stored the whole world object as its settings (portals
+        // and all); the settings the server keeps now are the Settings entity's alone
+        let level = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/levels/yard.json")).unwrap();
         let c = rusqlite::Connection::open(&db).unwrap();
         c.execute("DELETE FROM entities", []).unwrap();
         c.execute("DELETE FROM meta WHERE key = 'entities_seeded'", []).unwrap();
+        c.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('settings', ?1)",
+            [vox_core::level::settings(&level)],
+        )
+        .unwrap();
     }
     open_yard(&db).await;
     assert_eq!(entity_rows(&db), seeded);

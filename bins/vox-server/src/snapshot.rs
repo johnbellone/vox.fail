@@ -218,6 +218,8 @@ impl WorldState {
             self.snap_changed.extend(zones);
             self.entities.replace(ents);
         }
+        // the objective and the settings come from the entities, which may now be the old ones
+        self.refresh_from_entities();
         self.flush()?;
         self.snapshot()?;
         let what = match (until, has_entities) {

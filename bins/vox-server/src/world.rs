@@ -76,7 +76,7 @@ impl WorldState {
             None => [0.5, 0.0, 0.5],
         };
         let set: serde_json::Value = serde_json::from_str(&settings).unwrap_or_default();
-        let ground = set.get("floor").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32 * cfg.block_size;
+        let ground = ground_of(&set, cfg.block_size);
         // entities: a new world takes its seed level (or an atlas tile's settings); a world
         // from before entities existed takes its stored settings once; then the spawn. The
         // mark, not the map, says whether a world was seeded: an emptied world stays empty.
@@ -100,19 +100,7 @@ impl WorldState {
             Some(c) if !fresh => c.sane(),
             _ => Climate::from_settings(set.get("weather"), ground),
         };
-        let seed = cfg.name.bytes().fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
-        // no air, no weather: nothing to simulate or send
-        let airless = set.get("weather").and_then(|v| v.as_str()) == Some("none");
-        let weather = (!airless).then(|| {
-            let mut weather = Weather::new(climate, seed);
-            weather.sun = match set.get("sky").and_then(|v| v.as_str()) {
-                Some("earth") | None => sun_at(set.get("time").and_then(|v| v.as_f64()).unwrap_or(15.0) as f32),
-                _ => 0.5,
-            };
-            // let the air settle before anyone arrives
-            weather.step(120.0);
-            weather
-        });
+        let weather = weather_from(climate, &set, name_seed(&cfg.name));
         let mut s = WorldState {
             cfg,
             db,
@@ -137,12 +125,17 @@ impl WorldState {
             snap_full: true,
             last_snapshot: Instant::now(),
             trips: None,
-            objective: Objective::from_settings(&set),
+            objective: None,
             reached: false,
             goals: None,
             entities: ents,
+            applied: set,
+            settings_unsaved: false,
         };
-        if fresh {
+        // the entities are the source of truth: where the stored settings differ from them, the
+        // world takes the entities' (a change made while it was closed)
+        s.refresh_from_entities();
+        if fresh || s.settings_unsaved {
             s.flush()?;
         }
         if let Some(dir) = s.cfg.snapshots.clone() {
@@ -252,7 +245,7 @@ impl WorldState {
     /// Write changed chunks and the edit log in one transaction.
     pub(super) fn flush(&mut self) -> Result<(), String> {
         self.last_flush = Instant::now();
-        if self.dirty.is_empty() && self.log.is_empty() && !self.entities.changed() && self.seq > 0 {
+        if self.dirty.is_empty() && self.log.is_empty() && !self.entities.changed() && !self.settings_unsaved && self.seq > 0 {
             return Ok(());
         }
         let e = |e: rusqlite::Error| e.to_string();
@@ -290,6 +283,7 @@ impl WorldState {
         self.dirty.clear();
         self.log.clear();
         self.entities.written();
+        self.settings_unsaved = false;
         Ok(())
     }
 
@@ -369,7 +363,62 @@ impl WorldState {
                 changes.push(EntityChange { seq: self.seq, entity: id, component: Some(c) });
             }
         }
+        // the entities changed: an Objective or Settings is taken up here too (the editor's Put
+        // and Remove, when they land, call this the same way)
+        self.refresh_from_entities();
         changes
+    }
+
+    /// Takes the entities' word for the objective and for what the Settings entity sets (the
+    /// ground, the climate, the sun), so that a change made while the world was closed, or by a
+    /// restore, is what the world runs. Only a setting that changed is rebuilt: a weather change
+    /// restarts the weather, a floor change moves the ground, and nothing else touches the
+    /// running simulation.
+    pub(super) fn refresh_from_entities(&mut self) {
+        let objective = objective_of(&self.entities);
+        if objective != self.objective {
+            // a new place to reach is reached afresh
+            self.reached = false;
+            self.objective = objective;
+        }
+        let set = settings_of(&self.entities);
+        let weather_changed = set.get("weather") != self.applied.get("weather");
+        let floor_changed = set.get("floor") != self.applied.get("floor");
+        let sun_changed =
+            set.get("sky") != self.applied.get("sky") || set.get("time") != self.applied.get("time");
+        let ground = ground_of(&set, self.cfg.block_size);
+        if weather_changed {
+            let climate = Climate::from_settings(set.get("weather"), ground);
+            self.weather = weather_from(climate, &set, name_seed(&self.cfg.name));
+        } else if floor_changed && let Some(w) = &mut self.weather {
+            w.climate.ground = ground;
+        }
+        if sun_changed && let Some(w) = &mut self.weather {
+            w.sun = sun_for(&set);
+        }
+        // a world with no air (weather "none") has no climate: a floor change touches nothing
+        if weather_changed || (floor_changed && self.weather.is_some()) {
+            // open reads the stored climate back, so it must follow the settings too (players'
+            // changes to it are stored the same way, see `ToServer::Climate`). Going to no air
+            // leaves no climate to keep, so the stored one goes.
+            match self.weather.as_ref().and_then(|w| serde_json::to_string(&w.climate).ok()) {
+                Some(j) => {
+                    let _ = self.db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('climate', ?1)", [j]);
+                }
+                None => {
+                    let _ = self.db.execute("DELETE FROM meta WHERE key = 'climate'", []);
+                }
+            }
+            self.send_weather();
+        }
+        // the stored settings now say what was applied, so the next opening doesn't take a
+        // change that is already in the entities as news (and overwrite a player's climate)
+        let settings = set.to_string();
+        if settings != self.settings {
+            self.settings = settings;
+            self.settings_unsaved = true;
+        }
+        self.applied = set;
     }
 
     /// Sends entity changes to everyone here (players and watchers), in `Entities` messages.
@@ -740,6 +789,58 @@ struct VoiceWho {
     id: u32,
     at: [f32; 3],
     account: Option<u64>,
+}
+
+/// The ground a settings' `floor` gives, scaled by the block size (as it always was).
+fn ground_of(set: &serde_json::Value, block_size: f32) -> f32 {
+    set.get("floor").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32 * block_size
+}
+
+/// The sun a settings' sky and time give: the earth's by the hour, a steady half for any other sky.
+fn sun_for(set: &serde_json::Value) -> f32 {
+    match set.get("sky").and_then(|v| v.as_str()) {
+        Some("earth") | None => sun_at(set.get("time").and_then(|v| v.as_f64()).unwrap_or(15.0) as f32),
+        _ => 0.5,
+    }
+}
+
+/// The weather a world runs with `climate`: none when its settings say "none" (no air to
+/// simulate or send), else the weather with the sun the settings give, the air settled before
+/// anyone arrives.
+fn weather_from(climate: Climate, set: &serde_json::Value, seed: u32) -> Option<Weather> {
+    let airless = set.get("weather").and_then(|v| v.as_str()) == Some("none");
+    (!airless).then(|| {
+        let mut weather = Weather::new(climate, seed);
+        weather.sun = sun_for(set);
+        weather.step(120.0);
+        weather
+    })
+}
+
+/// The seed of a world's weather: a hash of its name, so the same world always starts alike.
+fn name_seed(name: &str) -> u32 {
+    name.bytes().fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619))
+}
+
+/// The Settings entity's JSON (`{}` when there is none), read as `settings_now` reads it.
+fn settings_of(ents: &Entities) -> serde_json::Value {
+    let json = ents
+        .map
+        .values()
+        .find_map(|(_, c)| match c {
+            Component::Settings(s) => Some(s.json.as_str()),
+            _ => None,
+        })
+        .unwrap_or("{}");
+    serde_json::from_str(json).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+/// The world's objective, from its Objective entity (the first, if there are two).
+fn objective_of(ents: &Entities) -> Option<Objective> {
+    ents.map.values().find_map(|(_, c)| match c {
+        Component::Objective(o) => Some(Objective { name: o.name.clone(), at: o.at, radius: o.radius.min(64.0) }),
+        _ => None,
+    })
 }
 
 /// The entities a world from before entities takes from its stored settings. A stored value
