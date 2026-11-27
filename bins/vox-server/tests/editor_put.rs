@@ -270,6 +270,33 @@ async fn editor_put_a_guest_is_not_yours() {
     assert_eq!(next_refusal(&mut g.ws).await, (1, EntityWhy::NotYours));
 }
 
+/// A local world with no directory (so guests may join), with or without `--editors-all`.
+fn local_config(editors_all: bool) -> Config {
+    let mut c = config();
+    c.directory = None;
+    c.editors_all = editors_all;
+    c
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_put_a_guest_edits_on_an_editors_all_world() {
+    let (_server, url) = serve(local_config(true)).await;
+    let mut g = join(&url, "Gus", None).await;
+    send(&mut g.ws, &pose(g.spawn)).await;
+    send(&mut g.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("door", [2.5, 0.0, 2.5], url_to(":7781")) }).await;
+    let (id, _, _) = next_done(&mut g.ws).await;
+    assert_eq!(id, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_put_a_guest_is_not_yours_without_editors_all() {
+    let (_server, url) = serve(local_config(false)).await;
+    let mut g = join(&url, "Gus", None).await;
+    send(&mut g.ws, &pose(g.spawn)).await;
+    send(&mut g.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("door", [2.5, 0.0, 2.5], url_to(":7781")) }).await;
+    assert_eq!(next_refusal(&mut g.ws).await, (1, EntityWhy::NotYours));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_builder_cannot_move_a_level_portal_or_place_one() {
     let dir = directory(Arc::default()).await;

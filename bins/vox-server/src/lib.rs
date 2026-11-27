@@ -134,8 +134,10 @@ pub struct Config {
     pub rules_every: Duration,
     /// the folder of accepted props: `catalogue.json` and each prop's `<hash>.voxp` (see props.rs)
     pub props: PathBuf,
-    /// every signed-in player is an editor (advanced edits), with no question to the directory.
-    /// For local play and tests only: a live world asks the directory who may edit.
+    /// every signed-in player is an editor (advanced edits), with no question to the directory,
+    /// and so is every guest (judged as a local account, see `world::guest_account`). For local
+    /// play and tests only: a live world asks the directory who may edit, and a world with a
+    /// directory refuses this flag. Without it, guests may not edit.
     pub editors_all: bool,
 }
 

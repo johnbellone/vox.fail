@@ -142,8 +142,13 @@ struct Who {
 
 /// Joins as `name` with `token`, and reads the world until it is ready.
 async fn join(url: &str, name: &str, token: String) -> Who {
+    join_as(url, name, Some(token)).await
+}
+
+/// Joins as `name`, signed in with `token` or as a guest (None), and reads the world until it is ready.
+async fn join_as(url: &str, name: &str, token: Option<String>) -> Who {
     let (mut ws, _) = connect_async(url).await.unwrap();
-    send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: vec![], token: Some(token) }).await;
+    send(&mut ws, &ToServer::Hello { protocol: PROTOCOL, name: name.into(), avatar: vec![], token }).await;
     let mut spawn = None;
     let mut ready = false;
     while spawn.is_none() || !ready {
@@ -490,4 +495,64 @@ async fn editor_prop_a_builder_may_not_move_into_a_full_plot_but_may_move_within
     let (first, first_seq) = placed[0];
     send(&mut c.ws, &ToServer::Put { id: 67, entity: Some(first), expect: Some(first_seq), component: prop(f.crate_box, [95, 0, 95], 0, 8) }).await;
     assert_eq!(next_done(&mut c.ws).await.0, 67);
+}
+
+/// The owner of the prop the first change of `made` places.
+fn owner_of(made: &[EntityChange]) -> Option<u64> {
+    match &made[0].component {
+        Some(Component::Prop(p)) => p.owner,
+        _ => panic!("expected a prop"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_a_guest_on_an_editors_all_world_places_a_prop() {
+    let f = folder("guest", false);
+    // a local world with no directory: every guest is an editor (`--editors-all`)
+    let mut c = config(&f.dir);
+    c.directory = None;
+    c.editors_all = true;
+    let (_server, url) = serve(c).await;
+    let mut g = join_as(&url, "Gus", None).await;
+    send(&mut g.ws, &pose(g.spawn)).await;
+    // the owner the client names is replaced by the guest's local account
+    send(&mut g.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [25, 0, 25], 0, 99) }).await;
+    let made = next_entities(&mut g.ws).await;
+    assert_eq!(made.len(), 1);
+    assert!(owner_of(&made).is_some_and(|o| o != 99), "the server stamps the guest's own owner");
+    assert_eq!(next_done(&mut g.ws).await.0, 1);
+}
+
+/// A builder places a prop that names `sent` as its owner (or none): it comes back owned by the
+/// builder, account 8, since the owner is stamped by the server.
+async fn builder_places_as_its_own(tag: &str, sent: Option<u64>) {
+    let f = folder(tag, false);
+    let fetches: Arc<AtomicUsize> = Arc::default();
+    let (_server, url) = world(&f, fetches.clone()).await;
+    wait_for(|| fetches.load(Ordering::SeqCst) > 0).await;
+    let mut c = join(&url, "Cy", token(8, "Cy")).await;
+    send(&mut c.ws, &pose([5.0, 0.0, 5.0])).await;
+    let component = Component::Prop(Prop {
+        prop: f.crate_box,
+        at: [25, 0, 25],
+        yaw: 0,
+        variant: 0,
+        state: 0,
+        channel: None,
+        text: None,
+        owner: sent,
+    });
+    send(&mut c.ws, &ToServer::Put { id: 1, entity: None, expect: None, component }).await;
+    assert_eq!(owner_of(&next_entities(&mut c.ws).await), Some(8));
+    assert_eq!(next_done(&mut c.ws).await.0, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_a_builder_places_a_prop_with_no_owner_as_its_own() {
+    builder_places_as_its_own("stamp-none", None).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_prop_a_builder_places_a_prop_named_for_someone_else_as_its_own() {
+    builder_places_as_its_own("stamp-other", Some(7)).await;
 }

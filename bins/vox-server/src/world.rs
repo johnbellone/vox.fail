@@ -661,9 +661,14 @@ impl WorldState {
         if !p.edits.take(now) || p.pending.is_some() {
             return self.refuse_entity(conn, &tx, id, EntityWhy::TooFast);
         }
-        // a guest is judged as a builder, which the rules refuse
+        // a new prop's owner is stamped here, as the account judging it (owners come from the
+        // server, like portal keys), so whatever owner the client sent is overwritten
+        let edit = stamp_prop_owner(edit, account.or_else(|| self.cfg.editors_all.then(|| guest_account(conn))));
+        // a guest is judged as a builder, which the rules refuse; on a local `--editors-all`
+        // world (no directory) a guest is an editor, judged as its local account (`guest_account`)
         let Some(account) = account else {
-            return self.apply_entity_edit(conn, id, edit, Role::Builder);
+            let role = if self.cfg.editors_all { Role::Editor } else { Role::Builder };
+            return self.apply_entity_edit(conn, id, edit, role);
         };
         if let Some(role) = self.role_of(account) {
             return self.apply_entity_edit(conn, id, edit, role);
@@ -724,11 +729,13 @@ impl WorldState {
     /// made at once (`commit_edit`).
     fn apply_entity_edit(&mut self, conn: u64, id: u32, edit: Edit, role: Role) {
         let Some(p) = self.players.get(&conn) else { return };
-        let (account, at, tx) = (p.account, p.at, p.tx.clone());
-        if let Err(why) = self.judge(&edit, role, account, at) {
+        let (signed_in, at, tx) = (p.account, p.at, p.tx.clone());
+        let judged = signed_in.or_else(|| self.cfg.editors_all.then(|| guest_account(conn)));
+        if let Err(why) = self.judge(&edit, role, judged, at) {
             return self.refuse_entity(conn, &tx, id, why);
         }
-        if let Some(account) = account {
+        // only a signed-in player has a directory account to ask about portals
+        if let Some(account) = signed_in {
             match self.directory_first(&edit, role, false) {
                 Ok(None) => {}
                 Ok(Some((call, body))) => return self.hold_for_directory(conn, Pending { id, edit, role }, account, call, body),
@@ -1277,6 +1284,22 @@ fn keyed_call(old: &Portal, new: &Portal, moved: bool, current: Option<&str>) ->
         }
         _ => Err(EntityWhy::Unavailable),
     }
+}
+
+/// The account a guest's edits are judged as on a local `--editors-all` world (no directory).
+/// A directory's accounts are small numbers counted up from one, so `u64::MAX - conn` never
+/// matches a real one; the world only uses it to judge the edit and never sends it anywhere.
+fn guest_account(conn: u64) -> u64 {
+    u64::MAX - conn
+}
+
+/// A new prop is owned by the account placing it (`judged`), whatever owner the client named.
+/// Edits of an existing prop are left alone: `vox_core::edit` keeps the owner it had.
+fn stamp_prop_owner(mut edit: Edit, judged: Option<u64>) -> Edit {
+    if let (Edit::Put { entity: None, component: Component::Prop(p), .. }, Some(account)) = (&mut edit, judged) {
+        p.owner = Some(account);
+    }
+    edit
 }
 
 /// The name the directory's wire form gives an axis.
