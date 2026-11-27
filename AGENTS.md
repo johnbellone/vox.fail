@@ -263,6 +263,9 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [props.md](docs/design/props.md): props (small authored objects with behaviours) as recipes or
   imported MagicaVoxel files, the checks and review pipeline, placing them in worlds, and a
   seventy-prop catalogue with a twelve-prop first wave.
+- [ground-relief.md](docs/design/ground-relief.md): natural ground with generated dips of a few
+  centimetres (a function of the world's seed, drawn in the block shader), and puddles that
+  fill them from ground water the weather keeps.
 - [controls-and-hud.md](docs/design/controls-and-hud.md): block-game controls on an action
   layer, gamepad out of the box with brand-matched button hints, HUD (hotbar, health), menus
   with controller navigation, server-side inventory and health.

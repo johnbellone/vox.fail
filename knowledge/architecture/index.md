@@ -29,3 +29,4 @@
 * [Prop Authoring: Recipes, MagicaVoxel Import and the Touch-up Loop](prop-authoring-lanes.md) - The two lanes into one prop library: Rust recipes with prop-shaped operations, and hand-made .vox files imported with palette snapping and reserved-colour tags.
 * [Prop Checks, Contact-Sheet Review and the Style Guide](prop-checks-and-review.md) - The budgets and structured checks a prop must pass, the rendered contact sheet a reviewer sees, and the style rules given to authors.
 * [Props in Worlds: Entity, Placement, Drawing, Collision and Use](props-in-worlds.md) - How a world stores, validates, draws, collides with and lets players use prop instances, and how dungeons use them.
+* [Design (proposed): Ground Relief and Puddles](ground-relief-design.md) - Natural ground gets generated dips of a few centimetres (a seeded integer function drawn per pixel in the block shader), and rain pools in them from ground water kept by the weather simulation.

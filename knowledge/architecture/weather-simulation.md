@@ -3,7 +3,7 @@ type: Architecture
 title: Weather Simulation
 description: "A small server-side atmosphere model whose keyframes drive haze, fog, clouds, rain and wind in every client."
 tags: [architecture, weather, simulation, vox-core]
-generated: { by: agent/mcp, at: "2026-11-26T15:52:35Z" }
+generated: { by: agent/mcp, at: "2026-11-27T13:28:19Z" }
 status: stable
 code_refs: [crates/vox-core/src/weather.rs, crates/vox-world/src/outdoors.rs]
 ---
@@ -23,3 +23,6 @@ Visibility and distance haze, a volume of fog baked round the camera (High quali
 
 ## Tests
 Part of the 44 `vox-core` tests: it settles to its climate, rain falls from storms not from clear air, fog lowers visibility, wind follows the preset, keyframes round-trip, bad climates are made sane.
+
+# Related Concepts
+- [Design (proposed): Ground Relief and Puddles](ground-relief-design.md): Proposed: ground water per column, filling puddles in the generated relief.
