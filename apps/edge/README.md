@@ -1,33 +1,41 @@
-# vox.fail's edge worker
+# vox.fail's edge Worker
 
-A Cloudflare Worker on `vox.fail/*`, in front of the tunnel. While the server is up it changes
-nothing: every request, WebSockets included, goes on to the directory and the worlds. When the
-server can't be reached (Cloudflare answers 530, 502, 504 or a 52x), it answers instead:
+A Cloudflare Worker on `vox.fail/*` (`vox-edge`). It serves the site itself, and sends only
+what needs the servers on to them (docs/design/cloudflare-hosting.md).
 
-| Request | While the server is offline |
+| Request | Answered by |
 | --- | --- |
-| A page (`/`, `/play`, …) | The offline page (`src/offline.tsx`): what Vox is, the worlds' screenshots, "offline right now", status 503, never cached |
-| `/api/…` | `503 {"error": "vox is offline right now; try again later"}` |
-| Anything else (game files, world sockets) | Cloudflare's own answer |
+| Pages (`/`, `/play`, …), `/chunks/`, `/static/` | The Worker's files (the built site), with the directory's security headers and `no-cache` |
+| `/pkg/` (the browser client) | The Worker's files, in the brotli or gzip copy the browser takes, kept five minutes |
+| `/assets/`, `/data/` | The Worker's files, kept five minutes |
+| `/api/world/…`, `/api/host/…` | `404`: these are for the servers on localhost only |
+| `/api/…`, `/auth/…`, `/w/…` | The servers, in a container run by the Durable Object `VoxServers` (`src/container.ts`): started on the first request, `/w/` to vox-host (7790), the rest to the directory (7700), asleep after 15 idle minutes. When it can't start (530, 502, 504, a 52x), `/api/` answers `503 {"error": "vox is offline …"}`, a sign-in page gets the offline page, and a world socket gets the error |
 
-The directory's own `503` ("busy") passes through untouched. The offline page's files live under
-`/_offline/`, which the directory never uses, and come from the Worker, not the server.
+The directory's own `503` ("busy") passes through. When the site's API client gets the
+offline answer, it goes to the offline page (`/_offline/offline.html`, from `src/offline.tsx`):
+what Vox is, the worlds' screenshots, and a Try again that goes back to the page you were on
+(`src/back.ts`). The page shares its text with the home page
+(`apps/site/src/features/home/Pitch.tsx`).
+
+The browser client's `.wasm` is bigger than a Worker's 25 MiB file limit. So `build.ts` leaves
+out any file that big when its `.br` and `.gz` copies are there (`tools/dev/build_web.sh` makes
+them), and the Worker sends a copy with its `Content-Encoding`.
 
 ```bash
-bun test                 # the Worker against a stand-in server
-bun run build            # the offline page into dist/_offline/ (with docs/screenshots)
-bun run deploy           # build and deploy with cf (signed in with `cf auth login`, or
-                         # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)
+(cd ../site && bun run build)   # the site first
+bun test                        # the Worker against stand-in files and servers
+bun run build                   # dist/: the site, assets/, data/, _offline/
+VOX_SITE=… VOX_ASSETS=… VOX_DATA=… VOX_REQUIRE_PKG=1 bun run build   # a release: files from the image
+bun run deploy                  # build, then wrangler deploy: builds the image from
+                                # deploy/docker/Dockerfile (needs Docker) and pushes it
 ```
 
-The page shares its text with the home page (`apps/site/src/features/home/Pitch.tsx`). To look at
-it, build and serve `dist/` (`python3 -m http.server -d dist`), then open `/_offline/offline.html`.
+The Worker, the Durable Object, the container and the route `vox.fail/*` are set up in
+`wrangler.jsonc`. It uses Wrangler, not `cf`, because `cf` 1.0's `cloudflare.config.ts` doesn't
+take containers yet. The route needs vox.fail's proxied DNS record
+(`deploy/cloudflare-setup.sh`). `src/cloudflare.d.ts` holds the few runtime types the Durable
+Object uses.
 
-The Worker is set up in `cloudflare.config.ts` (name, route `vox.fail/*`, the `ASSETS` binding)
-and `wrangler.config.ts` (the assets folder); `cf` runs on Node, not Bun. The route needs vox.fail's proxied DNS
-record, which points at the tunnel (`deploy/cloudflare-setup.sh`); while no server is connected
-the tunnel answers 530 and the Worker shows the offline page.
-
-Deploys run from `.github/workflows/edge.yml` on main, through the `production` environment
-(only `main` may use it; it holds the Cloudflare token and account ID). Requests through a Worker count
-against the Workers plan (100,000 a day on the free plan; a world's WebSocket is one request).
+Deploys come from releases, because only a release builds the browser client;
+`.github/workflows/edge.yml` checks pull requests and `main`. Requests through a Worker count
+against the Workers plan.

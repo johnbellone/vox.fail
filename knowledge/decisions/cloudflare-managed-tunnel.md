@@ -1,10 +1,10 @@
 ---
 type: Decision
 title: "Decision: vox.fail's Cloudflare Side Is Scripted, With a Tunnel Managed in Cloudflare"
-description: "deploy/cloudflare-setup.sh (cf CLI) sets the zone settings, cache and www redirect rules, the remotely managed tunnel \"vox\" (/w/ to vox-host :7790, the rest to the directory) and DNS; the server only runs cloudflared with the tunnel's token."
+description: "Superseded 2026-11-27: the tunnel \"vox\" is deleted; vox.fail runs on Cloudflare Containers behind the edge Worker. The setup script still sets the zone settings, cache and www rules."
 tags: [decision, deployment, cloudflare, tunnel, dns]
-generated: { by: agent/mcp, at: "2026-11-27T16:11:44Z" }
-status: stable
+generated: { by: agent/mcp, at: "2026-11-27T17:27:02Z" }
+status: deprecated
 ---
 
 ## Decision

@@ -11,6 +11,15 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The servers are asleep or down and couldn't be woken: the edge Worker (apps/edge) says so
+ * with a 503 starting "vox is offline". Show its offline page, which comes back here after.
+ */
+export function offlineAddress(said: string, status: number, here: string): string | undefined {
+  if (status !== 503 || !said.startsWith("vox is offline")) return undefined;
+  return `/_offline/offline.html?back=${encodeURIComponent(here)}`;
+}
+
 export async function api<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const init: RequestInit = { method, credentials: "same-origin", headers: {} };
   if (body !== undefined) {
@@ -26,6 +35,9 @@ export async function api<T>(path: string, method = "GET", body?: unknown): Prom
   }
   if (!r.ok) {
     const said = data && typeof data === "object" && "error" in data ? String((data as { error: unknown }).error) : "";
+    const away = offlineAddress(said, r.status, location.pathname + location.search);
+    // never from the offline page itself (it asks nothing today; this keeps it from looping)
+    if (away && !location.pathname.startsWith("/_offline/")) location.replace(away);
     throw new ApiError(said || `the directory answered ${r.status}`, r.status);
   }
   return data as T;

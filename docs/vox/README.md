@@ -80,10 +80,10 @@ on the directory as `--world "void=The Void=:7780"` (the id is the server's `--n
 operators make someone a world's owner with
 `vox-directory --db directory.db --world … admin own-world void "Sam Hill"`.
 
-**vox.fail** is on Cloudflare: a Cloudflare Tunnel carries https://vox.fail/ to the directory
-and `wss://vox.fail/w/<port>/ws` to each world, with nothing open on the server. `deploy/` has
-the tunnel's config, systemd units, the dashboard settings and the steps. The desktop client
-goes there by default.
+**vox.fail** runs on Cloudflare: a Worker serves the pages and game files, and one container
+runs the directory and every world (`wss://vox.fail/w/<port>/ws`), asleep when nobody is
+playing, with its databases kept in R2. `deploy/README.md` has the steps, and how to host Vox
+yourself instead. The desktop client goes to vox.fail by default.
 
 **Moving and building:** you start in first person, looking around with the mouse. **V** or **F5**
 changes the view: first person, behind your shoulder, then from above. From above, **left click**
