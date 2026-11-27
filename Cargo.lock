@@ -7077,6 +7077,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vox-graph"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vox-art",
+]
+
+[[package]]
 name = "vox-host"
 version = "0.1.0"
 dependencies = [
