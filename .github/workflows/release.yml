@@ -1,0 +1,84 @@
+# Release on a v* tag push: builds the Vox client for Windows, macOS and Linux through
+# client-build.yml (reusable), then creates the GitHub release for the tag and attaches the five
+# Vox-<version>-* files. A tag with a "-" in its version (v1.2.0-rc1) is marked a prerelease.
+#
+# windows.yml runs on the same tags and attaches the Block Avatar files with
+# softprops/action-gh-release. That action adds files to an existing release, so both workflows
+# share one release. Whichever workflow creates it first wins; the other one's upload still
+# lands on it. If this job runs again for the same tag (re-run), the files are replaced with
+# --clobber instead of failing on "release already exists".
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          # The version goes into file names, so only plain x.y.z (with an optional -suffix) is allowed.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Tag '$TAG' does not give a version like 1.2.3 or 1.2.3-rc1." >&2
+            exit 1
+          fi
+          case "$VERSION" in
+            *-*) PRE=true ;;
+            *) PRE=false ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: meta
+    uses: ./.github/workflows/client-build.yml
+    with:
+      version: ${{ needs.meta.outputs.version }}
+    secrets: inherit
+
+  publish:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vox-client-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create the release, or replace the files on a re-run
+        run: |
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$REPO" --clobber
+          else
+            FLAGS=(--title "Vox $VERSION" --generate-notes --verify-tag)
+            if [ "$PRERELEASE" = "true" ]; then
+              FLAGS+=(--prerelease)
+            fi
+            if ! gh release create "$TAG" dist/* --repo "$REPO" "${FLAGS[@]}"; then
+              # windows.yml runs on the same tag and may have created the release first. Add the files to it.
+              gh release upload "$TAG" dist/* --repo "$REPO" --clobber
+            fi
+          fi
+          # Always set the title and the prerelease flag, since windows.yml may have created the release
+          # with its own values. The notes are left as they are.
+          gh release edit "$TAG" --repo "$REPO" --title "Vox $VERSION" --prerelease="$PRERELEASE"

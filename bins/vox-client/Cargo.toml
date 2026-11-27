@@ -25,3 +25,10 @@ wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-sys = { workspace = true, features = ["Window", "Response", "Request", "RequestInit", "Headers"] }
 getrandom = { workspace = true, features = ["wasm_js"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+# The console for --version and --check (release builds have none).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }

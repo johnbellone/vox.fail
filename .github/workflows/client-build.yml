@@ -1,0 +1,352 @@
+# Vox client build: a reusable workflow that builds the desktop client (vox-client) for Linux,
+# Windows and macOS (universal), smoke-tests each package and uploads it as an artifact.
+#
+# Triggers:
+#   workflow_call      from a release caller; `version` is required. Callers pass secrets with
+#                      `secrets: inherit`.
+#   workflow_dispatch  by hand; `version` defaults to "dev".
+#   pull_request       when client, world, core or this file change; version "pr".
+#   push               to ci/installers, for testing this workflow; version "dev". Remove it once
+#                      the workflow is proven.
+# The version comes from `inputs.version`, else "pr" for a pull request, else "dev". It is set once
+# for the whole run and used as VERSION (in scripts) and VOX_VERSION (read by vox-client at build
+# time, shown by --version and --check).
+#
+# Outputs (artifacts, all with if-no-files-found: error):
+#   vox-client-linux    Vox-<v>-linux-x86_64.AppImage, Vox-<v>-linux-x86_64.tar.gz
+#   vox-client-windows  Vox-<v>-windows-x64-setup.exe, Vox-<v>-windows-x64.zip
+#   vox-client-macos    Vox-<v>-macos-universal.dmg
+#
+# Optional signing and notarization. Each step runs only when its secrets are set:
+#   WINDOWS_CERT_PFX        base64 of a code-signing .pfx        (with WINDOWS_CERT_PASSWORD)
+#   MACOS_CERT_P12          base64 of a Developer ID .p12        (with MACOS_CERT_PASSWORD)
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD                    (notarization, needs the cert too)
+# Secrets are passed through `env:` on the one step that needs them.
+
+name: Vox client build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version shown in the files and the client (x.y.z for a release)"
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version shown in the files and the client"
+        type: string
+        default: dev
+  pull_request:
+    paths:
+      - bins/vox-client/**
+      - crates/vox-world/**
+      - crates/vox-core/**
+      - .github/workflows/client-build.yml
+  push:
+    branches: [ci/installers]
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ inputs.version || (github.event_name == 'pull_request' && 'pr') || 'dev' }}
+
+jobs:
+  linux:
+    # 22.04 has an older glibc, so the AppImage runs on more distributions.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux
+      - name: Build
+        env:
+          VOX_VERSION: ${{ env.VERSION }}
+        run: cargo build --release -p vox-client
+      - name: Package
+        run: bins/vox-client/package/linux/make-linux.sh "$VERSION" target/release/vox-client dist
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          # Run from outside the checkout: find_root looks in the current folder first, and the
+          # checkout has data/ and assets/, which would hide a package that lacks them.
+          cd "$RUNNER_TEMP"
+          fail() { echo "smoke test: $*" >&2; exit 1; }
+          # $1 is a label, $2 the --check output, $3 a glob the root: path must match.
+          check_output() {
+            local root
+            echo "$2"
+            case "$2" in *"vox-client $VERSION"*) ;; *) fail "$1: no 'vox-client $VERSION' line" ;; esac
+            root="$(printf '%s\n' "$2" | sed -n 's/^root: //p' | head -n 1)"
+            case "$root" in "$GITHUB_WORKSPACE"*) fail "$1: root is inside the checkout ($root)" ;; esac
+            case "$root" in $3) ;; *) fail "$1: root '$root' does not match $3" ;; esac
+          }
+          appimage="$GITHUB_WORKSPACE/dist/Vox-${VERSION}-linux-x86_64.AppImage"
+          chmod +x "$appimage"
+          # CI runners have no FUSE, so the AppImage is run by extracting it first.
+          # On failure, print what --check said before stopping (set -e would hide it).
+          out="$("$appimage" --appimage-extract-and-run --check)" || { echo "$out"; fail "AppImage: --check failed"; }
+          check_output AppImage "$out" '*usr/share/vox*'
+          tmp="$RUNNER_TEMP/tar-smoke"
+          rm -rf "$tmp"
+          mkdir -p "$tmp"
+          tar -xzf "$GITHUB_WORKSPACE/dist/Vox-${VERSION}-linux-x86_64.tar.gz" -C "$tmp"
+          folder="$(cd "$tmp/Vox-${VERSION}-linux-x86_64" && pwd -P)"
+          out="$("$folder/vox-client" --check)" || { echo "$out"; fail "tar.gz: --check failed"; }
+          # The tarball's own folder holds data/ and assets/, so the root is exactly that folder.
+          check_output tar.gz "$out" "$folder"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vox-client-linux
+          path: |
+            dist/*.AppImage
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    env:
+      # Only true or false is exposed here; the secret itself stays in the step that signs.
+      HAVE_WIN_CERT: ${{ secrets.WINDOWS_CERT_PFX != '' }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+      - name: Build
+        env:
+          VOX_VERSION: ${{ env.VERSION }}
+        run: cargo build --release -p vox-client
+      # Signing hook: the exe is signed before the installer copies it in.
+      - name: Sign vox-client.exe
+        if: env.HAVE_WIN_CERT == 'true'
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          try {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+            if (-not $signtool) { throw 'signtool.exe not found' }
+            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:WINDOWS_CERT_PASSWORD target\release\vox-client.exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed with $LASTEXITCODE" }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+      - name: Installer
+        run: |
+          # The numeric version Windows reads: x.y.z from the start of VERSION, else 0.0.0.
+          $v = $env:VERSION
+          $num = if ($v -match '^(\d+\.\d+\.\d+)') { $Matches[1] } else { '0.0.0' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $dist = (Resolve-Path dist).Path
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "/DVERSION=$v" "/DNUMVERSION=$num" "/DOUTDIR=$dist" bins\vox-client\package\windows\vox.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with $LASTEXITCODE" }
+      - name: Sign installer
+        if: env.HAVE_WIN_CERT == 'true'
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          try {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+            if (-not $signtool) { throw 'signtool.exe not found' }
+            $setup = "dist\Vox-$env:VERSION-windows-x64-setup.exe"
+            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:WINDOWS_CERT_PASSWORD $setup
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed with $LASTEXITCODE" }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+      - name: Portable zip
+        run: |
+          $name = "Vox-$env:VERSION-windows-x64"
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory $stage | Out-Null
+          Copy-Item target\release\vox-client.exe $stage
+          Copy-Item -Recurse assets (Join-Path $stage 'assets')
+          Copy-Item -Recurse data (Join-Path $stage 'data')
+          Copy-Item docs\help\getting-started.md (Join-Path $stage 'README.md')
+          # Compress-Archive keeps the folder itself, so the zip has one top folder.
+          Compress-Archive -Path $stage -DestinationPath "dist\$name.zip" -Force
+      - name: Smoke test
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Runs an exe from outside the checkout and returns its stdout. It fails on a nonzero exit
+          # code. The exe is a GUI program, so its output goes to files rather than a console.
+          function Invoke-Exe([string]$exe, [string[]]$arguments) {
+            $base = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName($exe))
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru -NoNewWindow `
+              -WorkingDirectory $env:RUNNER_TEMP `
+              -RedirectStandardOutput "$base.stdout.txt" -RedirectStandardError "$base.stderr.txt"
+            $stdout = Get-Content "$base.stdout.txt" -Raw -ErrorAction SilentlyContinue
+            $stderr = Get-Content "$base.stderr.txt" -Raw -ErrorAction SilentlyContinue
+            if ($stdout) { Write-Host $stdout }
+            if ($stderr) { Write-Host $stderr }
+            if ($p.ExitCode -ne 0) { throw "$exe exited with $($p.ExitCode)" }
+            return [string]$stdout
+          }
+          # Rust's canonical paths can use 8.3 short names (RUNNER_TEMP often does), so expand them
+          # before comparing with root:.
+          $native = '[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)] public static extern uint GetLongPathNameW(string lpszShortPath, System.Text.StringBuilder lpszLongPath, uint cchBuffer);'
+          Add-Type -Namespace Vox -Name Native -MemberDefinition $native
+          function Get-LongPath([string]$path) {
+            $sb = New-Object System.Text.StringBuilder 32768
+            if ([Vox.Native]::GetLongPathNameW($path, $sb, $sb.Capacity) -eq 0) { throw "GetLongPathName failed for $path" }
+            return $sb.ToString()
+          }
+          # Checks one --check run: the version line, and that root: is under the package folder.
+          function Assert-Check([string]$label, [string]$text, [string]$folder) {
+            if (-not $text.Contains("vox-client $env:VERSION")) { throw "$label: --check does not print 'vox-client $env:VERSION'" }
+            $line = ($text -split "`r?`n" | Where-Object { $_.StartsWith('root: ') } | Select-Object -First 1)
+            if (-not $line) { throw "$label: --check printed no 'root:' line" }
+            $root = $line.Substring(6).Trim()
+            if ($root.StartsWith('\\?\')) { $root = $root.Substring(4) }
+            $expected = Get-LongPath $folder
+            if (-not $root.StartsWith($expected, [StringComparison]::OrdinalIgnoreCase)) { throw "$label: root '$root' is not under '$expected'" }
+          }
+          # (a) the portable zip
+          $zipDir = Join-Path $env:RUNNER_TEMP 'zip-smoke'
+          Remove-Item $zipDir -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive "dist\Vox-$env:VERSION-windows-x64.zip" $zipDir
+          $zipFolder = Join-Path $zipDir "Vox-$env:VERSION-windows-x64"
+          $out = Invoke-Exe (Join-Path $zipFolder 'vox-client.exe') @('--check')
+          Assert-Check 'portable zip' $out $zipFolder
+          # (b) the installer, silent, into a fixed folder; /D must stay last and unquoted
+          $install = 'C:\vox-smoke'
+          Remove-Item $install -Recurse -Force -ErrorAction SilentlyContinue
+          $setup = (Resolve-Path "dist\Vox-$env:VERSION-windows-x64-setup.exe").Path
+          $null = Invoke-Exe $setup @('/S', "/D=$install")
+          $out = Invoke-Exe "$install\vox-client.exe" @('--check')
+          Assert-Check 'installer' $out $install
+          $null = Invoke-Exe "$install\uninstall.exe" @('/S')
+          # The uninstaller may hand off to a copy of itself and return early, so wait for its files to go.
+          for ($i = 0; $i -lt 60 -and (Test-Path "$install\vox-client.exe"); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$install\vox-client.exe") { throw 'uninstaller left vox-client.exe behind' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vox-client-windows
+          path: |
+            dist/Vox-${{ env.VERSION }}-windows-x64-setup.exe
+            dist/Vox-${{ env.VERSION }}-windows-x64.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    env:
+      # Only true or false is exposed here; the secrets themselves stay in the steps that use them.
+      HAVE_MAC_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAVE_NOTARY: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Add macOS targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos
+      - name: Build arm64
+        env:
+          VOX_VERSION: ${{ env.VERSION }}
+        run: cargo build --release -p vox-client --target aarch64-apple-darwin
+      - name: Build x86_64
+        env:
+          VOX_VERSION: ${{ env.VERSION }}
+        run: cargo build --release -p vox-client --target x86_64-apple-darwin
+      # Signing hook: imports the certificate into a temporary keychain. MACOS_SIGN_IDENTITY goes
+      # to GITHUB_ENV for make-macos.sh, and to the step output for the notarize gate.
+      - name: Import signing certificate
+        id: keychain
+        if: env.HAVE_MAC_CERT == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          p12="$RUNNER_TEMP/cert.p12"
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          keychain_pass="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$p12"
+          security create-keychain -p "$keychain_pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_pass" "$keychain"
+          security import "$p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application[^"]*\)".*/\1/p' | head -n 1)"
+          if [ -z "$identity" ]; then
+            echo "the certificate has no 'Developer ID Application' identity" >&2
+            exit 1
+          fi
+          echo "MACOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+      - name: Package
+        run: bins/vox-client/package/macos/make-macos.sh "$VERSION" target/aarch64-apple-darwin/release/vox-client target/x86_64-apple-darwin/release/vox-client dist
+      - name: Notarize
+        if: steps.keychain.outputs.identity != '' && env.HAVE_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          dmg="dist/Vox-${VERSION}-macos-universal.dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          # Run from outside the checkout: find_root looks in the current folder first, and the
+          # checkout has data/ and assets/, which would hide a package that lacks them.
+          cd "$RUNNER_TEMP"
+          dmg="$GITHUB_WORKSPACE/dist/Vox-${VERSION}-macos-universal.dmg"
+          mnt="$RUNNER_TEMP/vox-dmg"
+          mkdir -p "$mnt"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          trap 'hdiutil detach "$mnt" -quiet || true' EXIT
+          bin="$mnt/Vox.app/Contents/MacOS/vox-client"
+          res="$(cd "$mnt/Vox.app/Contents/Resources" && pwd -P)"
+          out="$("$bin" --check)"
+          echo "$out"
+          case "$out" in *"vox-client $VERSION"*) ;; *) echo "smoke test: no 'vox-client $VERSION' line" >&2; exit 1 ;; esac
+          root="$(printf '%s\n' "$out" | sed -n 's/^root: //p' | head -n 1)"
+          case "$root" in "$res"*) ;; *) echo "smoke test: root '$root' is not under $res" >&2; exit 1 ;; esac
+          archs="$(lipo -archs "$bin")"
+          echo "architectures: $archs"
+          for a in arm64 x86_64; do
+            case " $archs " in
+              *" $a "*) ;;
+              *) echo "missing architecture: $a" >&2; exit 1 ;;
+            esac
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vox-client-macos
+          path: dist/Vox-${{ env.VERSION }}-macos-universal.dmg
+          if-no-files-found: error

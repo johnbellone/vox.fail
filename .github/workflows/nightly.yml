@@ -1,0 +1,121 @@
+# Nightly build of the Vox desktop client.
+#
+# Runs every day at 05:17 UTC (and on demand). It first checks whether the
+# commit on the default branch is the one the `nightly` tag already points at.
+# If so, it stops there: no build, no release change. Otherwise it builds the
+# client through client-build.yml (version "nightly") and then moves the
+# `nightly` tag to that commit and replaces the assets on the rolling
+# `nightly` prerelease. Assets not in the new build are deleted.
+#
+# To force a rebuild of an unchanged commit, run this workflow by hand
+# (Actions > Nightly > Run workflow) and set `force` to true.
+#
+# The build is unsigned and is a test build; the release notes say so.
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build and publish even if the commit has not changed"
+        type: boolean
+        default: false
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Schedule runs start on the default branch. A manual run from another branch must not publish.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Decide whether to build
+        id: decide
+        env:
+          SHA: ${{ github.sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          last=$(git rev-parse -q --verify "refs/tags/nightly^{commit}" || true)
+          if [ -n "$last" ] && [ "$last" = "$SHA" ] && [ "$FORCE" != "true" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "No new commits since the last nightly ($SHA)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/client-build.yml
+    with:
+      version: nightly
+    secrets: inherit
+
+  publish:
+    # Runs only when check and build both succeeded (the default `if`).
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ needs.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vox-client-*
+          merge-multiple: true
+          path: dist
+      - name: Check the build output
+        run: |
+          count=$(find dist -type f | wc -l)
+          if [ "$count" -ne 5 ]; then
+            echo "Expected 5 files in dist, found $count." >&2
+            ls -la dist >&2 || true
+            exit 1
+          fi
+      - name: Publish the assets
+        run: |
+          date_utc=$(date -u +%Y-%m-%d)
+          notes="Built from $SHA on $date_utc UTC. Unsigned test build of the Vox desktop client; may break."
+          # Create the release if it is missing, on the commit that was built.
+          if ! gh release view nightly >/dev/null 2>&1; then
+            gh release create nightly --prerelease --target "$SHA" --title "Nightly" --notes "$notes"
+          fi
+          # Upload before anything else changes. If this fails, the tag does not move and the next run retries.
+          gh release upload nightly dist/* --clobber
+          # Remove assets from earlier builds that this build does not have.
+          gh release view nightly --json assets --jq '.assets[].name' | while IFS= read -r name; do
+            if [ ! -e "dist/$name" ]; then
+              gh release delete-asset nightly "$name" --yes
+            fi
+          done
+      - name: Move the nightly tag
+        run: |
+          git tag -f nightly "$SHA"
+          git push -f origin refs/tags/nightly
+      - name: Update the nightly release notes
+        run: |
+          date_utc=$(date -u +%Y-%m-%d)
+          notes="Built from $SHA on $date_utc UTC. Unsigned test build of the Vox desktop client; may break."
+          gh release edit nightly --prerelease --title "Nightly" --notes "$notes"

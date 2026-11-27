@@ -13,6 +13,34 @@ You can play Vox in the browser or on the desktop.
 
 ## On the desktop
 
+### Download
+
+The desktop client is on the [GitHub releases page](https://github.com/johnbellone/vox.fail/releases).
+Each release has these files, where `<version>` is the version number:
+
+- Windows: `Vox-<version>-windows-x64-setup.exe` (an installer) or `Vox-<version>-windows-x64.zip` (no install).
+- macOS: `Vox-<version>-macos-universal.dmg`.
+- Linux: `Vox-<version>-linux-x86_64.AppImage` or `Vox-<version>-linux-x86_64.tar.gz`.
+
+The `nightly` release is a test build of the latest commit. It may break. See
+[releases](../vox/releases.md) for how the builds are made.
+
+The files are not always signed, so your system may warn you the first time you open them:
+
+- Windows: SmartScreen may stop it. Choose **More info**, then **Run anyway**.
+- macOS: right-click Vox and choose **Open**, then confirm.
+
+The client has no box for a sign-in code yet. Start it from a terminal, or from a shortcut, with
+`--token <code>`: on Linux, `./Vox-<version>-linux-x86_64.AppImage --token <code>`; on macOS,
+`Vox.app/Contents/MacOS/vox-client --token <code>`; on Windows, `vox-client.exe --token <code>` in
+the folder it is installed in.
+
+Your key bindings (`controls.json`) and your own levels (in `levels/`) are kept apart from the
+program, in a Vox folder for you: `%APPDATA%\Vox` on Windows, `~/Library/Application Support/Vox` on
+macOS, and `$XDG_DATA_HOME/vox` (`~/.local/share/vox`) on Linux.
+
+### Run from the source
+
 Run the local worlds from the repository root. This starts the Void, the yard and the islands
 on your machine, with guests allowed, and opens the client in the Void:
 

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Vox
+Comment=A shared voxel build space
+Exec=vox-client
+Icon=vox
+Categories=Game;
+Terminal=false
