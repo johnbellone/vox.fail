@@ -19,6 +19,10 @@ fn root() -> PathBuf {
 }
 
 async fn serve() -> (Directory, String) {
+    serve_with(None).await
+}
+
+async fn serve_with(instance_host: Option<String>) -> (Directory, String) {
     let w = |id: &str, name: &str, port: u16| WorldInfo { id: id.into(), name: name.into(), url: format!("/w/{port}/ws"), about: String::new() };
     let cfg = Config {
         db: ":memory:".into(),
@@ -33,6 +37,7 @@ async fn serve() -> (Directory, String) {
         social: Default::default(),
         world_secret: Some(SECRET.into()),
         report_every: 0,
+        instance_host,
     };
     let d = Directory::open(cfg).unwrap();
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -325,4 +330,65 @@ async fn tickets_for_portals() {
     assert_eq!(travel(&base, SECRET, trip(":9999")).await.0, 404);
     assert_eq!(travel(&base, SECRET, json!({ "world": "void", "account": 999_999, "to": ":7781", "arrive": [0, 0, 0] })).await.0, 400);
     assert_ne!(travel(&base, SECRET, json!({ "world": "nowhere", "account": ann.id, "to": ":7781", "arrive": [0, 0, 0] })).await.0, 200);
+}
+
+#[tokio::test]
+async fn dungeons_for_parties() {
+    // a stand-in host: it makes any instance of the crypt, and remembers what it was asked
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let log = asked.clone();
+    let host = axum::Router::new().route(
+        "/api/host/instance",
+        axum::routing::post(move |h: axum::http::HeaderMap, axum::Json(v): axum::Json<Value>| {
+            let log = log.clone();
+            async move {
+                assert_eq!(h.get("authorization").unwrap(), &format!("Bearer {SECRET}"));
+                let found = v["template"] != "tomb";
+                log.lock().unwrap().push(v);
+                if found { (axum::http::StatusCode::OK, "{}") } else { (axum::http::StatusCode::NOT_FOUND, "no such dungeon") }
+            }
+        }),
+    );
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let host_url = format!("http://{}", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, host).await.unwrap() });
+    let (_d, base) = serve_with(Some(host_url)).await;
+    let key = auth::key_from_seed([7; 32]).verifying_key();
+
+    let ann = P::new(&base, "Ann").await;
+    let bob = P::new(&base, "Bob").await;
+    let cy = P::new(&base, "Cyd").await;
+    let trip = |who: &P, to: &str| json!({ "world": "void", "account": who.id, "to": to, "arrive": [0.0, 0.0, 4.0] });
+    // no party, no dungeon
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:crypt")).await.0, 403);
+    ann.post("/api/friends", json!({"name": "Bob"})).await;
+    assert_eq!(bob.post("/api/friends/answer", json!({"name": "Ann", "accept": true})).await.0, 200);
+    let (_, party) = ann.post("/api/crews", json!({"kind": "party", "name": "Night Owls"})).await;
+    assert_eq!(ann.post("/api/crews/invite", json!({"crew": party["id"], "name": "Bob"})).await.0, 200);
+    assert_eq!(bob.post("/api/crews/answer", json!({"crew": party["id"], "accept": true})).await.0, 200);
+
+    // Ann goes in: a new instance, made on the host, the ticket for it
+    let (st, v) = travel(&base, SECRET, trip(&ann, "dungeon:crypt")).await;
+    assert_eq!(st, 200, "{v}");
+    let id = v["world"].as_str().unwrap().to_string();
+    assert!(id.starts_with("crypt-"), "{id}");
+    assert_eq!(v["url"], format!("/w/{id}/ws"));
+    let t = auth::verify_ticket(v["ticket"].as_str().unwrap(), &key, &id, now()).unwrap();
+    assert_eq!(t.claims.account, ann.id);
+    assert_eq!(asked.lock().unwrap()[0]["id"], id.as_str());
+    // Bob, in her party, goes to the same one; Cy, not in it, can't
+    let (_, v) = travel(&base, SECRET, trip(&bob, "dungeon:crypt")).await;
+    assert_eq!(v["world"], id.as_str());
+    assert_eq!(travel(&base, SECRET, trip(&cy, "dungeon:crypt")).await.0, 403);
+    // the instance may ask for tickets out again (and report) like a world
+    let (st, v) = travel(&base, SECRET, json!({ "world": id, "account": ann.id, "to": ":7780", "arrive": [0.0, 0.0, 0.0] })).await;
+    assert_eq!((st, v["world"].as_str()), (200, Some("void")));
+    // a dungeon that isn't there, a bad name
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:tomb")).await.0, 404);
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:../x")).await.0, 400);
+    // three new instances an hour, then no more (the one they have still opens)
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:cave")).await.0, 200);
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:mine")).await.0, 200);
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:hall")).await.0, 429);
+    assert_eq!(travel(&base, SECRET, trip(&bob, "dungeon:crypt")).await.1["world"], id.as_str());
 }

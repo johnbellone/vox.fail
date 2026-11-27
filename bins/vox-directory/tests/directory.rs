@@ -25,6 +25,7 @@ async fn serve() -> (Directory, String) {
         social: Default::default(),
         world_secret: None,
         report_every: 0,
+        instance_host: None,
     };
     let d = Directory::open(cfg).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

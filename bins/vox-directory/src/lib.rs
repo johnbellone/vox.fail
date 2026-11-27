@@ -110,6 +110,9 @@ pub struct Config {
     pub world_secret: Option<String>,
     /// least time between one world's reports, s (60 in production; 0 in tests)
     pub report_every: u64,
+    /// the host that makes instances of dungeons (`http://127.0.0.1:7790`, a `vox-host
+    /// --instances`), asked with the world secret; None: no dungeons
+    pub instance_host: Option<String>,
 }
 
 impl WorldInfo {
@@ -194,6 +197,7 @@ struct Inner {
     http: reqwest::Client,
     world_secret: Option<String>,
     report_every: u64,
+    instance_host: Option<String>,
     tries: Mutex<HashMap<String, (u32, Instant)>>,
     /// password hashes being worked out at once (each takes about 19 MB and a core)
     hashing: tokio::sync::Semaphore,

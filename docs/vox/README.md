@@ -57,7 +57,9 @@ place (up to 60 a day), and 15 for each raid your party wins. It can't be sent: 
 feats. **Claim a plot** (20): 16 × 16 blocks around where you last stood, which only you, or a
 group you share it with, can build in. **Open a portal** (30): a doorway in your plot to another
 world. **Issue a currency** (100): a world's owner gives it its own coin, with a fixed supply,
-which anyone can then send to anyone. **Start a raid** (10): your party's leader picks a world;
+which anyone can then send to anyone. **Dungeons**: a doorway whose url is `dungeon:<name>` leads to your raid party's own copy of that
+dungeon (`data/levels/dungeons/<name>.json`): nobody else can come in, and it's gone an hour
+later or once it has been empty for five minutes. A party opens at most three an hour. **Start a raid** (10): your party's leader picks a world;
 when two or more of you spend ten minutes there together within the hour, everyone there gets
 15 authority and a trophy. The **Inventory** page holds coins, deeds, portal keys, banners,
 trophies and the wardrobe (filter by kind and world, search, sort), the feats and the ledger
