@@ -3,7 +3,7 @@ type: Design
 title: "Design (phase 1 built): The World Format"
 description: Regions stored as content-addressed zstd blobs with snapshots in a folder or an Oxen repository (squashed daily) and structure entitlements; phase 1 and the Oxen store are built.
 tags: [design, vox-format, snapshots, storage, branch]
-generated: { by: agent/mcp, at: "2026-11-26T22:12:53Z" }
+generated: { by: agent/mcp, at: "2026-11-27T03:55:18Z" }
 status: draft
 stale_after: 2026-12-26
 ---
@@ -13,7 +13,7 @@ stale_after: 2026-12-26
 Source: `docs/design/world-format.md`, `crates/vox-format` and `bins/vox-directory/src/structures.rs` on `main`. **Phase 1 built**, plus the Oxen snapshot store and structure entitlements; later phases not.
 
 ## Shape
-A world is stored and sent as **regions** (16 x 16 chunk columns). A region is one blob: magic `VOXR`, format version, region key, flags, palette version, a **zstd frame of the edited chunks** (today's run-length encoding per chunk, compressed together), an optional **entities** section (Bevy `DynamicWorld`: RON for authoring, postcard for storage and wire), and a 16-byte **BLAKE3** hash over the uncompressed sections. Blobs are **content-addressed**; a **snapshot** is a manifest of region keys to hashes whose root is the hash tree from the scaling design; unchanged regions are shared between snapshots.
+A world is stored and sent as **regions** (16 x 16 chunk columns). A region is one blob: magic `VOXR`, format version, region key, flags, palette version, a **zstd frame of the edited chunks** (today's run-length encoding per chunk, compressed together), an optional **entities** section (our own `RegionEntities` blob modelled on Bevy's `DynamicWorld` but not using it, with a version per component and `vox-format` depending on `bevy_reflect` alone: RON for authoring, postcard for storage and wire; see `technologies/bevy-ecosystem`), and a 16-byte **BLAKE3** hash over the uncompressed sections. Blobs are **content-addressed**; a **snapshot** is a manifest of region keys to hashes whose root is the hash tree from the scaling design; unchanged regions are shared between snapshots.
 
 ## Measured (islands world, 257 chunks, ~405k blocks)
 Plain 16-bit: 16,842,752 bytes. Run-length (today): 211,314. RLE + zstd per chunk: 79,500. RLE + zstd with a trained dictionary: 70,091 (optimistic). **RLE + zstd per region: 62,831** (chosen).
@@ -43,3 +43,4 @@ Related: `architecture/world-scaling-design`, `architecture/vox-server`, `techno
 # Related Concepts
 - [Decision: Oxen Is the Snapshot Store, Squashed Daily](../decisions/oxen-snapshot-store.md): Oxen is the snapshot store when asked for, with history squashed daily.
 - [Decision: Structures Have an Owner and Use, Copy and Edit Rights](../decisions/structure-entitlements.md): Structures have an owner and use, copy and edit rights.
+- [Bevy Ecosystem Crates: Use, Copy, Watch or Skip](../technologies/bevy-ecosystem.md): Why entities use our own blob instead of DynamicWorld, and what belongs in a pack.

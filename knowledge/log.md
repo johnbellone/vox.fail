@@ -1,4 +1,9 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T03:55:18Z]: Linked `architecture/world-format-design.md` to `technologies/bevy-ecosystem.md` (Why entities use our own blob instead of DynamicWorld, and what belongs in a pack.).
+* **Relate** [2026-11-27T03:55:18Z]: Linked `decisions/bevy-0-19-1-pin.md` to `technologies/bevy-ecosystem.md` (The analysis behind staying on 0.19.1 for now.).
+* **Relate** [2026-11-27T03:55:18Z]: Linked `technologies/bevy.md` to `technologies/bevy-ecosystem.md` (Which ecosystem crates to use, copy, watch or skip, and the 0.20 upgrade question.).
+* **Creation** [2026-11-27T03:55:11Z]: Documented concept `technologies/bevy-ecosystem.md` (Bevy Ecosystem Crates: Use, Copy, Watch or Skip); set stale_after 2027-01-26.
+* **Update** [2026-11-27T03:55:11Z]: Updated concept `decisions/bevy-0-19-1-pin.md`. — Owner said an upgrade is not ruled out (2026-11-26); analysis recommends staying for now
 * **Relate** [2026-11-27T03:35:47Z]: Linked `project/characters-and-content.md` to `project/prop-catalogue.md` (The proposed world props, which seed from the avatar props listed here.).
 * **Relate** [2026-11-27T03:35:47Z]: Linked `status/roadmap.md` to `status/props-phases-and-open-questions.md` (The proposed prop pipeline's phases and open questions.).
 * **Relate** [2026-11-27T03:35:47Z]: Linked `architecture/prop-definition.md` to `decisions/props-third-kind-of-thing.md` (Why props are neither blocks nor structures.).

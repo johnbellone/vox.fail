@@ -3,7 +3,7 @@ type: Technology
 title: "Bevy 0.19.1: How and Why It Is Used"
 description: "What the project uses Bevy for, the version rule, and the engine quirks that have shaped the code."
 tags: [technology, bevy, rendering, ecs]
-generated: { by: agent/mcp, at: "2026-11-26T15:57:58Z" }
+generated: { by: agent/mcp, at: "2026-11-27T03:55:18Z" }
 status: stable
 code_refs: [Cargo.toml]
 ---
@@ -31,3 +31,4 @@ See `architecture/avatar-app-runtime`, `architecture/rendering-and-output`, `arc
 
 # Related Concepts
 - [Decision: Stay on Bevy 0.19.1](../decisions/bevy-0-19-1-pin.md): the version rule
+- [Bevy Ecosystem Crates: Use, Copy, Watch or Skip](bevy-ecosystem.md): Which ecosystem crates to use, copy, watch or skip, and the 0.20 upgrade question.

@@ -248,6 +248,9 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [world-network.md](docs/design/world-network.md): many worlds; worlds by id with many per
   host, a world registry, server-driven portal travel with tickets, dungeon instances for raid
   parties, an atlas of tiled worlds; the rollout in phases.
+- [bevy-ecosystem.md](docs/design/bevy-ecosystem.md): an analysis of 42 Bevy ecosystem crates
+  (use directly, copy the pattern, watch or skip), the Bevy 0.20 upgrade question, and what belongs
+  in the world format and a pack.
 - [props.md](docs/design/props.md): props (small authored objects with behaviours) as recipes or
   imported MagicaVoxel files, the checks and review pipeline, placing them in worlds, and a
   seventy-prop catalogue with a twelve-prop first wave.

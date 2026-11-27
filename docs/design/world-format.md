@@ -94,14 +94,26 @@ u32    entities section length (compressed; 0 when none)
 
 ## Entities
 
-Bevy's scene format (`bevy_world_serialization::DynamicWorld` in 0.19, `.scn.ron`) serialises
-entities and their reflected components, and maps entity references on load, so links between
-entities (a portal and its key, a road between two houses) survive saving and loading. Bevy's
-own tests round-trip a `DynamicWorld` through postcard, so the binary form needs no new code.
+Entities are stored in **our own blob**, modelled on Bevy's scene format (`DynamicWorld`) but
+not using it: `DynamicWorld` lives in `bevy_world_serialization`, which (checked in our lockfile,
+2026-11-26) pulls in 29 Bevy and wgpu crates, `bevy_camera`, `bevy_mesh`, `bevy_image`,
+`bevy_window` and `wgpu-types` among them. That would end the server's freedom from Bevy and
+weigh on the browser build. See [bevy-ecosystem.md](bevy-ecosystem.md).
 
+```
+RegionEntities { entities: [ { id: u32, components: [ (stable_name, version, bytes) ] } ] }
+```
+
+- postcard bytes; entity links (a portal and its key, a road between two houses) are the local
+  `id`s inside the blob, mapped to real entities on load, as `DynamicWorld` maps its references.
+- A **version per component**, so migrations run on the blob before anything reaches an ECS.
+- **Saved versus drawn** (moonshine_save's pattern): only world components are saved; what is
+  drawn (meshes, particles, lights) is rebuilt from them on load and never stored.
+- RON is the authoring form (levels, templates); postcard is what is stored and sent.
 - **Component types live in `vox-format`**, not in `vox-world` (which renders): the server needs
-  them to validate what it stores, without a renderer. `vox-format` depends on `bevy_ecs` and
-  `bevy_reflect` only, both fine without rendering and on wasm.
+  them to validate what it stores, without a renderer. `vox-format` depends on **`bevy_reflect`
+  alone** (for the types, stable names and a limited registry), fine without rendering and on
+  wasm; the client turns the blob into Bevy entities in `vox-world`.
 - **First components**: `Portal { to, size, axis, arrive, yaw }`, `Spawn`, `Light { kind, power }`,
   `Prop { model, at, yaw }`, `Plot { area, owner, builders }`, `Sign { text }`, and the world graph's
   `Node { kind, detail, params, recipe, seed }` with `Link { to, rel }`.

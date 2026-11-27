@@ -10,3 +10,4 @@
 * [Media, Imaging and Asset Authoring Tools](media-and-asset-tools.md) - ffmpeg, image codecs, font rendering, MagicaVoxel and glTF as used for shorts, comics, cards and models.
 * [Windows Integration: Hotkeys, OBS Virtual Camera, Installer](windows-integration.md) - The Windows-only pieces, how they work, and the fact that none of them has run on Windows.
 * [Developer and Agent Tooling: okf, beads, pi, MCP](dev-and-agent-tooling.md) - The agent-facing tools set up around the repository and where their configuration lives.
+* [Bevy Ecosystem Crates: Use, Copy, Watch or Skip](bevy-ecosystem.md) - Verdicts on 42 Bevy ecosystem crates for vox.fail as of 2026-11-26, the Bevy 0.20 upgrade question, and what belongs in the world format and a pack.
