@@ -300,6 +300,11 @@ pub struct WorldClient {
     /// the air: from the server's keyframes, simulated here in between
     pub weather: Option<Weather>,
     weather_acc: f32,
+    /// a copy of the weather being stepped on a worker thread (desktop), so a step (a couple of
+    /// milliseconds) never holds up a frame; dropped (and so cancelled) when the weather is
+    /// replaced
+    #[cfg(not(target_arch = "wasm32"))]
+    weather_task: Option<bevy::tasks::Task<Weather>>,
     /// an endless floor: everything below this block height is solid (the void)
     pub floor: Option<i32>,
     // ---- the camera
@@ -420,6 +425,8 @@ impl Default for WorldClient {
             hours: 0.0,
             weather: None,
             weather_acc: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
+            weather_task: None,
             floor: None,
             cam_mode: CamMode::First,
             zoom: 13.0,
@@ -521,6 +528,17 @@ impl WorldClient {
     pub(crate) fn voice_ready(&self) -> bool {
         // (a watcher is not a player: the server would drop its voice and disconnect it)
         self.ready && self.link.is_some() && !self.watch
+    }
+
+    /// New air (a keyframe from the server, or none in a new world). A step still running on
+    /// the old air is dropped, so it can't come back over this.
+    pub(crate) fn set_weather(&mut self, wx: Option<Weather>) {
+        self.weather = wx;
+        self.weather_acc = 0.0;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.weather_task = None;
+        }
     }
 
     /// Where you stand (blocks, feet) and which way the camera faces (`cam_yaw`, the
@@ -859,8 +877,7 @@ impl WorldClient {
         self.you = Some(you);
         self.world = world;
         // the last world's air stays behind: this one sends its own, or has none (orbit)
-        self.weather = None;
-        self.weather_acc = 0.0;
+        self.set_weather(None);
         self.view = View::new(vox_core::World::new(bounds, palette.len() as u16));
         let fallback = local.id("stone").unwrap_or(1);
         self.remap = std::iter::once(0).chain(palette.iter().map(|n| local.id(n).unwrap_or(fallback))).collect();

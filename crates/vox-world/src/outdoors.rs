@@ -230,6 +230,8 @@ pub struct Outdoors {
     detail: Vec<f32>,
     last_bake: f32,
     baked_at: Vec3,
+    /// the next fog texture, a few rows a frame ([`FOG_ROWS_PER_FRAME`])
+    fog_bake: Option<FogBake>,
     /// the endless floor (the void) and the rain round the camera
     floor: Option<Entity>,
     rain: Option<(Entity, Handle<RainMaterial>)>,
@@ -257,6 +259,7 @@ impl Default for Outdoors {
             detail: Vec::new(),
             last_bake: f32::NEG_INFINITY,
             baked_at: Vec3::ZERO,
+            fog_bake: None,
             floor: None,
             rain: None,
             clouds_set: false,
@@ -590,6 +593,19 @@ fn detail_at(detail: &[f32], x: f32, y: f32, z: f32) -> f32 {
 /// kept near; the distance fog carries on beyond.)
 pub const FOG_BOX: Vec3 = Vec3::new(64.0, 24.0, 64.0);
 
+/// Rows (along z) of the fog texture baked each frame. A whole texture took about 9 ms, twice
+/// a second, which dropped a frame each time; 4 of 64 rows is about 0.6 ms a frame, and a
+/// texture is done in 16 frames (a quarter of a second at 60 fps), well inside the half second
+/// between bakes.
+const FOG_ROWS_PER_FRAME: usize = 4;
+
+/// A fog texture being baked: for the moment and place it was started, rows so far.
+struct FogBake {
+    t: f32,
+    centre: Vec3,
+    data: Vec<u8>,
+}
+
 /// How thick the fog is (per metre) at each texel of the box round `centre`, from the
 /// weather: cloud and fog water (Kunkel: extinction 0.11 LWC^0.88 per metre), haze as the air
 /// nears saturation, and for the luminous void a standing mist, thicker low down; all broken
@@ -597,10 +613,18 @@ pub const FOG_BOX: Vec3 = Vec3::new(64.0, 24.0, 64.0);
 /// at the box's sides and top so it never shows an edge. Bytes, 255 = VOL_MAX.
 pub fn bake_fog(wx: &Weather, style: Style, detail: &[f32], t: f32, centre: Vec3) -> Vec<u8> {
     let [nx, ny, nz] = VOL;
+    let mut out = Vec::with_capacity(nx * ny * nz);
+    bake_fog_rows(wx, style, detail, t, centre, 0..nz, &mut out);
+    out
+}
+
+/// Rows `rows` (along z) of [`bake_fog`], appended to `out`: baking every row in order, in any
+/// number of calls, gives the same bytes as one [`bake_fog`].
+fn bake_fog_rows(wx: &Weather, style: Style, detail: &[f32], t: f32, centre: Vec3, rows: std::ops::Range<usize>, out: &mut Vec<u8>) {
+    let [nx, ny, nz] = VOL;
     let period = [wx.nx as f32 * wx.cell[0], wx.nz as f32 * wx.cell[2]];
     let wind = wx.climate.wind();
-    let mut out = Vec::with_capacity(nx * ny * nz);
-    for k in 0..nz {
+    for k in rows.start.min(nz)..rows.end.min(nz) {
         let fz = (k as f32 + 0.5) / nz as f32;
         for j in 0..ny {
             let up = (j as f32 + 0.5) / ny as f32;
@@ -625,7 +649,6 @@ pub fn bake_fog(wx: &Weather, style: Style, detail: &[f32], t: f32, centre: Vec3
             }
         }
     }
-    out
 }
 
 fn volume_image(data: Vec<u8>) -> Image {
@@ -890,6 +913,8 @@ pub fn update(
         out.water = water_look(s.get("water"));
         // the water's look is pushed with the waves (below): do it now
         out.last_bake = f32::NEG_INFINITY;
+        // a half-made fog texture is for the old world's air
+        out.fog_bake = None;
     }
     if out.running {
         out.hours = (out.hours + real.delta_secs() / DAY * 24.0).rem_euclid(24.0);
@@ -1279,6 +1304,7 @@ pub fn weather_look(
         (false, Some(v)) => {
             commands.entity(v).try_despawn();
             out.volume = None;
+            out.fog_bake = None;
             commands.entity(cam).remove::<VolumetricFog>();
             for (e, _) in &keys {
                 commands.entity(e).remove::<VolumetricLight>();
@@ -1288,16 +1314,31 @@ pub fn weather_look(
             }
         }
         (true, Some(v)) => {
-            if now - out.last_bake > 0.5 {
-                out.last_bake = now;
-                out.baked_at = centre;
-                let data = bake_fog(wx, out.style, &out.detail, now, centre);
-                if let Some(h) = &out.density {
-                    if let Some(mut img) = images.get_mut(h) {
-                        img.data = Some(data);
-                    }
+            // a new texture every half second, baked a few rows a frame; the one on screen is
+            // kept (and slid to stay put) until the new one is whole
+            let o = &mut *out;
+            if o.fog_bake.is_none() && now - o.last_bake > 0.5 {
+                o.last_bake = now;
+                o.fog_bake = Some(FogBake { t: now, centre, data: Vec::with_capacity(VOL[0] * VOL[1] * VOL[2]) });
+            }
+            let mut done = None;
+            if let Some(b) = &mut o.fog_bake {
+                let k = b.data.len() / (VOL[0] * VOL[1]);
+                bake_fog_rows(wx, o.style, &o.detail, b.t, b.centre, k..k + FOG_ROWS_PER_FRAME, &mut b.data);
+                if b.data.len() == VOL[0] * VOL[1] * VOL[2] {
+                    done = o.fog_bake.take();
                 }
             }
+            if let Some(b) = done {
+                o.baked_at = b.centre;
+                if let Some(h) = &o.density
+                    && let Some(mut img) = images.get_mut(h)
+                {
+                    img.data = Some(b.data);
+                }
+            }
+            // where the texture on screen was baked may have just changed
+            let offset = (centre - out.baked_at) / span;
             commands.entity(v).insert((
                 Transform::from_translation(centre).with_scale(span),
                 FogVolume {
@@ -1422,6 +1463,25 @@ mod tests {
         assert_eq!(water_look(Some(&silly)), WaterLook { tint: [1.0, 0.0, 0.5], swell: 3.0, opacity: 0.0 });
         let short = json!({"colour": [0.1, 0.2], "swell": "high"});
         assert_eq!(water_look(Some(&short)), WaterLook::default());
+    }
+
+    #[test]
+    fn fog_baked_in_rows_is_the_same_as_all_at_once() {
+        use vox_core::weather::{Climate, Weather};
+        let detail = fog_detail();
+        let mut fog = Weather::new(Climate::preset("fog", 0.0).unwrap(), 3);
+        fog.step(60.0);
+        let centre = Vec3::new(5.0, 12.0, -3.0);
+        let whole = bake_fog(&fog, Style::Sea, &detail, 7.0, centre);
+        let mut rows = Vec::new();
+        while rows.len() < whole.len() {
+            let k = rows.len() / (VOL[0] * VOL[1]);
+            bake_fog_rows(&fog, Style::Sea, &detail, 7.0, centre, k..k + FOG_ROWS_PER_FRAME, &mut rows);
+        }
+        assert_eq!(rows, whole);
+        // rows past the end add nothing
+        bake_fog_rows(&fog, Style::Sea, &detail, 7.0, centre, VOL[2]..VOL[2] + 4, &mut rows);
+        assert_eq!(rows.len(), whole.len());
     }
 
     #[test]

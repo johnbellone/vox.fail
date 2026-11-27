@@ -223,8 +223,7 @@ pub fn receive(
                     }
                     ToClient::Weather(k) => match Weather::from_keyframe(&k) {
                         Ok(wx) => {
-                            w.weather = Some(wx);
-                            w.weather_acc = 0.0;
+                            w.set_weather(Some(wx));
                         }
                         Err(e) => crate::note!("[world] bad weather: {e}"),
                     },

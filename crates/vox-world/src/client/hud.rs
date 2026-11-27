@@ -2,18 +2,40 @@
 
 use super::*;
 
-/// Run the weather between the server's keyframes (four times a second).
+/// Run the weather between the server's keyframes (four times a second). On the desktop a
+/// copy is stepped on a worker thread and swapped in when it's done, so the step (about 2 ms)
+/// is never part of a frame; the browser has one thread and steps it here.
 pub fn weather(mut w: ResMut<WorldClient>, real: Res<Time<Real>>) {
     if w.weather.is_none() {
         return;
     }
     w.weather_acc += real.delta_secs();
-    if w.weather_acc >= 0.25 {
-        let dt = w.weather_acc.min(2.0);
-        w.weather_acc = 0.0;
-        if let Some(wx) = &mut w.weather {
-            wx.step(dt);
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(task) = &mut w.weather_task {
+        match bevy::tasks::futures::check_ready(task) {
+            Some(stepped) => {
+                w.weather = Some(stepped);
+                w.weather_task = None;
+            }
+            // still going: the time keeps adding up for the next step
+            None => return,
         }
+    }
+    if w.weather_acc < 0.25 {
+        return;
+    }
+    let dt = w.weather_acc.min(2.0);
+    w.weather_acc = 0.0;
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(mut wx) = w.weather.clone() {
+        w.weather_task = Some(bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+            wx.step(dt);
+            wx
+        }));
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(wx) = &mut w.weather {
+        wx.step(dt);
     }
 }
 
