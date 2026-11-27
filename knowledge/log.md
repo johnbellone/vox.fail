@@ -1,4 +1,7 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T20:35:56Z]: Linked `architecture/world-editor-design.md` to `architecture/world-format-design.md` (Snapshots, live restore and levels as files that the editor builds on.).
+* **Relate** [2026-11-27T20:35:56Z]: Linked `architecture/world-editor-design.md` to `decisions/structure-entitlements.md` (Workshop rights follow the structure rights model; the editor saves selections as structures.).
+* **Creation** [2026-11-27T20:35:56Z]: Documented concept `architecture/world-editor-design.md` (Design (proposed): The World Editor on the Web). — Design for a web world/level editor, asked for 2026-11-27
 * **Update** [2026-11-27T17:27:02Z]: Updated concept `architecture/cloudflare-hosting-design.md`. — Phases 1-7 built; Cloudflare set up; tunnel and server-pull deploy retired.
 * **Deprecation** [2026-11-27T17:27:02Z]: Deprecated concept `decisions/cloudflare-managed-tunnel.md`. — Tunnel deleted by deploy/cloudflare-setup.sh; vox.fail is a proxied placeholder answered by the Worker.
 * **Deprecation** [2026-11-27T17:27:02Z]: Deprecated concept `decisions/pull-based-auto-deploy.md`. — Superseded by architecture/cloudflare-hosting-design: the server and its pull deploy are retired.
