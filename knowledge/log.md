@@ -1,3 +1,15 @@
+## 2026-11-27
+* **Relate** [2026-11-27T14:10:42Z]: Linked `architecture/testing-and-ci.md` to `status/test-results.md` (the latest measured results).
+* **Relate** [2026-11-27T14:10:38Z]: Linked `architecture/deployment.md` to `technologies/windows-integration.md` (installer and Windows pieces).
+* **Relate** [2026-11-27T14:10:38Z]: Linked `architecture/deployment.md` to `decisions/cloudflare-tunnel-hosting.md` (why a tunnel).
+* **Relate** [2026-11-27T14:10:34Z]: Linked `architecture/testing-and-ci.md` to `decisions/client-installers.md` (the installer workflows).
+* **Relate** [2026-11-27T14:10:34Z]: Linked `architecture/deployment.md` to `decisions/client-installers.md` (why and how the desktop client is packaged).
+* **Relate** [2026-11-27T14:10:34Z]: Linked `decisions/client-installers.md` to `architecture/testing-and-ci.md` (the workflows that build and check the installers).
+* **Relate** [2026-11-27T14:10:34Z]: Linked `decisions/client-installers.md` to `architecture/deployment.md` (where the client packaging fits in deployment).
+* **Update** [2026-11-27T14:10:30Z]: Updated concept `architecture/deployment.md`. — vox-u0m: client installers and release workflows
+* **Update** [2026-11-27T14:10:30Z]: Updated concept `architecture/testing-and-ci.md`. — vox-u0m: client installers and release workflows
+* **Creation** [2026-11-27T14:10:17Z]: Documented concept `decisions/client-installers.md` (Decision: vox-client installers built by GitHub Actions). — vox-u0m: client installers
+
 ## 2026-11-26
 * **Relate** [2026-11-26T22:12:53Z]: Linked `architecture/economy-and-social.md` to `decisions/structure-entitlements.md` (Who may use, copy and edit a structure; plots' builders are meant to edit their plot's structure.).
 * **Relate** [2026-11-26T22:12:53Z]: Linked `architecture/world-format-design.md` to `decisions/structure-entitlements.md` (Structures have an owner and use, copy and edit rights.).

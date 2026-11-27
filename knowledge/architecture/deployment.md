@@ -3,7 +3,7 @@ type: Architecture
 title: "Deployment: vox.fail on Cloudflare Tunnel, and Windows Packaging"
 description: "How vox.fail is hosted (one Linux box, systemd, Cloudflare Tunnel with no open ports) and how Block Avatar is packaged for Windows."
 tags: [deployment, cloudflare, systemd, windows, installer]
-generated: { by: agent/mcp, at: "2026-11-26T15:57:58Z" }
+generated: { by: agent/pi-lead, at: "2026-11-27T14:10:38Z" }
 status: stable
 code_refs: [deploy/, bins/block-avatar/installer/block-avatar.nsi, .github/workflows/windows.yml]
 ---
@@ -33,6 +33,9 @@ SSL: Always Use HTTPS. WebSockets on. **Rocket Loader off** and Email Obfuscatio
 `.github/workflows/windows.yml` runs on every `v*` tag: `cargo test --release`, `cargo build --release`, NSIS installer (`bins/block-avatar/installer/block-avatar.nsi`, `makensis /DVERSION=...`) and a portable zip. Installed copy keeps user files in `%APPDATA%\Block Avatar`. The installer (Program Files, Start menu, optional desktop shortcut and a firewall rule for 7778 that has no effect, see risk 3) is only ~2.5 MB.
 **This workflow has never run**, and nothing has ever run on Windows. The exe and installer are unsigned (SmartScreen will warn).
 
+## Vox desktop client
+Installers for Windows, macOS and Linux are built by `.github/workflows/client-build.yml` and published as a rolling `nightly` prerelease and on `v*` tags (`decisions/client-installers`, `docs/vox/releases.md`). Unsigned until signing secrets are set.
+
 ## Relay
 `vox-relay` is not part of the vox.fail deployment yet; the README's run line is `cargo run --release -p vox-relay -- --listen 0.0.0.0:7779` behind TLS.
 
@@ -40,5 +43,6 @@ SSL: Always Use HTTPS. WebSockets on. **Rocket Loader off** and Email Obfuscatio
 `decisions/cloudflare-tunnel-hosting`.
 
 # Related Concepts
+- [Decision: vox-client installers built by GitHub Actions](../decisions/client-installers.md): why and how the desktop client is packaged
 - [Decision: Host vox.fail Behind a Cloudflare Tunnel](../decisions/cloudflare-tunnel-hosting.md): why a tunnel
 - [Windows Integration: Hotkeys, OBS Virtual Camera, Installer](../technologies/windows-integration.md): installer and Windows pieces
