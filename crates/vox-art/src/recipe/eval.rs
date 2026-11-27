@@ -454,4 +454,90 @@ mod tests {
         assert_eq!(errors[0].op, Some(0));
         assert!(errors[0].message.contains("past to"));
     }
+
+    /// Brick and wood for the world-scale buildings: brick has one tone (palette index 1), wood
+    /// two (indices 2 and 3).
+    const BUILDING_PALETTE: &str = r#"{
+        "version": 1,
+        "materials": [
+            { "name": "brick", "colours": [[150, 70, 50, 255]] },
+            { "name": "wood", "colours": [[90, 50, 20, 255], [140, 90, 40, 255]] }
+        ]
+    }"#;
+
+    /// A house at world scale: a hollow brick shell 10 by 6 by 8, a gable roof whose ridge runs
+    /// along x, and a door 2 wide and 3 high cut into the front wall (the z = 0 face).
+    const HOUSE: &str = r#"{
+        "version": 1, "scale": "world", "seed": 1, "size": [10, 12, 8],
+        "ops": [
+            { "box": { "from": [0, 0, 0], "to": [9, 5, 7], "mat": "brick", "tone": 0, "hollow": true } },
+            { "roof": { "over": [0, 0, 9, 7], "at_y": 6, "style": "gable", "along_x": true, "mat": "wood", "tone": 0 } },
+            { "cut": { "from": [4, 0, 0], "to": [5, 2, 0] } }
+        ]
+    }"#;
+
+    fn building_palette() -> Palette {
+        Palette::from_json(BUILDING_PALETTE).unwrap()
+    }
+
+    #[test]
+    fn golden_house_with_gable_roof_and_door() {
+        let built = eval(&recipe(HOUSE), &building_palette()).unwrap();
+        // The hollow shell of a 10 by 6 by 8 box has 480 - 8 * 4 * 6 = 288 voxels. The gable has
+        // four layers over the 10-wide rectangle, 8 by 6 by 4 by 2 deep: 80 + 60 + 40 + 20 = 200.
+        // The door takes 2 * 3 = 6 voxels from the front wall, leaving 482.
+        assert_eq!(built.grid.len(), 482);
+        assert_eq!(voxel_hash(&built.grid), "6e7a3d742f4d85ea");
+    }
+
+    #[test]
+    fn golden_flat_roof() {
+        let json = r#"{"version":1,"scale":"world","seed":1,"size":[4,1,3],
+            "ops":[{"roof":{"over":[0,0,3,2],"at_y":0,"style":"flat","mat":"wood","tone":0}}]}"#;
+        let built = eval(&recipe(json), &building_palette()).unwrap();
+        // One layer of 4 by 3.
+        assert_eq!(built.grid.len(), 12);
+        assert_eq!(voxel_hash(&built.grid), "8f23b02c993d5fdc");
+    }
+
+    #[test]
+    fn golden_stepped_roof() {
+        let json = r#"{"version":1,"scale":"world","seed":1,"size":[12,3,4],
+            "ops":[{"roof":{"over":[0,0,11,3],"at_y":0,"style":"stepped","mat":"wood","tone":0}}]}"#;
+        let built = eval(&recipe(json), &building_palette()).unwrap();
+        // Layers shrink by 2 a side per voxel up: 12 by 4, 8 by 4, 4 by 4, then empty.
+        // 48 + 32 + 16 = 96.
+        assert_eq!(built.grid.len(), 96);
+        assert_eq!(voxel_hash(&built.grid), "a77a62251b1ca900");
+    }
+
+    #[test]
+    fn roof_past_the_grid_top_is_refused() {
+        // The house's gable tops out at height 9, so a grid 9 high is one too short.
+        let json = HOUSE.replace(r#""size": [10, 12, 8]"#, r#""size": [10, 9, 8]"#);
+        let errors = eval(&recipe(&json), &building_palette()).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].op, Some(1));
+        assert!(errors[0].message.contains("above the grid"));
+    }
+
+    #[test]
+    fn box_from_past_to_is_refused() {
+        let json = r#"{"version":1,"scale":"world","seed":1,"size":[4,4,4],
+            "ops":[{"box":{"from":[3,0,0],"to":[1,0,0],"mat":"brick","tone":0}}]}"#;
+        let errors = eval(&recipe(json), &building_palette()).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].op, Some(0));
+        assert!(errors[0].message.contains("past to"));
+    }
+
+    #[test]
+    fn cut_outside_the_size_is_refused() {
+        let json = r#"{"version":1,"scale":"world","seed":1,"size":[8,8,8],
+            "ops":[{"cut":{"from":[0,0,0],"to":[8,0,0]}}]}"#;
+        let errors = eval(&recipe(json), &building_palette()).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].op, Some(0));
+        assert!(errors[0].message.contains("outside a grid"));
+    }
 }

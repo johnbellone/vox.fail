@@ -3,9 +3,12 @@
 //!
 //! New variants go at the end of [`Op`]: the order is part of what a recipe means.
 
+pub mod box_;
+pub mod cut;
 pub mod lathe;
 pub mod legs;
 pub mod part;
+pub mod roof;
 
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +26,9 @@ pub enum Op {
     Lathe(lathe::Lathe),
     Legs(legs::Legs),
     Part(part::Part),
+    Box(box_::Box),
+    Roof(roof::Roof),
+    Cut(cut::Cut),
 }
 
 impl Op {
@@ -32,6 +38,9 @@ impl Op {
             Op::Lathe(op) => op.check(size, palette),
             Op::Legs(op) => op.check(size, palette),
             Op::Part(op) => op.check(size, palette),
+            Op::Box(op) => op.check(size, palette),
+            Op::Roof(op) => op.check(size, palette),
+            Op::Cut(op) => op.check(size, palette),
         }
     }
 
@@ -42,6 +51,9 @@ impl Op {
             Op::Lathe(op) => op.writes(),
             Op::Legs(op) => op.writes(),
             Op::Part(op) => op.writes(),
+            Op::Box(op) => op.writes(),
+            Op::Roof(op) => op.writes(),
+            Op::Cut(op) => op.writes(),
         }
     }
 
@@ -51,6 +63,9 @@ impl Op {
             Op::Lathe(op) => op.apply(env, rng),
             Op::Legs(op) => op.apply(env, rng),
             Op::Part(op) => op.apply(env, rng),
+            Op::Box(op) => op.apply(env, rng),
+            Op::Roof(op) => op.apply(env, rng),
+            Op::Cut(op) => op.apply(env, rng),
         }
     }
 }
@@ -86,4 +101,38 @@ pub(crate) fn material_problem(mat: &str, tone: u8, palette: &Palette) -> Option
         return Some(problem);
     }
     material_index(palette, mat, tone).err()
+}
+
+/// Problems with an inclusive box from `from` to `to` in a grid of `size`: each axis of `from`
+/// must not pass `to`, and `to` must lie inside the grid. `what` names the operation in messages.
+pub(crate) fn corner_problems(
+    what: &str,
+    from: [u16; 3],
+    to: [u16; 3],
+    size: [u16; 3],
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if (0..3).any(|axis| from[axis] > to[axis]) {
+        problems.push(format!("{what} has from {from:?} past to {to:?}"));
+    }
+    if (0..3).any(|axis| to[axis] >= size[axis]) {
+        problems.push(format!(
+            "{what} reaches {to:?}, outside a grid of size {size:?}"
+        ));
+    }
+    problems
+}
+
+/// The number of voxels in the inclusive box from `from` to `to`, or `None` if it overflows
+/// `u64`. A box that runs backwards has no voxels.
+pub(crate) fn box_volume(from: [u16; 3], to: [u16; 3]) -> Option<u64> {
+    let mut volume: u64 = 1;
+    for axis in 0..3 {
+        if from[axis] > to[axis] {
+            return Some(0);
+        }
+        let span = u64::from(to[axis] - from[axis]) + 1;
+        volume = volume.checked_mul(span)?;
+    }
+    Some(volume)
 }
