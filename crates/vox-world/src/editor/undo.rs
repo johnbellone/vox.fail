@@ -5,6 +5,11 @@
 //! refused (`Changed`) rather than overwritten; redo sends it forward again. The rules are in
 //! docs/design/world-editor.md (Undo). This is plain data and logic with no Bevy types, so it
 //! is unit-tested on its own; the editor's systems send what it returns.
+//!
+//! A Build the server finished is a step of another kind (`Step::build`): undoing it sends
+//! `Unbuild` and the server puts back the blocks it can (it kept what the build changed). That
+//! step is not redoable: it is dropped when its undo is answered, and the server's notice tells
+//! the author how many blocks were left because they had changed since.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -21,13 +26,22 @@ const MAX_SENT: usize = 256;
 
 /// One change: the entity, its component before and after, and the seq the entity has in the
 /// state the step sits at. On the undo stack that is the seq of the `after` state; on the redo
-/// stack, the seq of the `before` state.
+/// stack, the seq of the `before` state. A build step (`build` is the number the Build was sent
+/// under) names no entity's state: its `entity` is the node and the rest is unused.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Step {
     pub entity: EntityId,
     pub before: Option<Component>,
     pub after: Option<Component>,
     pub seq: u64,
+    pub build: Option<u32>,
+}
+
+impl Step {
+    /// Whether this step is a change of `entity` (a build step is of no entity's state).
+    fn names(&self, entity: EntityId) -> bool {
+        self.build.is_none() && self.entity == entity
+    }
 }
 
 /// An edit this client sent and is waiting on.
@@ -35,6 +49,8 @@ pub struct Step {
 enum Sent {
     /// the author's own change: it becomes an undo step when the server applies it
     Own { before: Option<Component>, after: Option<Component> },
+    /// a Build of `node`: it becomes a build step when the server finishes it
+    Build { node: EntityId },
     /// an undo or redo, with the step it took: back on its stack if refused for a reason other
     /// than `Changed`
     Taken { step: Step, undo: bool },
@@ -53,7 +69,7 @@ pub struct History {
 
 /// Sets the seq of the newest step on `stack` that names `entity`.
 fn stamp(stack: &mut VecDeque<Step>, entity: EntityId, seq: u64) {
-    if let Some(step) = stack.iter_mut().rev().find(|s| s.entity == entity) {
+    if let Some(step) = stack.iter_mut().rev().find(|s| s.names(entity)) {
         step.seq = seq;
     }
 }
@@ -66,12 +82,12 @@ fn stamp(stack: &mut VecDeque<Step>, entity: EntityId, seq: u64) {
 /// overwrite a change this client never saw. If it does, the steps are renamed to `to`, since a
 /// re-created entity has a new id.
 fn settle(stack: &mut VecDeque<Step>, from: EntityId, to: EntityId, state: &Option<Component>, undo_stack: bool) {
-    let Some(newest) = stack.iter().rposition(|s| s.entity == from) else { return };
+    let Some(newest) = stack.iter().rposition(|s| s.names(from)) else { return };
     let shown = if undo_stack { &stack[newest].after } else { &stack[newest].before };
     if shown != state {
-        stack.retain(|s| s.entity != from);
+        stack.retain(|s| !s.names(from));
     } else {
-        for step in stack.iter_mut().filter(|s| s.entity == from) {
+        for step in stack.iter_mut().filter(|s| s.names(from)) {
             step.entity = to;
         }
     }
@@ -96,6 +112,12 @@ impl History {
         self.track(id, Sent::Own { before, after });
     }
 
+    /// Notes a Build of `node` sent as `id`. When the server finishes it, it becomes a build step
+    /// (undone by `Unbuild`, which names `id`); when it is refused it is nothing.
+    pub fn sent_build(&mut self, id: u32, node: EntityId) {
+        self.track(id, Sent::Build { node });
+    }
+
     /// Whether an undo or redo is on its way.
     pub fn in_flight(&self) -> bool {
         self.flight.is_some()
@@ -110,6 +132,10 @@ impl History {
         }
         loop {
             let newest = if undo { self.undo.back() } else { self.redo.back() }?;
+            // a build step is taken by `take_build`, never as an entity change
+            if newest.build.is_some() {
+                return None;
+            }
             let (from, to) = if undo {
                 (newest.after.clone(), newest.before.clone())
             } else {
@@ -125,6 +151,21 @@ impl History {
         }
     }
 
+    /// The number of the Build the next undo would undo, if the newest step is a build step and
+    /// nothing is on its way; it is then taken, numbered `id` (the `Unbuild`'s own number), and
+    /// waits with the edit until the server answers. None otherwise: use [`History::take`]. A
+    /// build step is only ever on the undo stack, so redo takes none.
+    pub fn take_build(&mut self, id: u32) -> Option<u32> {
+        if self.flight.is_some() {
+            return None;
+        }
+        let build = self.undo.back()?.build?;
+        let step = self.undo.pop_back()?;
+        self.track(id, Sent::Taken { step, undo: true });
+        self.flight = Some(id);
+        Some(build)
+    }
+
     /// The server applied edit `id`, now at `seq`. An own change becomes the newest undo step
     /// and clears redo, since a new change ends what could be redone. An undo or redo moves its
     /// step to the other stack. A Create that gave the entity a new id renames the steps that
@@ -133,7 +174,15 @@ impl History {
         match self.sent.remove(&id) {
             Some(Sent::Own { before, after }) => {
                 self.redo.clear();
-                self.push_undo(Step { entity, before, after, seq });
+                self.push_undo(Step { entity, before, after, seq, build: None });
+            }
+            Some(Sent::Build { node }) => {
+                self.redo.clear();
+                self.push_undo(Step { entity: node, before: None, after: None, seq, build: Some(id) });
+            }
+            Some(Sent::Taken { step, .. }) if step.build.is_some() => {
+                // the build is undone; there is no redo of a build, so the step is gone
+                self.flight = None;
             }
             Some(Sent::Taken { step, undo }) => {
                 self.flight = None;
@@ -165,6 +214,7 @@ impl History {
     pub fn refused(&mut self, id: u32, why: EntityWhy) {
         if let Some(Sent::Taken { step, undo }) = self.sent.remove(&id) {
             self.flight = None;
+            // Changed: the entity moved on, or the server no longer keeps that build
             if why != EntityWhy::Changed {
                 if undo {
                     self.push_undo(step);
@@ -396,8 +446,8 @@ mod tests {
         let mut h = History::default();
         // two undone steps on entity 4. The redo taken first leaves the entity at 2, but the
         // step behind it expects it to start from 9, so that one cannot be redone safely
-        h.redo.push_back(Step { entity: EntityId(4), before: Some(at(9.0)), after: Some(at(10.0)), seq: 3 });
-        h.redo.push_back(Step { entity: EntityId(4), before: Some(at(1.0)), after: Some(at(2.0)), seq: 5 });
+        h.redo.push_back(Step { entity: EntityId(4), before: Some(at(9.0)), after: Some(at(10.0)), seq: 3, build: None });
+        h.redo.push_back(Step { entity: EntityId(4), before: Some(at(1.0)), after: Some(at(2.0)), seq: 5, build: None });
         assert_eq!(h.take(1, false), Some(set(4, at(2.0), 5)));
         h.done(1, EntityId(4), 6);
         assert!(h.redo.is_empty());
@@ -450,5 +500,82 @@ mod tests {
         assert_eq!(h.sent.len(), MAX_SENT);
         assert!(!h.sent.contains_key(&1));
         assert!(h.sent.contains_key(&(MAX_SENT as u32 + 10)));
+    }
+
+    #[test]
+    fn editor_undo_a_finished_build_is_undone_by_unbuild_and_not_redoable() {
+        let mut h = History::default();
+        h.sent_build(2, EntityId(8));
+        h.done(2, EntityId(8), 40);
+        // an entity step taking it by `take` is not how a build is undone
+        assert!(h.take(3, true).is_none());
+        assert_eq!(h.take_build(3), Some(2));
+        assert!(h.in_flight());
+        h.done(3, EntityId(0), 90);
+        assert!(!h.in_flight());
+        // no redo of a build, and the step is gone
+        assert!(h.take(4, false).is_none());
+        assert!(h.take_build(4).is_none());
+        assert!(h.undo.is_empty() && h.redo.is_empty());
+    }
+
+    #[test]
+    fn editor_undo_a_build_and_an_entity_step_share_one_stack_in_order() {
+        let mut h = History::default();
+        h.sent_own(1, Some(at(1.0)), Some(at(2.0)));
+        h.done(1, EntityId(4), 5);
+        h.sent_build(2, EntityId(4));
+        h.done(2, EntityId(4), 6);
+        h.sent_own(3, Some(at(2.0)), Some(at(3.0)));
+        h.done(3, EntityId(4), 7);
+        // newest first: the entity change, then the build, then the older entity change
+        assert!(h.take_build(4).is_none(), "the newest step is an entity change");
+        assert_eq!(h.take(4, true), Some(set(4, at(2.0), 7)));
+        h.done(4, EntityId(4), 8);
+        assert_eq!(h.take_build(5), Some(2));
+        h.done(5, EntityId(0), 9);
+        // the build step on the same node did not disturb the entity steps' chain
+        assert_eq!(h.take(6, true), Some(set(4, at(1.0), 8)));
+    }
+
+    #[test]
+    fn editor_undo_unbuild_refused_changed_drops_the_step_and_other_reasons_keep_it() {
+        let mut h = History::default();
+        h.sent_build(2, EntityId(8));
+        h.done(2, EntityId(8), 40);
+        assert_eq!(h.take_build(3), Some(2));
+        h.refused(3, EntityWhy::Unavailable);
+        assert!(!h.in_flight());
+        assert_eq!(h.take_build(4), Some(2));
+        // the server no longer keeps that build
+        h.refused(4, EntityWhy::Changed);
+        assert!(h.take_build(5).is_none());
+    }
+
+    #[test]
+    fn editor_undo_a_refused_build_is_no_step_and_one_unbuild_at_a_time() {
+        let mut h = History::default();
+        h.sent_build(2, EntityId(8));
+        h.refused(2, EntityWhy::TooFast);
+        h.done(2, EntityId(8), 40);
+        assert!(h.take_build(3).is_none(), "a refused build is not a step");
+        h.sent_build(4, EntityId(8));
+        h.done(4, EntityId(8), 50);
+        h.sent_build(5, EntityId(8));
+        h.done(5, EntityId(8), 60);
+        assert_eq!(h.take_build(6), Some(5));
+        assert!(h.take_build(7).is_none(), "one undo at a time");
+    }
+
+    #[test]
+    fn editor_undo_a_new_build_clears_redo() {
+        let mut h = History::default();
+        h.sent_own(1, Some(at(1.0)), Some(at(2.0)));
+        h.done(1, EntityId(4), 5);
+        assert!(h.take(2, true).is_some());
+        h.done(2, EntityId(4), 6);
+        h.sent_build(3, EntityId(4));
+        h.done(3, EntityId(4), 7);
+        assert!(h.take(4, false).is_none());
     }
 }

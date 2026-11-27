@@ -145,6 +145,8 @@ impl Seen {
             }
             ToClient::Chunk { key, version, data } => {
                 if let Ok(c) = Chunk::decode(data, *version) {
+                    // a whole chunk is the state of every cell in it, so older single edits are stale
+                    self.edits.retain(|cell, _| ChunkKey::of(*cell) != *key);
                     self.chunks.insert(*key, c);
                 }
             }
@@ -187,6 +189,23 @@ async fn until_answer(ws: &mut Ws, seen: &mut Seen, id: u32) -> ToClient {
             match &m {
                 ToClient::EntityDone { id: i, .. } | ToClient::EntityRefused { id: i, .. } if *i == id => return m,
                 _ => {}
+            }
+        }
+    })
+    .await
+    .expect("timed out")
+}
+
+/// Reads `ws`, folding block changes into `seen`, until the server's next `Notice`; returns its text.
+async fn next_notice(ws: &mut Ws, seen: &mut Seen) -> String {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let m = ws.next().await.expect("closed").expect("socket error");
+            let Message::Binary(b) = m else { continue };
+            let m = wire::decode::<ToClient>(&b).unwrap();
+            seen.fold(&m);
+            if let ToClient::Notice { text } = m {
+                return text;
             }
         }
     })
@@ -373,4 +392,120 @@ async fn editor_build_the_built_blocks_are_in_the_edit_log() {
     let _ = std::fs::remove_file(&path);
     assert_eq!(rows as usize, HOUSE_BLOCKS);
     assert_eq!(named as usize, HOUSE_BLOCKS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_unbuild_restores_the_blocks_a_build_put_there() {
+    let (_server, url) = serve(config(&directory().await)).await;
+    let mut ed = join(&url, "Ed", token(7, "Ed")).await;
+    send(&mut ed, &pose([0.5, 0.0, 0.5])).await;
+    let house = place_node(&mut ed, 1, node("house", HOUSE_AT, HOUSE_SIZE, HOUSE.into())).await;
+    send(&mut ed, &ToServer::Build { id: 2, node: house }).await;
+    let mut seen = Seen::default();
+    assert!(matches!(until_answer(&mut ed, &mut seen, 2).await, ToClient::EntityDone { .. }));
+    assert_eq!(seen.solid_in(HOUSE_AT, HOUSE_SIZE), HOUSE_BLOCKS);
+
+    send(&mut ed, &ToServer::Unbuild { id: 3, build: 2 }).await;
+    assert!(matches!(until_answer(&mut ed, &mut seen, 3).await, ToClient::EntityDone { id: 3, .. }));
+    assert_eq!(next_notice(&mut ed, &mut seen).await, format!("Undid the build: {HOUSE_BLOCKS} blocks back; 0 changed since were left"));
+    assert_eq!(seen.solid_in(HOUSE_AT, HOUSE_SIZE), 0, "every block is back to what it was");
+
+    // the kept build was used up by its undo
+    send(&mut ed, &ToServer::Unbuild { id: 4, build: 2 }).await;
+    assert_eq!(until_answer(&mut ed, &mut seen, 4).await, ToClient::EntityRefused { id: 4, why: EntityWhy::Changed });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_unbuild_leaves_a_cell_another_player_changed_and_counts_it() {
+    let (_server, url) = serve(config(&directory().await)).await;
+    let mut ed = join(&url, "Ed", token(7, "Ed")).await;
+    let mut other = join(&url, "Ot", token(8, "Ot")).await;
+    send(&mut ed, &pose([0.5, 0.0, 0.5])).await;
+    send(&mut other, &pose([-1.5, 0.0, 3.5])).await;
+    let house = place_node(&mut ed, 1, node("house", HOUSE_AT, HOUSE_SIZE, HOUSE.into())).await;
+    send(&mut ed, &ToServer::Build { id: 2, node: house }).await;
+    let mut seen = Seen::default();
+    assert!(matches!(until_answer(&mut ed, &mut seen, 2).await, ToClient::EntityDone { .. }));
+
+    // a wall cell of the house, replaced by planks (block 3) by someone else
+    let wall = [0, 1, 3];
+    assert_ne!(seen.at(wall), 0);
+    send(&mut other, &ToServer::Edit { id: 9, cell: wall, block: 3 }).await;
+    read_until(&mut ed, &mut seen, |s| s.at(wall) == 3).await;
+
+    send(&mut ed, &ToServer::Unbuild { id: 3, build: 2 }).await;
+    assert!(matches!(until_answer(&mut ed, &mut seen, 3).await, ToClient::EntityDone { .. }));
+    let notice = next_notice(&mut ed, &mut seen).await;
+    assert_eq!(notice, format!("Undid the build: {} blocks back; 1 changed since were left", HOUSE_BLOCKS - 1));
+    assert_eq!(seen.at(wall), 3, "the other player's block is still there");
+    assert_eq!(seen.solid_in(HOUSE_AT, HOUSE_SIZE), 1, "nothing else of the house is left");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_unbuild_of_an_unknown_build_is_refused() {
+    let (_server, url) = serve(config(&directory().await)).await;
+    let mut ed = join(&url, "Ed", token(7, "Ed")).await;
+    send(&mut ed, &pose([0.5, 0.0, 0.5])).await;
+    let mut seen = Seen::default();
+    send(&mut ed, &ToServer::Unbuild { id: 1, build: 99 }).await;
+    assert_eq!(until_answer(&mut ed, &mut seen, 1).await, ToClient::EntityRefused { id: 1, why: EntityWhy::Changed });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_unbuild_of_another_players_build_is_refused() {
+    let (_server, url) = serve(config(&directory().await)).await;
+    let mut ed = join(&url, "Ed", token(7, "Ed")).await;
+    let mut other = join(&url, "Ot", token(7, "Ot")).await;
+    send(&mut ed, &pose([0.5, 0.0, 0.5])).await;
+    let house = place_node(&mut ed, 1, node("house", HOUSE_AT, HOUSE_SIZE, HOUSE.into())).await;
+    send(&mut ed, &ToServer::Build { id: 2, node: house }).await;
+    let mut seen = Seen::default();
+    assert!(matches!(until_answer(&mut ed, &mut seen, 2).await, ToClient::EntityDone { .. }));
+    // the same build number on another connection (even of the same account) is not theirs
+    send(&mut other, &ToServer::Unbuild { id: 2, build: 2 }).await;
+    let mut seen_ot = Seen::default();
+    assert_eq!(until_answer(&mut other, &mut seen_ot, 2).await, ToClient::EntityRefused { id: 2, why: EntityWhy::Changed });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_unbuild_is_refused_while_a_build_is_running() {
+    let (_server, url) = serve(config(&directory().await)).await;
+    let mut ed = join(&url, "Ed", token(7, "Ed")).await;
+    send(&mut ed, &pose([0.5, 0.0, 0.5])).await;
+    let cube = place_node(&mut ed, 1, node("tower", [0, 0, 0], CUBE_SIZE, cube_recipe(22))).await;
+    send(&mut ed, &ToServer::Build { id: 2, node: cube }).await;
+    send(&mut ed, &ToServer::Unbuild { id: 3, build: 2 }).await;
+    let mut seen = Seen::default();
+    assert_eq!(until_answer(&mut ed, &mut seen, 3).await, ToClient::EntityRefused { id: 3, why: EntityWhy::Unavailable });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_unbuild_another_players_edit_lands_while_it_goes_on() {
+    let (_server, url) = serve(config(&directory().await)).await;
+    let mut ed = join(&url, "Ed", token(7, "Ed")).await;
+    let mut other = join(&url, "Ot", token(8, "Ot")).await;
+    send(&mut ed, &pose([0.5, 0.0, 0.5])).await;
+    send(&mut other, &pose([0.5, 0.0, 0.5])).await;
+    let cube = place_node(&mut ed, 1, node("tower", [0, 0, 0], CUBE_SIZE, cube_recipe(22))).await;
+    send(&mut ed, &ToServer::Build { id: 2, node: cube }).await;
+    let mut seen = Seen::default();
+    let built = until_answer(&mut ed, &mut seen, 2).await;
+    let ToClient::EntityDone { seq: built_seq, .. } = built else { panic!("{built:?}") };
+    assert_eq!(seen.solid_in([0, 0, 0], CUBE_SIZE), CUBE_BLOCKS);
+
+    send(&mut ed, &ToServer::Unbuild { id: 3, build: 2 }).await;
+    // once the undo has begun (some block of the cube is gone), the other player edits outside it
+    read_until(&mut ed, &mut seen, |s| s.solid_in([0, 0, 0], CUBE_SIZE) < CUBE_BLOCKS).await;
+    let edit_at = [-2, 0, -2];
+    send(&mut other, &ToServer::Edit { id: 9, cell: edit_at, block: 3 }).await;
+
+    let answer = until_answer(&mut ed, &mut seen, 3).await;
+    let ToClient::EntityDone { seq: done_seq, .. } = answer else { panic!("{answer:?}") };
+    let (edit_seq, block) = *seen.edits.get(&edit_at).expect("the other player's edit was not seen");
+    assert_eq!(block, 3);
+    assert!(
+        built_seq < edit_seq && edit_seq < done_seq,
+        "the edit (seq {edit_seq}) falls within the undo ({built_seq}..{done_seq})"
+    );
+    assert_eq!(seen.solid_in([0, 0, 0], CUBE_SIZE), 0);
 }

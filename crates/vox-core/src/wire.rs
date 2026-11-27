@@ -18,7 +18,7 @@
 //! [`ToClient::Entities`] batches of at most [`ENTITIES_PER_MESSAGE`], so a player has them
 //! all when `Ready` arrives. A change to an entity (placed, changed or removed)
 //! takes the next edit number, so it shares `seq` with the edits and arrives in the same order
-//! for everyone. A refused [`ToServer::Put`], [`ToServer::Remove`] or [`ToServer::Build`] is
+//! for everyone. A refused [`ToServer::Put`], [`ToServer::Remove`] or [`ToServer::Build`] (or a [`ToServer::Unbuild`]) is
 //! answered with [`ToClient::EntityRefused`] to its sender only; an applied Put or Remove is
 //! answered with [`ToClient::EntityDone`] to its sender only.
 
@@ -114,6 +114,11 @@ pub enum ToServer {
     /// Build the node `node` (the editor's build step). Added last, so older messages keep
     /// their numbers.
     Build { id: u32, node: EntityId },
+    /// Undo the build the sender made as request `build` (its `id`): put back the blocks it
+    /// changed, except those that have changed since. Answered with [`ToClient::EntityDone`]
+    /// under `id` (then a [`ToClient::Notice`] with the counts), or refused. Added last, so older
+    /// messages keep their numbers.
+    Unbuild { id: u32, build: u32 },
 }
 
 /// An edit the server made.
@@ -265,6 +270,7 @@ mod tests {
             ToServer::Put { id: 2, entity: Some(EntityId(3)), expect: Some(1 << 40), component: spawn() },
             ToServer::Remove { id: 3, entity: EntityId(3), expect: None },
             ToServer::Build { id: 4, node: EntityId(9) },
+            ToServer::Unbuild { id: 5, build: 4 },
         ];
         for m in msgs {
             assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
@@ -349,6 +355,7 @@ mod tests {
         assert_eq!(encode(&ToServer::Put { id: 0, entity: None, expect: None, component: spawn() })[0], 7);
         assert_eq!(encode(&ToServer::Remove { id: 0, entity: EntityId(0), expect: None })[0], 8);
         assert_eq!(encode(&ToServer::Build { id: 0, node: EntityId(0) })[0], 9);
+        assert_eq!(encode(&ToServer::Unbuild { id: 0, build: 0 })[0], 10);
         assert_eq!(encode(&ToClient::Entities(vec![]))[0], 14);
         assert_eq!(encode(&ToClient::EntityRefused { id: 0, why: EntityWhy::Invalid })[0], 15);
         assert_eq!(encode(&ToClient::EntityDone { id: 0, entity: EntityId(0), seq: 0 })[0], 16);

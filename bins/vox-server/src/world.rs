@@ -561,7 +561,7 @@ impl WorldState {
         }
         let voice = Bucket::new(MAX_VOICE_PER_SECOND, VOICE_BURST);
         let edits = Bucket::new(EDIT_RATE, EDIT_RATE);
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None });
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None, kept: VecDeque::new() });
     }
 
     /// On to `url`, arriving at `arrive`: with a ticket from the directory when there is one to
@@ -1078,8 +1078,60 @@ impl WorldState {
             name,
             blocks: VecDeque::from(blocks),
             last_seq: self.seq,
+            undo: None,
+            changed: Vec::new(),
         });
         true
+    }
+
+    /// A player's `Unbuild`: queues the undo of one of their kept builds (`KeptBuild`), applied
+    /// by `build_step` like a build. Refused as `TooFast` over their edit rate, as `Unavailable`
+    /// while one of their builds or undos is still running, and as `Changed` when no such build
+    /// is kept for them. The kept build is used up by its undo. A cell now in a plot the player
+    /// has no part in is left as it is, as a build there would have been refused.
+    fn start_unbuild(&mut self, conn: u64, id: u32, build: u32) {
+        let now = self.started.elapsed().as_secs_f64();
+        // an editor the owner has since removed (as far as the cache already knows; the directory
+        // is not asked, so a plain revert never waits on it) may not undo their build either
+        let revoked = self.players.get(&conn).and_then(|p| p.account).and_then(|a| self.role_of(a)) == Some(Role::Builder);
+        let Some(p) = self.players.get_mut(&conn) else { return };
+        let (account, tx) = (p.account, p.tx.clone());
+        if !p.edits.take(now) {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::TooFast);
+        }
+        if revoked {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::NotYours);
+        }
+        if self.builds.iter().any(|j| j.conn == conn) {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
+        }
+        let Some(i) = p.kept.iter().position(|k| k.build == build) else {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
+        };
+        let Some(kept) = p.kept.remove(i) else { return };
+        let (player, name) = (p.id, p.name.clone());
+        let mut blocks = VecDeque::with_capacity(kept.changed.len());
+        let mut expect = VecDeque::with_capacity(kept.changed.len());
+        let mut left = 0;
+        for (cell, old, new) in kept.changed {
+            if self.plots.iter().any(|pl| pl.holds(cell) && !account.is_some_and(|a| pl.builders.contains(&a))) {
+                left += 1;
+                continue;
+            }
+            blocks.push_back((cell, old));
+            expect.push_back(new);
+        }
+        self.builds.push_back(BuildJob {
+            conn,
+            id,
+            node: EntityId(0),
+            player,
+            name,
+            blocks,
+            last_seq: self.seq,
+            undo: Some(Undo { expect, restored: 0, left }),
+            changed: Vec::new(),
+        });
     }
 
     /// The blocks a node's recipe builds, as (cell, block id), or why they can't be built: the
@@ -1121,8 +1173,19 @@ impl WorldState {
         let mut per_chunk: HashMap<ChunkKey, usize> = HashMap::new();
         while made.len() < BUILD_PER_TICK {
             let Some((cell, block)) = job.blocks.pop_front() else { break };
+            // an undo puts the old block back only where the cell still holds what the build put
+            if let Some(u) = job.undo.as_mut()
+                && u.expect.pop_front() != Some(self.world.get(cell))
+            {
+                u.left += 1;
+                continue;
+            }
             // a block already there is no change, as an ordinary edit refuses it
             let Ok(old) = self.world.edit(cell, block) else { continue };
+            match job.undo.as_mut() {
+                Some(u) => u.restored += 1,
+                None => job.changed.push((cell, old, block)),
+            }
             self.seq += 1;
             self.log.push((self.seq, now_unix(), job.name.clone(), cell, old, block));
             let key = ChunkKey::of(cell);
@@ -1155,9 +1218,26 @@ impl WorldState {
             self.broadcast(&m, None);
         }
         if job.blocks.is_empty() {
+            // a build that changed nothing has nothing to undo, and would take a kept slot
+            if job.undo.is_none()
+                && !job.changed.is_empty()
+                && let Some(p) = self.players.get_mut(&job.conn)
+            {
+                // kept for the builder's undo, as long as they are here
+                p.kept.retain(|k| k.build != job.id);
+                p.kept.push_back(KeptBuild { build: job.id, changed: std::mem::take(&mut job.changed) });
+                while p.kept.len() > KEPT_BUILDS {
+                    p.kept.pop_front();
+                }
+            }
             if let Some(tx) = self.players.get(&job.conn).map(|p| p.tx.clone()) {
                 let done = ToClient::EntityDone { id: job.id, entity: job.node, seq: job.last_seq };
-                if !Self::send_to(&tx, &done) {
+                let mut sent = Self::send_to(&tx, &done);
+                if let Some(u) = &job.undo {
+                    let text = format!("Undid the build: {} blocks back; {} changed since were left", u.restored, u.left);
+                    sent = sent && Self::send_to(&tx, &ToClient::Notice { text });
+                }
+                if !sent {
                     self.leave(job.conn);
                 }
             }
@@ -1289,6 +1369,7 @@ impl WorldState {
                 self.entity_edit(conn, id, Edit::Remove { entity, expect });
             }
             ToServer::Build { id, node } => self.entity_edit(conn, id, Edit::Build { node }),
+            ToServer::Unbuild { id, build } => self.start_unbuild(conn, id, build),
             ToServer::Through { portal, side } => {
                 if !p.bucket.take(now) {
                     return;

@@ -352,6 +352,11 @@ fn send_history(w: &WorldClient, state: &mut EditorState, outbox: &mut EditorOut
         return;
     }
     let id = state.fresh_id();
+    if undo && let Some(build) = state.history.take_build(id) {
+        // the server undoes a build (a client would be held to the edit rate); its notice says how it went
+        w.send_entity(&ToServer::Unbuild { id, build });
+        return;
+    }
     let Some(command) = state.history.take(id, undo) else {
         let text = if undo { "nothing to undo" } else { "nothing to redo" };
         outbox.0.push(Event::Refused { id: 0, r#ref: None, why: "Nothing".into(), text: text.into() });
@@ -410,6 +415,8 @@ pub(crate) fn send_edit(
     };
     if undoable(command, &before) {
         state.history.sent_own(id, before, after);
+    } else if let Command::Build { node } = command {
+        state.history.sent_build(id, EntityId(*node));
     }
     w.send_entity(&msg);
 }

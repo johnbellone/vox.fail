@@ -243,7 +243,38 @@ pub(crate) struct BuildJob {
     pub blocks: VecDeque<([i32; 3], u16)>,
     /// the edit number of the last block applied (or the number at the start, if none was)
     pub last_seq: u64,
+    /// set when the job undoes a build (`ToServer::Unbuild`): then `blocks` holds the old blocks
+    /// to put back and this the rest of what to check; None for a build
+    pub undo: Option<Undo>,
+    /// every block a build changed, as (cell, old, new), kept for its undo when it finishes
+    /// (not filled for an undo)
+    pub changed: Vec<([i32; 3], u16, u16)>,
 }
+
+/// What an undo of a build carries beside its queue of old blocks.
+#[derive(Debug)]
+pub(crate) struct Undo {
+    /// the block the build put in each queued cell, in the queue's order: the old block goes back
+    /// only where the cell still holds this
+    pub expect: VecDeque<u16>,
+    /// cells restored so far
+    pub restored: usize,
+    /// cells left as they are: changed since, or in a plot the builder has no part in now
+    pub left: usize,
+}
+
+/// A finished build kept for its builder's session, so it can be undone.
+#[derive(Debug)]
+pub(crate) struct KeptBuild {
+    /// the client's number for the build (its edit id)
+    pub build: u32,
+    /// the blocks it changed: cell, the block before, the block it put there
+    pub changed: Vec<([i32; 3], u16, u16)>,
+}
+
+/// Builds kept per connection for undo, the oldest dropped first. A build is up to 32,768
+/// blocks, so this bounds what one connection holds.
+pub(crate) const KEPT_BUILDS: usize = 8;
 
 /// An edit held while the directory answers, with the request id to refuse it under, and the
 /// role it is judged as. A held edit for advanced rights (`editor_answer`) has no role yet: the
@@ -460,6 +491,8 @@ struct Player {
     edits: Bucket,
     /// the entity edit held while the directory answers on advanced rights (one at a time)
     pending: Option<Pending>,
+    /// their last finished builds, oldest first, for `ToServer::Unbuild` (dropped with them)
+    kept: VecDeque<KeptBuild>,
 }
 
 struct WorldState {
