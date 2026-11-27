@@ -2,7 +2,7 @@
 
 Status: **proposed** · 2026-11-25 · nothing here is built yet
 
-Related: [world-scaling.md](world-scaling.md) (regions, generated terrain, streaming),
+Related: [world-scaling.md](world-scaling.md) (zones, generated terrain, streaming),
 [repo-structure.md](repo-structure.md) (the `crates/`, `bins/` and `apps/` layout this uses).
 
 ## Summary
@@ -40,7 +40,7 @@ offer. The interpreter is the style.
 
 ## Concepts
 
-- **Graph**: a level, or a region of a large world. Nodes and links.
+- **Graph**: a level, or a zone of a large world. Nodes and links.
 - **Node**: one thing in the world, with:
   - `kind`: house, road, tree, well, village, island and so on (a fixed, versioned vocabulary)
   - `detail`: how far it has been refined (see below)
@@ -94,7 +94,7 @@ crates/
       link.rs              Link and relations
       graph.rs             Graph: add, remove, query by area, children
       ops.rs               the operations a language model may call (see below)
-      constraints.rs       children inside parents, no overlaps, roads meet at region edges
+      constraints.rs       children inside parents, no overlaps, roads meet at zone edges
       expand.rs            node to recipe to voxels or level blocks, using vox-art
       store.rs             serialised form, versioned; templates pinned by version
 
@@ -159,7 +159,7 @@ Rules the interpreter enforces, which are the style:
 ## The pipeline
 
 1. **Plan the graph.** The model, through `vox-forge`'s tools, adds nodes and links at `intent`
-   and `layout` detail for a region or level ("a village of six houses around a well, a road to
+   and `layout` detail for a zone or level ("a village of six houses around a well, a road to
    the north portal").
 2. **Retrieve.** For each node to refine, find the nearest library entries by vector and kind.
    They go to the model as examples.
@@ -182,7 +182,7 @@ expansion never calls a model and is always reproducible.
 
 Exposed by `vox-forge` as MCP tools (and as command-line commands for scripting):
 
-- `graph_open`, `graph_summary(area)`: read a level or region at a chosen level of detail
+- `graph_open`, `graph_summary(area)`: read a level or zone at a chosen level of detail
 - `node_add(kind, parent, params, description)`, `node_link(from, to, relation)`
 - `node_refine(id, target_detail)`: returns what the next detail level needs, nearest library
   examples and the recipe schema
@@ -210,12 +210,12 @@ or reach the network through them.
 - **Generation everywhere.** `vox-graph::expand` is the generator that
   [world-scaling.md](world-scaling.md) needs. The server stores graphs and recipes, which are
   small, and clients expand them into chunks locally, in the browser too.
-- **Streaming.** A region's graph replaces most of its chunk data on the wire. Player edits are
+- **Streaming.** A zone's graph replaces most of its chunk data on the wire. Player edits are
   stored on top, as before, and win over generated blocks.
-- **Far terrain.** Nodes at `massing` detail give the low-detail silhouette for distant regions
+- **Far terrain.** Nodes at `massing` detail give the low-detail silhouette for distant zones
   without expanding them.
 - **Refine ahead of players.** The authoring tool can refine nodes where players are heading;
-  regions no one has reached can stay at `layout` detail.
+  zones no one has reached can stay at `layout` detail.
 
 ## Porting the existing tools
 
@@ -251,7 +251,7 @@ scope for recipes at first; it stays a separate tool until there is a reason to 
 4. `vox-forge` command line and MCP tools; a language model refines the yard's house from
    `intent` to `structure`, with human review.
 5. `vox-library` with the recipe embedder and search; accepted builds feed examples.
-6. Connect to world scaling: graphs stored per region, expanded by clients.
+6. Connect to world scaling: graphs stored per zone, expanded by clients.
 
 ## Open questions
 

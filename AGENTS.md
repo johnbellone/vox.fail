@@ -42,7 +42,7 @@ Two products share one Cargo workspace:
 | --- | --- | --- |
 | `crates/vox-core/` | `vox-core` | Engine-free rules shared by everyone: blocks and chunks (`world`), voxel raycast (`ray`), walking physics (`body`), level files (`level`), the wire protocol (`wire`), sign-in tokens (`auth`), client-side prediction (`predict`), weather simulation (`weather`), who may use, copy and edit a structure (`entitle`), doorways (`portal`), an atlas's generated ground (`terrain`: integer noise over map-wide coordinates, so tiles agree at their edges). **No Bevy here.** |
 | `crates/vox-world/` | `vox-world` | A world on screen, shared by the app and the client: block meshing and materials (`blocks`), server link, chunks, controls, camera (`client`), input actions, bindings, controller brands and button hints (`input/`), the pixel HUD and quick wheel (`hud`), menus with controller navigation (`menu`), sky and fog (`outdoors`), portals (`portals`), avatar pose streaming (`pose`, `proto`), file access that also works in the browser (`files`). |
-| `crates/vox-format/` | `vox-format` | The world format: regions (16 × 16 chunk columns) as checked, zstd-compressed blobs named by their BLAKE3 hash (`region`), a blob store and snapshots (manifests of region hashes, shared blobs, kept a week; `store`), in a folder or an Oxen repository with a commit per snapshot and history older than the week squashed (`oxen`, runs the `oxen` command line). Decodes in wasm too (`ruzstd`); encoding is native. |
+| `crates/vox-format/` | `vox-format` | The world format: zones (16 × 16 chunk columns, 256 m) as checked, zstd-compressed blobs named by their BLAKE3 hash (`zone`), regions (32 × 32 zones, 8 km, one atlas tile) as hashed lists of their zones' hashes (`region`), a blob store and snapshots (manifests of region hashes, shared blobs, kept a week; `store`), in a folder or an Oxen repository with a commit per snapshot and history older than the week squashed (`oxen`, runs the `oxen` command line). Decodes in wasm too (`ruzstd`); encoding is native. |
 | `crates/vox-link/` | `vox-link` | A WebSocket kept open on its own thread, reconnecting with backoff; a `Dial` says where and how (world servers, the relay). Desktop only. |
 | `crates/avatar-voice/` | `avatar-voice` | Block Avatar's voice analysis, pure Rust: lip sync (`lipsync`), pitch and formants (`voice`), laugh and sing detection (`detect`), WAV files (`wav`, one hardened reader). Its tests run on real recordings in `testdata/real`. |
 | `crates/vox-voice/` | `vox-voice` | The voice codecs for world voice chat and Block Avatar, pure Rust with no engine and no dependencies: IMA ADPCM (`adpcm`), a linear resampler (`resample`), a jitter buffer (`jitter`), and 20 ms packets behind a silence gate (`packet`). Shared by `vox-world`, `vox-server` (tests) and `block_avatar`; wasm-safe. |
@@ -243,15 +243,15 @@ bd list                               # everything, as a tree
 
 Proposals live in `docs/design/`. Read the relevant one before large changes:
 
-- [world-scaling.md](docs/design/world-scaling.md): 60 km worlds; regions, generated terrain,
-  streaming by view radius, simulation owners, region hashes; browser and desktop budgets.
+- [world-scaling.md](docs/design/world-scaling.md): 60 km worlds; zones and regions, generated terrain,
+  streaming by view radius, simulation owners, zone and region hashes; browser and desktop budgets.
 - [repo-structure.md](docs/design/repo-structure.md): moving to `bins/`, `crates/` and `apps/`, folders
   and plugins inside the avatar app and `vox-world`, and the step-by-step migration.
 - [world-graph-and-art.md](docs/design/world-graph-and-art.md): levels as graphs of nodes
   refined in passes by a language model; recipes (typed building operations) interpreted by
   Rust into voxels in the project's style, native and wasm; the `vox-art`, `vox-graph`,
   `vox-library` crates and the `vox-forge` tool.
-- [world-format.md](docs/design/world-format.md): regions as compressed blobs (blocks in
+- [world-format.md](docs/design/world-format.md): zones as compressed blobs, grouped in regions (blocks in
   run-length encoding + zstd, entities as Bevy `DynamicWorld` in RON or postcard),
   content-addressed snapshots, levels as files, the `vox-format` crate.
 - [world-network.md](docs/design/world-network.md): many worlds; worlds by id with many per

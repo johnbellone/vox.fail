@@ -4,7 +4,7 @@
 //! [--directory-key <hex or file> [--guests]] [--directory-url http://127.0.0.1:7700]
 //! [--snapshots <dir> | --no-snapshots] [--snapshot-every <seconds>] [--oxen [<binary>]]`.
 //!
-//! Snapshots (vox-format) go to `<db>.snapshots/` by default: the regions that changed, every
+//! Snapshots (vox-format) go to `<db>.snapshots/` by default: the zones that changed (and their regions), every
 //! five minutes and on closing, kept a week. With `--oxen` (or `VOX_OXEN=<binary>`; the
 //! `oxen` command line must be installed) that folder is an Oxen repository with a commit per
 //! snapshot, and history older than the week is squashed away daily; a folder of plain
@@ -53,8 +53,8 @@ async fn main() {
     // the world closed: list or restore snapshots, then stop
     if args.iter().any(|a| a == "--list-snapshots") {
         let dir = cfg.snapshots.clone().unwrap_or_else(|| panic!("no snapshots for an in-memory world"));
-        for (id, at, regions) in vox_server::list_snapshots(&dir, cfg.snapshot_oxen.as_deref()).unwrap_or_else(|e| panic!("{e}")) {
-            println!("{id}  taken {at}  {regions} regions");
+        for (id, at, holds) in vox_server::list_snapshots(&dir, cfg.snapshot_oxen.as_deref()).unwrap_or_else(|e| panic!("{e}")) {
+            println!("{id}  taken {at}  {holds}");
         }
         return;
     }

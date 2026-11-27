@@ -9,15 +9,15 @@ all sent on joining and all simulated all the time. The goal is worlds around **
 in the browser and on the desktop. At 0.5 m blocks that is 120,000 blocks a side, roughly
 14 million chunk columns, about 55,000 times today's size.
 
-The design, in one paragraph: the world is divided into **regions**. Untouched ground is
+The design, in one paragraph: the world is divided into **zones**. Untouched ground is
 **generated** from a seed on whichever machine needs it, so only edits are stored and sent.
 Each client asks for the area around it at a **view radius it chooses** (small in the browser,
 larger on the desktop), and gets chunks nearest-first within a bandwidth budget. Beyond that
 radius it draws **low-detail terrain**. **Cosmetic simulation** (fine weather, particles,
-ambient life) runs on one nearby client per region, the *simulation owner*, and everyone else
+ambient life) runs on one nearby client per zone, the *simulation owner*, and everyone else
 interpolates its snapshots; **anything that changes the game** (blocks, plots, currency, harm)
 stays authoritative on the server. Nothing simulates where no one is. Clients may **cache**
-regions and check them against **region hashes** arranged as a tree, so a reconnect sends only
+zones and check them against **zone hashes** arranged as a tree, so a reconnect sends only
 what changed.
 
 ## Goals
@@ -29,7 +29,7 @@ what changed.
 
 ## Non-goals
 
-- Seamless multi-server sharding of one world (the region design leaves room for it; see
+- Seamless multi-server sharding of one world (the zone design leaves room for it; see
   *Later*).
 - Deterministic lockstep simulation across clients.
 - Changing the block size or the look of the game.
@@ -74,17 +74,21 @@ must shrink before the radius can grow (see *Memory and meshes*).
 
 ## Design
 
-### Coordinates and regions
+### Coordinates, zones and regions
 
 - **Blocks** stay `i32` cells (±2 billion; 120,000 is fine). A **chunk** stays 32³ blocks (16 m).
-- A **region** is 16 × 16 chunk columns, the full height of the world: 256 m × 256 m. A 60 km
-  world is about 235 × 235 ≈ 55,000 regions. Regions are the unit of storage, hashing,
+- A **zone** is 16 × 16 chunk columns, the full height of the world: 256 m × 256 m (512 blocks).
+  A 60 km world is about 235 × 235 ≈ 55,000 zones. Zones are the unit of storage, hashing,
   streaming priority and simulation ownership.
+- A **region** is 32 × 32 zones: 8,192 m × 8,192 m (16,384 blocks), exactly one atlas tile (see
+  [world-network.md](world-network.md)). A 60 km world is about 8 × 8 regions (7.3 across). A
+  region is a grouping of zones for the hash tree and the snapshot manifest, not a unit of
+  streaming or simulation.
 - Worlds are about 128 blocks tall, so all "spheres" in this document are circles on the map
   measured in chunk columns, not 3D spheres.
 - **Floating origin.** Rendering and physics work relative to an origin near the player. When
   the player moves more than 1 km from it, the origin moves and everything is rebased. Network
-  and storage positions are a region or chunk key plus an `f32` offset inside it, never an
+  and storage positions are a zone or chunk key plus an `f32` offset inside it, never an
   absolute `f32`.
 
 ### Terrain is generated, edits are stored
@@ -110,21 +114,21 @@ New messages (sketch; names are not final; protocol version bumps):
 - `ToServer::View { center: ChunkKey, radius: u16, budget_kbps: u32 }`: sent on join and when the
   player crosses a chunk boundary or changes settings. The server clamps `radius` to a
   per-world maximum.
-- `ToServer::Have { region: RegionKey, hash: [u8; 16] }` (batched): what the client already has
+- `ToServer::Have { zone: ZoneKey, hash: [u8; 16] }` (batched): what the client already has
   cached (see *Caching*).
-- `ToClient::Region { key, hash, chunks: Vec<(ChunkKey, version, bytes)> }`: the **edited**
-  chunks of a region (generated ones are omitted), or an "unchanged" reply when the client's
+- `ToClient::Zone { key, hash, chunks: Vec<(ChunkKey, version, bytes)> }`: the **edited**
+  chunks of a zone (generated ones are omitted), or an "unchanged" reply when the client's
   hash matches.
 - `ToClient::Edit` and `ToClient::Pose` go only to players whose view includes that chunk.
 
 Server side:
 
-- Each player has a **view set** of regions. The server keeps a reverse index, region to players,
+- Each player has a **view set** of zones. The server keeps a reverse index, zone to players,
   so an edit is sent to a handful of players, not broadcast.
 - Sending is **priority-ordered** (distance from the player, then direction of travel) and paced
   to the player's budget. Large messages are split so poses and edits are never stuck behind a
-  region download.
-- **Encode once.** A region's wire bytes are cached and invalidated by edits, so a join costs
+  zone download.
+- **Encode once.** A zone's wire bytes are cached and invalidated by edits, so a join costs
   copies, not encoding.
 
 Client side:
@@ -135,10 +139,10 @@ Client side:
 
 ### Storage
 
-- The server loads regions **on demand** and evicts idle ones. A region is saved as one row (or
+- The server loads zones **on demand** and evicts idle ones. A zone is saved as one row (or
   one file) holding its edited chunks, compressed, plus its hash.
-- Edits are appended to a log as today; old log entries are compacted into the region rows.
-- SQLite remains fine at this size if rows are per region (about 55,000 at most, far fewer in
+- Edits are appended to a log as today; old log entries are compacted into the zone rows.
+- SQLite remains fine at this size if rows are per zone (about 55,000 at most, far fewer in
   practice), with `synchronous = NORMAL` and a writer thread off the world thread.
 
 ### Memory and meshes
@@ -149,7 +153,7 @@ Before raising any radius:
 2. **Packed vertices**: position inside the chunk, face direction, texture index and light fit in
    8 to 16 bytes instead of 64. The shader unpacks them.
 3. **Greedy meshing**: merge adjacent identical faces into larger quads.
-4. **Fewer draw calls**: batch chunks of a region into one mesh per material, and keep glass,
+4. **Fewer draw calls**: batch chunks of a zone into one mesh per material, and keep glass,
    water and flame meshes only where they exist.
 5. **Per-frame meshing budget**: mesh at most N chunks or M milliseconds per frame, nearest first.
    One-block edits remesh only the affected chunk, and later only the affected section.
@@ -163,11 +167,11 @@ the prototype (see *Rollout*).
 ### Far terrain
 
 Beyond the full-detail radius, the client draws a **low-detail surface**: a heightmap mesh per
-region at decreasing resolution with distance.
+zone at decreasing resolution with distance.
 
 - For generated ground the client computes it locally: no network.
-- For edited regions the server sends a small **region summary** (a coarse height and colour
-  grid, a few KB), updated when edits there change it. Summaries hang off the same region
+- For edited zones the server sends a small **zone summary** (a coarse height and colour
+  grid, a few KB), updated when edits there change it. Summaries hang off the same zone
   records as the hashes.
 
 ### Simulation: owners, interpolation, and authority
@@ -178,7 +182,7 @@ result could matter to anyone else.
 **Client-owned, interpolated** (cosmetic): fine-detail weather, particles, cosmetic water, foliage
 movement, ambient creatures that cannot affect anything.
 
-- For each active region the server picks a **simulation owner** among nearby clients,
+- For each active zone the server picks a **simulation owner** among nearby clients,
   preferring the strongest (desktop over browser, then by reported frame time).
 - The owner sends compact, quantised **snapshots** at a low rate; the server relays them to
   players in range, who interpolate. The existing weather keyframes (quantised to 16 bits) are
@@ -190,14 +194,14 @@ movement, ambient creatures that cannot affect anything.
   its neighbours odd weather.
 
 **Server-authoritative** (gameplay): block changes, plots, raids, currency, anything that hurts or
-blocks a player, and anything that crosses region edges in ways that matter. These are
+blocks a player, and anything that crosses zone edges in ways that matter. These are
 event-driven, so they stay cheap on the server.
 
 **Rotating authority with server-chosen snapshots** (for when clients share the compute of
 anything that matters, not only cosmetics):
 
-- Each active region runs in **epochs** of 30 to 60 seconds. At each epoch the **server picks**
-  the owner at random from capable nearby clients; nobody can ask for a region, and nobody gets
+- Each active zone runs in **epochs** of 30 to 60 seconds. At each epoch the **server picks**
+  the owner at random from capable nearby clients; nobody can ask for a zone, and nobody gets
   one where they gain from the result (their own plot, a raid they're in).
 - **One chain**: every epoch starts from the last snapshot the server accepted, and the server
   records which that was. Handoff is "start from snapshot N".
@@ -219,7 +223,7 @@ anything that matters, not only cosmetics):
 - A **coarse global layer** on the server, for example 1 km cells (60 × 60 = 3,600 cells). It is
   cheap enough to run everywhere all the time, so fronts and storms move across the map and
   arrive from somewhere.
-- A **fine local layer** run by simulation owners inside active regions, seeded at its edges by
+- A **fine local layer** run by simulation owners inside active zones, seeded at its edges by
   the coarse layer. Overlapping areas merge into one patch so nearby players see the same rain.
   A browser client may skip local stepping and only interpolate.
 
@@ -228,15 +232,17 @@ timers) is computed from timestamps when next observed, not stepped.
 
 ### Caching and sync
 
-- Clients may keep a **region cache**: on disk natively; IndexedDB or the origin private file
+- Clients may keep a **zone cache**: on disk natively; IndexedDB or the origin private file
   system in the browser. The browser cache may be evicted at any time, so an empty cache must
   always work.
-- Each region has a **hash** of its edited chunks' bytes (not their version numbers, so a no-op
-  edit does not invalidate caches). Region hashes form a **quadtree**, depth about 8 for a 60 km
-  world.
-- On join or reconnect, the client sends the hashes of the cached regions in its view
-  (`ToServer::Have`); the server replies "unchanged" or sends the region. For a world with
-  very many edited regions, comparing near the top of the tree first narrows the differences in
+- Each zone has a **hash** of its edited chunks' bytes (not their version numbers, so a no-op
+  edit does not invalidate caches). The hashes form a **tree of three levels**: the snapshot
+  root over the regions, each region over its zones (a region blob lists the hash of each of its
+  zones that has blocks, at most 1,024). A 60 km world is about 8 × 8 regions, so a quadtree
+  inside a region is not needed.
+- On join or reconnect, the client sends the hashes of the cached zones in its view
+  (`ToServer::Have`); the server replies "unchanged" or sends the zone. For a world with
+  very many edited zones, comparing near the top of the tree first narrows the differences in
   a few round trips.
 - **Bloom filters are not used.** A false positive would leave a missing chunk that nothing
   corrects; the exact hash comparison is already cheap at this scale.
@@ -266,26 +272,26 @@ Each phase ships on its own and is measured before the next.
 1. **Measure.** In Chrome and on the desktop, on the developer's laptop (Radeon 890M): frame time
    and memory at 128, 192 and 256 m with today's formats, then with packed vertices, uniform
    chunks and a per-frame meshing budget. These numbers fix the real budgets above.
-2. **Memory and meshes.** Packed vertices, uniform chunks, greedy meshing, meshing budget, per-region
+2. **Memory and meshes.** Packed vertices, uniform chunks, greedy meshing, meshing budget, per-zone
    batching. No protocol change.
-3. **Regions, generator, streaming.** Region keys, the generator in `vox-core` with cross-target
-   golden tests, `View`/`Region` messages, server view sets and pacing, encode-once cache, region
+3. **Zones, generator, streaming.** Zone keys, the generator in `vox-core` with cross-target
+   golden tests, `View`/`Zone` messages, server view sets and pacing, encode-once cache, zone
    storage. Protocol version bump; vox.fail upgraded in one release.
-4. **Far terrain.** Local low-detail terrain, region summaries.
+4. **Far terrain.** Local low-detail terrain, zone summaries.
 5. **Simulation owners and two-layer weather.**
-6. **Client cache and region hashes.**
+6. **Client cache and zone hashes.**
 7. **Floating origin**, as soon as worlds larger than a few km are opened to players.
 
 ## Later
 
-- Splitting one world across server processes by region (the region keys and the view index are
+- Splitting one world across server processes by zone (the zone keys and the view index are
   designed so this is possible).
 - WebTransport or QUIC for unordered streams, if measurements show head-of-line blocking hurts.
 
 ## Open questions
 
 - World height: is 128 blocks (64 m) enough for 60 km worlds with mountains and caves?
-- How much of a 60 km world is hand-built versus generated? This decides how big region rows
+- How much of a 60 km world is hand-built versus generated? This decides how big zone rows
   get.
 - Should the per-world view-radius limit be set by the world owner (a directory setting)?
 - Does WebTransport work through the Cloudflare Tunnel in front of vox.fail?

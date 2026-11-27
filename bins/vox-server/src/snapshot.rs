@@ -1,10 +1,11 @@
-//! Snapshots of the world (vox-format): regions that changed since the last one, as blobs in
+//! Snapshots of the world (vox-format): zones that changed since the last one (and the regions
+//! they are in), as blobs in
 //! the store, every few minutes and on closing; kept a week, with the edit log trimmed to match.
 //! And restoring: to a snapshot, or to any moment (a snapshot plus the edits after it).
 
 #[allow(unused_imports)]
 use super::*;
-use vox_format::{Region, RegionKey, region_of};
+use vox_format::{Zone, ZoneKey, zone_of};
 
 /// Where snapshots are kept: plain files, or an Oxen repository (a commit per snapshot, and
 /// history older than a week squashed away).
@@ -73,23 +74,23 @@ pub enum Restore {
 }
 
 impl WorldState {
-    /// The regions to write: all of them, or the ones changed since the last snapshot.
-    fn regions_to_write(&self, all: bool) -> Vec<Region> {
-        let mut by_region: HashMap<RegionKey, Vec<ChunkKey>> = HashMap::new();
+    /// The zones to write: all of them, or the ones changed since the last snapshot.
+    fn zones_to_write(&self, all: bool) -> Vec<Zone> {
+        let mut by_zone: HashMap<ZoneKey, Vec<ChunkKey>> = HashMap::new();
         for k in self.world.keys() {
-            let r = region_of(k);
-            if all || self.snap_changed.contains(&r) {
-                by_region.entry(r).or_default().push(k);
+            let z = zone_of(k);
+            if all || self.snap_changed.contains(&z) {
+                by_zone.entry(z).or_default().push(k);
             }
         }
-        // a changed region with nothing left in it: written empty, so it's dropped
-        for r in &self.snap_changed {
-            by_region.entry(*r).or_default();
+        // a changed zone with nothing left in it: written empty, so it's dropped
+        for z in &self.snap_changed {
+            by_zone.entry(*z).or_default();
         }
         let palette = self.cfg.palette.len() as u16;
-        by_region
+        by_zone
             .into_iter()
-            .map(|(r, ks)| Region::from_chunks(r, palette, ks.iter().filter_map(|k| self.world.chunk(*k).map(|c| (*k, c)))))
+            .map(|(z, ks)| Zone::from_chunks(z, palette, ks.iter().filter_map(|k| self.world.chunk(*k).map(|c| (*k, c)))))
             .collect()
     }
 
@@ -100,11 +101,19 @@ impl WorldState {
         if !self.snap_full && self.snap_changed.is_empty() {
             return Ok(());
         }
-        let regions = self.regions_to_write(self.snap_full);
+        let zones = self.zones_to_write(self.snap_full);
         let prev = if self.snap_full { None } else { self.snap_prev.as_ref() };
         let now = unix_now();
-        let m = snaps.take(prev, &regions, now, self.seq, self.cfg.palette.len() as u16).map_err(|e| e.to_string())?;
-        eprintln!("snapshot {}: {} regions ({} written)", m.id, m.regions.len(), regions.len());
+        let m = match snaps.take(prev, &zones, now, self.seq, self.cfg.palette.len() as u16) {
+            Ok(m) => m,
+            Err(e) => {
+                // a snapshot builds on the last one's region blobs; if one of those can't be
+                // read, the next snapshot holds every zone instead, so snapshots don't stop
+                self.snap_full = true;
+                return Err(e.to_string());
+            }
+        };
+        eprintln!("snapshot {}: {} regions ({} zones written)", m.id, m.regions.len(), zones.len());
         let (gone, blobs) = snaps.prune(now, self.cfg.keep_snapshots).map_err(|e| e.to_string())?;
         if gone > 0 {
             eprintln!("dropped {gone} snapshots older than a week ({blobs} blobs)");
@@ -139,8 +148,8 @@ impl WorldState {
             Restore::At(t) => (snaps.at_or_before(*t).map_err(|e| e.to_string())?.ok_or("no snapshot that early (they're kept a week)")?, Some(*t)),
         };
         let mut world = World::new(self.cfg.bounds, self.cfg.palette.len() as u16);
-        for r in snaps.regions(&m).map_err(|e| e.to_string())? {
-            for (k, c) in r.decode_chunks().map_err(|e| e.to_string())? {
+        for z in snaps.zones(&m).map_err(|e| e.to_string())? {
+            for (k, c) in z.decode_chunks().map_err(|e| e.to_string())? {
                 world.put_chunk(k, c);
             }
         }
@@ -166,7 +175,7 @@ impl WorldState {
         self.world = world;
         for k in &touched {
             self.dirty.insert(*k);
-            self.snap_changed.insert(region_of(*k));
+            self.snap_changed.insert(zone_of(*k));
         }
         self.flush()?;
         self.snapshot()?;
@@ -185,8 +194,18 @@ pub fn restore(cfg: Config, which: Restore) -> Result<String, String> {
     s.restore(&which)
 }
 
-/// A world's snapshots, newest last: (id, taken at, regions).
-pub fn list_snapshots(dir: &std::path::Path, oxen: Option<&std::path::Path>) -> Result<Vec<(String, u64, usize)>, String> {
+/// A world's snapshots, newest last: (id, taken at, what it holds, such as "2 regions, 9 zones").
+/// A snapshot whose region blobs can't be read is still listed, saying so.
+pub fn list_snapshots(dir: &std::path::Path, oxen: Option<&std::path::Path>) -> Result<Vec<(String, u64, String)>, String> {
     let snaps = vox_format::Snapshots::new(SnapStore::open(dir, oxen)?);
-    Ok(snaps.list().map_err(|e| e.to_string())?.into_iter().map(|m| (m.id, m.taken_at, m.regions.len())).collect())
+    let mut out = Vec::new();
+    for m in snaps.list().map_err(|e| e.to_string())? {
+        let holds = match snaps.zone_hashes(&m) {
+            Ok(z) if m.format < vox_format::store::MANIFEST_FORMAT => format!("{} zones (from before regions)", z.len()),
+            Ok(z) => format!("{} regions, {} zones", m.regions.len(), z.len()),
+            Err(e) => format!("{} regions, unreadable: {e}", m.regions.len()),
+        };
+        out.push((m.id, m.taken_at, holds));
+    }
+    Ok(out)
 }

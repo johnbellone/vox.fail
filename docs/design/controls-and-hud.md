@@ -142,7 +142,7 @@ authoritative**, and the client predicts, as it already does for edits:
   respawn at the world's spawn, and in survival drop your backpack where you fell.
 - **The directory's inventory** (coins, deeds, keys, trophies, wardrobe) stays account-wide and
   shows as a second tab in the in-game inventory, read-only, with a link to the site.
-- Inventories are saved with the world (the region format, see the world-format discussion),
+- Inventories are saved with the world (the zone format, see the world-format discussion),
   so snapshots include them.
 
 ## Menus with controller navigation

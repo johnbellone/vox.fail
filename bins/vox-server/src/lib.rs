@@ -372,11 +372,11 @@ struct WorldState {
     /// which raid party each signed-in account is in (index into the directory's list); an
     /// account listed in two parties keeps the first
     party_of: HashMap<u64, u32>,
-    /// snapshots: the store, the last one taken, regions changed since, and whether the next
-    /// one must hold every region (no usable last one)
+    /// snapshots: the store, the last one taken, zones changed since, and whether the next
+    /// one must hold every zone (no usable last one)
     snaps: Option<vox_format::Snapshots<SnapStore>>,
     snap_prev: Option<vox_format::Manifest>,
-    snap_changed: HashSet<vox_format::RegionKey>,
+    snap_changed: HashSet<vox_format::ZoneKey>,
     snap_full: bool,
     last_snapshot: Instant,
     /// where trips go to get a ticket from the directory (None: no directory; players go on

@@ -116,7 +116,7 @@ bus). Effects go on the ambience and prop buses only.
 | bevy_flycam | 0.19 / 0.19 | **ISC** | ? | **Skip** | We fly already; a debug camera is about 50 lines |
 | bevy-tnua (+ Avian 0.7) | 0.32 & 0.12.x / 0.20 | MIT/Apache | likely | **Copy the pattern** | Player physics stays engine-free in `vox-core` (the server has no Bevy; prediction needs the same rules on both sides). Copy the feel: coyote time, jump buffering, variable jump height, smooth step-up, crouch at edges; `moves` allows the same |
 | Avian 3D | 0.7 / 0.20 | MIT/Apache | likely | **Skip** (players), **Watch** (cosmetic) | Only ever for client-side debris; not now |
-| big_space | 0.13 / 0.19 (0.20 only an rc) | MIT/Apache | likely | **Use directly** (later) | Floating origin for 60 km worlds, client only. Make a big_space cell one of our regions, and add an engine-free region-key-plus-offset position to `vox-core` that the server shares |
+| big_space | 0.13 / 0.19 (0.20 only an rc) | MIT/Apache | likely | **Use directly** (later) | Floating origin for 60 km worlds, client only. Make a big_space cell one of our zones, and add an engine-free zone-key-plus-offset position to `vox-core` that the server shares |
 | avian_pickup | 0.6 / 0.20 | MIT/Apache | untested | **Skip** | Carrying is a server rule; a throw's arc is cosmetic |
 | rerecast | not Bevy (`no_std`, glam 0.33) | MIT/Apache | likely | **Watch**, then use the core in the server | Navmeshes for NPCs, built in the server or a tool. Start with A\* on cells (exact with our collision); rerecast for open areas. Its glam 0.33 differs from Bevy 0.19's 0.32.1, which is fine in the Bevy-free server |
 
@@ -140,7 +140,7 @@ The browser client is WebGPU-only (`bins/vox-client/Cargo.toml` enables `webgpu`
 
 | Item | Bevy | Licence | wasm | Verdict | Where, and why |
 | --- | --- | --- | --- | --- | --- |
-| moonshine_save | 0.7 / 0.20 | MIT | likely | **Copy the pattern** | Saves whole worlds; we need region blobs, migrations and a limited registry. Copy: a marker for what is saved, the model apart from what is drawn, drawn parts rebuilt on load |
+| moonshine_save | 0.7 / 0.20 | MIT | likely | **Copy the pattern** | Saves whole worlds; we need zone blobs, migrations and a limited registry. Copy: a marker for what is saved, the model apart from what is drawn, drawn parts rebuilt on load |
 | transform-gizmo-bevy | 0.11 / 0.19 | MIT/Apache | likely | **Use directly** (editor feature) | Move, rotate, scale for placing props and structures in an editor build; snaps to 0.5 m and 5 cm |
 | bevy_egui | 0.42 / 0.20 | MIT | yes | **Use directly** (dev and editor features) | Inspectors, budget readouts, a snapshot browser, editor panels. Players keep the pixel HUD and menus |
 | dot_vox | not Bevy | MIT | yes | **Copy the pattern** (tools only) | Props' Lane B reads files from players: write our own hardened `.vox` reader (sizes, a voxel cap, no recursion), fuzzed and tested on the 143 existing files; dot_vox as the test oracle and in `vox-forge` |
@@ -156,11 +156,11 @@ Bevy 0.19.1 already brings wgpu and naga 29.0.4, encase 0.12.1, bytemuck 1.25.2 
 | Crate | In the tree via Bevy | Licence | wasm | Verdict | Where, and why |
 | --- | --- | --- | --- | --- | --- |
 | hexasphere | 18.0.0 | MIT/Apache | yes | **Skip** (use Bevy's `Sphere::mesh().ico()`) | The orbit planet is better analytic in the sky shader |
-| meshopt | no | MIT/Apache | **C++** | **Watch** (native tools) | Only for far-region and prop LOD in `vox-forge`; zstd over packed vertices already does most of it |
-| voronator | no | MIT | yes | **Copy the pattern** | A global triangulation doesn't stream. Use jittered-grid cells from an integer hash (a region needs only its 3 × 3 cells) |
+| meshopt | no | MIT/Apache | **C++** | **Watch** (native tools) | Only for far-zone and prop LOD in `vox-forge`; zstd over packed vertices already does most of it |
+| voronator | no | MIT | yes | **Copy the pattern** | A global triangulation doesn't stream. Use jittered-grid cells from an integer hash (a zone needs only its 3 × 3 cells) |
 | noise | no | MIT/Apache | yes | **Skip; write our own** | Dormant; old `rand`; output could change with versions; trigonometry may differ between native and wasm. One `vox-core::noise` (integer hash, value, gradient, fBm, cells), basic arithmetic only, golden tests on both targets; replaces the two copies in `weather.rs` and `outdoors.rs` |
 | cubecl | no | MIT/Apache | WebGPU only | **Skip** | Needs wgpu 30 (Bevy 0.20); GPU results differ by vendor so they can't decide anything the server needs |
-| bytemuck | 1.25.2 | Zlib/MIT/Apache | yes | **Use directly** | The packed vertex, region and VOXP blobs without hand shifts; the same copy as Bevy's |
+| bytemuck | 1.25.2 | Zlib/MIT/Apache | yes | **Use directly** | The packed vertex, zone and VOXP blobs without hand shifts; the same copy as Bevy's |
 | encase | 0.12.1 | MIT-0 | yes | **Through Bevy only** | `ShaderType` derive; a direct 0.13 would be a second, incompatible copy |
 | inline-spirv | no | MIT/Apache | C++ or old naga | **Skip** | We write WGSL; SPIR-V is no use in the browser |
 | naga | 29.0.4 | MIT/Apache | yes | **Skip** as a direct dependency | If a shader-validation test is ever added, pin it to Bevy's exact version, as a dev-dependency |
@@ -174,7 +174,7 @@ scheme as snapshots, not a glTF or Bevy scene; `.vox` and `.glb` are only ways i
 - **The manifest** (`pack.json` or postcard): format and palette versions, the level graph, region
   hashes, structure and prop blob hashes, the component registry version, the generator version,
   dependencies on other packs.
-- **Region entities**: our own postcard blob, `RegionEntities { entities: [{ id, components:
+- **Zone entities**: our own postcard blob, `ZoneEntities { entities: [{ id, components:
   [(stable_name, version, bytes)] }] }`, with entity links as local ids inside the blob and a
   version per component so migrations run before anything reaches an ECS (instead of
   `DynamicWorld`). The world server and `vox-format` stay free of Bevy's render crates; the
@@ -189,9 +189,9 @@ scheme as snapshots, not a glTF or Bevy scene; `.vox` and `.glb` are only ways i
   curves (knots, as bevy_lookup_curve's RON), and a character pack's rig state table (states,
   clips, masks, crossfades, footstep events).
 - **Generation**: noise parameters (seed, octaves, lacunarity and gain as rationals, cell size and
-  jitter, a biome table) and a `noise_version`, so regions not yet generated stay reproducible.
-- **Navigation**: navmesh tiles per region as hashed blobs, built from the blocks and the prop
-  occupancy layer, rebuilt only where a region's hash changed; dungeon templates can ship them.
+  jitter, a biome table) and a `noise_version`, so zones not yet generated stay reproducible.
+- **Navigation**: navmesh tiles per zone as hashed blobs, built from the blocks and the prop
+  occupancy layer, rebuilt only where a zone's hash changed; dungeon templates can ship them.
 - **Textures**: block tiles as PNG or zstd-supercompressed KTX2 with precomputed mipmaps, named by
   hash.
 - **Meshes**: packed vertex and index arrays under zstd; no C++ codec on the wire.

@@ -1,4 +1,14 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T12:47:43Z]: Linked `decisions/zones-and-regions.md` to `architecture/world-format-design.md` (The format the zones and regions are stored in.).
+* **Relate** [2026-11-27T12:47:43Z]: Linked `architecture/world-scaling-design.md` to `decisions/zones-and-regions.md` (The unit names and sizes this design uses.).
+* **Relate** [2026-11-27T12:47:43Z]: Linked `architecture/world-scaling-design.md` to `architecture/world-format-design.md` (storage format that zones and regions need).
+* **Relate** [2026-11-27T12:47:43Z]: Linked `architecture/world-format-design.md` to `decisions/zones-and-regions.md` (Zones are the 256 m storage unit; regions are 32 x 32 zones listed by a snapshot.).
+* **Relate** [2026-11-27T12:47:43Z]: Linked `architecture/world-format-design.md` to `technologies/bevy-ecosystem.md` (Why entities use our own blob instead of DynamicWorld, and what belongs in a pack.).
+* **Relate** [2026-11-27T12:47:43Z]: Linked `architecture/world-format-design.md` to `decisions/structure-entitlements.md` (Structures have an owner and use, copy and edit rights.).
+* **Relate** [2026-11-27T12:47:43Z]: Linked `architecture/world-format-design.md` to `decisions/oxen-snapshot-store.md` (Oxen is the snapshot store when asked for, with history squashed daily.).
+* **Update** [2026-11-27T12:47:32Z]: Updated concept `architecture/world-scaling-design.md`. — The 256 m unit is now a zone; regions are 32 x 32 zones (decisions/zones-and-regions)
+* **Update** [2026-11-27T12:47:32Z]: Updated concept `architecture/world-format-design.md`. — Zones are the old regions; regions are 32 x 32 zones (manifest format 2); see decisions/zones-and-regions
+* **Creation** [2026-11-27T12:47:08Z]: Documented concept `decisions/zones-and-regions.md` (Decision: Zones Are 256 m, Regions Are 32 x 32 Zones). — The world data model: zones are the old regions, regions are 32 x 32 zones (manifest level, old snapshots still read)
 * **Update** [2026-11-27T11:53:58Z]: Updated concept `decisions/world-voice-chat.md`. — Tried on real devices: speakers matched (0.974); the mic's DC offset and hiss held the open-mic gate open, fixed with a DC blocker and a noise-floor gate in the packetizer
 * **Update** [2026-11-27T11:17:07Z]: Updated concept `decisions/world-voice-chat.md`. — Voice landed on main as PROTOCOL 7 (after travel's 6); radius from the world, immediate mute, non-blocking device start; wire-protocol and related concepts updated
 * **Relate** [2026-11-27T04:40:31Z]: Linked `decisions/bevy-0-20-upgrade.md` to `technologies/bevy-ecosystem.md` (The analysis that preceded the upgrade, and the crates still waiting on 0.20 releases.).

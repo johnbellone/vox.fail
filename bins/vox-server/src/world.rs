@@ -615,7 +615,7 @@ impl WorldState {
                         let a = Applied { seq: self.seq, player: p.id, id, cell, block };
                         self.log.push((self.seq, now_unix(), p.name.clone(), cell, old, block));
                         self.dirty.insert(ChunkKey::of(cell));
-                        self.snap_changed.insert(vox_format::region_of(ChunkKey::of(cell)));
+                        self.snap_changed.insert(vox_format::zone_of(ChunkKey::of(cell)));
                         self.broadcast(&ToClient::Edits(vec![a]), None);
                     }
                 }

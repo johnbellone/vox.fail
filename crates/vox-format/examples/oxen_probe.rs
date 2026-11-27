@@ -1,17 +1,17 @@
 //! A probe for choosing between the plain snapshot store and Oxen (docs/design/world-format.md,
 //! *Oxen*): builds a world of `tiles × tiles` copies of the islands, then `rounds` rounds of
-//! building, each touching a few regions. Every round is written twice:
+//! building, each touching a few zones. Every round is written twice:
 //!
 //! - as a `DirStore` snapshot under `<out>/plain` (what the world server does), and
-//! - as the changed region files under `<out>/rounds/<n>/<x_z>.voxr`, for a script to copy into
+//! - as the changed zone files under `<out>/rounds/<n>/<x_z>.voxr`, for a script to copy into
 //!   an Oxen working tree and commit (`tools/dev/oxen_probe.sh`).
 //!
-//! `cargo run --release -p vox-format --example oxen_probe -- <out> [tiles 4] [rounds 20] [regions per round 3]`
+//! `cargo run --release -p vox-format --example oxen_probe -- <out> [tiles 4] [rounds 20] [zones per round 3]`
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use vox_core::world::{Bounds, CHUNK, World};
-use vox_format::{DirStore, Region, RegionKey, Snapshots, region_of};
+use vox_format::{DirStore, Zone, ZoneKey, Snapshots, zone_of};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -25,7 +25,7 @@ fn main() {
     let mut one = World::new(Bounds::default(), names.len() as u16);
     vox_core::level::fill(&mut one, &level, &names).expect("fill");
 
-    // the islands, `tiles` times each way, a tile apart (512 blocks: one region)
+    // the islands, `tiles` times each way, a tile apart (512 blocks: one zone)
     let span = 16 * CHUNK;
     let half = tiles * span / 2;
     let mut world = World::new(Bounds { lo: [-half, -32, -half], hi: [half, 96, half] }, one.kinds);
@@ -38,30 +38,30 @@ fn main() {
             }
         }
     }
-    let keys: BTreeSet<RegionKey> = world.keys().into_iter().map(region_of).collect();
-    let keys: Vec<RegionKey> = keys.into_iter().collect();
-    eprintln!("{} blocks in {} regions", world.count(), keys.len());
+    let keys: BTreeSet<ZoneKey> = world.keys().into_iter().map(zone_of).collect();
+    let keys: Vec<ZoneKey> = keys.into_iter().collect();
+    eprintln!("{} blocks in {} zones", world.count(), keys.len());
 
     let _ = std::fs::remove_dir_all(&out);
     let snaps = Snapshots::new(DirStore::new(out.join("plain")));
-    let region = |w: &World, r: RegionKey| {
-        let ks: Vec<_> = w.keys().into_iter().filter(|k| region_of(*k) == r).collect();
-        Region::from_chunks(r, 1, ks.into_iter().map(|k| (k, w.chunk(k).unwrap())))
+    let zone = |w: &World, r: ZoneKey| {
+        let ks: Vec<_> = w.keys().into_iter().filter(|k| zone_of(*k) == r).collect();
+        Zone::from_chunks(r, 1, ks.into_iter().map(|k| (k, w.chunk(k).unwrap())))
     };
-    let write = |round: i32, regions: &[Region]| {
+    let write = |round: i32, zones: &[Zone]| {
         let dir = out.join("rounds").join(round.to_string());
         std::fs::create_dir_all(&dir).unwrap();
-        for r in regions {
+        for r in zones {
             std::fs::write(dir.join(format!("{}.voxr", r.key)), r.encode().unwrap().0).unwrap();
         }
     };
 
     // round 0: the whole world
-    let all: Vec<Region> = keys.iter().map(|r| region(&world, *r)).collect();
+    let all: Vec<Zone> = keys.iter().map(|r| zone(&world, *r)).collect();
     write(0, &all);
     let mut prev = snaps.take(None, &all, 1_000_000, 0, 1).unwrap();
 
-    // then building: a small house's worth of blocks (a 6 × 4 × 6 shell) in a few regions a round
+    // then building: a small house's worth of blocks (a 6 × 4 × 6 shell) in a few zones a round
     let mut rng = 0x9e37_79b9_7f4a_7c15u64;
     let mut next = || {
         rng ^= rng << 13;
@@ -86,7 +86,7 @@ fn main() {
             }
             touched.insert(r);
         }
-        let changed: Vec<Region> = touched.iter().map(|r| region(&world, *r)).collect();
+        let changed: Vec<Zone> = touched.iter().map(|r| zone(&world, *r)).collect();
         write(round, &changed);
         prev = snaps.take(Some(&prev), &changed, 1_000_000 + round as u64 * 300, round as u64, 1).unwrap();
     }

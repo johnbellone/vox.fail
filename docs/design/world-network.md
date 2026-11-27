@@ -2,8 +2,8 @@
 
 Status: **proposed** · 2026-11-26 · phases 1 to 4 built (templates are level files, not yet snapshots), and the first part of 5 (tiles, generated ground, edges); several hosts not yet
 
-Related: [world-scaling.md](world-scaling.md) (one world up to 60 km: regions, generated terrain,
-streaming), [world-format.md](world-format.md) (region blobs, content-addressed snapshots),
+Related: [world-scaling.md](world-scaling.md) (one world up to 60 km: zones, regions, generated terrain,
+streaming), [world-format.md](world-format.md) (zone and region blobs, content-addressed snapshots),
 [world-graph-and-art.md](world-graph-and-art.md) (generated buildings, which dungeons will use).
 
 ## Summary
@@ -111,7 +111,7 @@ CREATE TABLE worlds (
   and snapshots as on SIGTERM today). The Void and other entry worlds can be marked never to stop.
 
 Starting a world means opening SQLite and loading its chunks, which should be quick for today's
-small worlds (to be measured: it sets how long a cold portal takes). Streaming regions (world-scaling.md, phase 3) keeps that small for big worlds too.
+small worlds (to be measured: it sets how long a cold portal takes). Streaming zones (world-scaling.md, phase 3) keeps that small for big worlds too.
 
 ### 3. Server-driven travel, with tickets
 
@@ -158,7 +158,7 @@ instance that's its template, which is exactly what the party will find.
 **Templates.** A dungeon is built like any world: a level file (`data/levels/dungeons/crypt.json`)
 or a world built in by hand and then frozen. Freezing takes a `vox-format` snapshot; the
 template **is** that snapshot (its manifest hash, or its commit when the world uses the Oxen
-store). Because region blobs are content-addressed,
+store). Because zone and region blobs are content-addressed,
 starting a copy costs nothing: the instance starts from the same manifest and writes new blobs
 only for what its party changes.
 
@@ -211,7 +211,7 @@ be `dungeon:<name>`; reaching the objective wins it for the party's members who 
 ### 5. The atlas: very large maps
 
 A map bigger than one world is a grid of **tiles**, each an ordinary persistent world with its
-own id (`atlas:<name>:<x>:<z>`). Tiles are 8,192 m across (16,384 blocks, 32 × 32 regions) by
+own id (`atlas:<name>:<x>:<z>`). Tiles are 8,192 m across (16,384 blocks, 32 × 32 zones, one region) by
 default; the atlas sets its own size, up to world-scaling.md's 60 km.
 
 For scale: a map the size of western Europe, 2,400 × 2,100 km, is about 300 × 260 = 75,000
@@ -230,7 +230,7 @@ up exactly at every edge. The client generates the neighbours' terrain itself fo
 and for the last stretch before an edge, so the horizon is continuous.
 
 **What doesn't cross a seam** until you do: other players, and edits in the neighbour tile. Far
-terrain for edited regions there comes from the neighbour's **region summaries** (the small
+terrain for edited zones there comes from the neighbour's **zone summaries** (the small
 height and colour grids from world-scaling.md, *Far terrain*), which the directory or storage can
 serve without the tile running. People near a seam are the cost of this design; dense places
 (cities) should sit away from tile edges, which an atlas builder can choose.
@@ -267,9 +267,9 @@ seen across the edge, storing only edits (world-scaling.md, phase 3), larger til
 
 ### 7. Moving worlds between machines (later)
 
-To start a persistent world on any host, its storage moves off the host's disk: region blobs and
+To start a persistent world on any host, its storage moves off the host's disk: zone and region blobs and
 snapshot manifests in object storage (already decided in world-format.md), the SQLite edit log
-replaced by a write-ahead log that is flushed into new region blobs.
+replaced by a write-ahead log that is flushed into new zone and region blobs.
 
 Two hosts must never run the same world. The registry's `epoch` is a lease: each `start` raises
 it, the host must renew it with every report, and every write to storage carries it. Storage

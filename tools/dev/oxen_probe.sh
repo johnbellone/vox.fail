@@ -2,7 +2,7 @@
 # Compare the plain snapshot store with Oxen (docs/design/world-format.md, *Oxen*): the same
 # world and the same rounds of building, committed both ways; prints sizes and times.
 #
-#   tools/dev/oxen_probe.sh <out folder> [tiles 4] [rounds 20] [regions per round 3]
+#   tools/dev/oxen_probe.sh <out folder> [tiles 4] [rounds 20] [zones per round 3]
 #
 # Needs `oxen` on the PATH (github.com/Oxen-AI/Oxen releases). Run from the repo root.
 set -euo pipefail

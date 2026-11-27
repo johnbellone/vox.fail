@@ -4,12 +4,18 @@
 //! keeps them in a folder; an S3 or R2 bucket (or Oxen, see the design) implements the same four
 //! calls. On top of it, [`Snapshots`]:
 //!
-//! - region blobs are stored once, under `blobs/<first two of hash>/<hash>`;
+//! - zone blobs and region blobs (a region lists its zones' hashes) are stored once, under
+//!   `blobs/<first two of hash>/<hash>`;
 //! - a snapshot is a [`Manifest`] at `snapshots/<id>.json`: every region's hash, the edit number it
 //!   was taken at, a serial number (so two in one second never collide), and a root hash;
-//! - a new snapshot writes only regions that changed (the rest are shared with the one before);
+//! - a new snapshot writes only the zones that changed and the regions they are in (the rest are
+//!   shared with the one before);
 //! - [`Snapshots::prune`] drops snapshots older than the retention (a week), always keeping the
 //!   newest, and deletes blobs no remaining snapshot names.
+//!
+//! Snapshots from before regions held zones (manifest format 1, no `format` field) list zone
+//! hashes directly under `regions`; they still list, restore and prune, and the first snapshot
+//! taken after one writes the region blobs.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -20,8 +26,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, err,
-    region::{Region, RegionKey},
+    region::Region,
+    zone::{Zone, ZoneKey},
 };
+// taking a snapshot (native only) groups zones into regions
+#[cfg(not(target_arch = "wasm32"))]
+use crate::region::{RegionKey, region_of_zone};
 
 /// A blob's identity: the first 16 bytes of its BLAKE3 hash.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -155,9 +165,20 @@ impl BlobStore for DirStore {
     }
 }
 
+/// The manifest format written now: `regions` names region blobs.
+pub const MANIFEST_FORMAT: u16 = 2;
+
+fn format_one() -> u16 {
+    1
+}
+
 /// One snapshot: what every region was at a moment.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
+    /// [`MANIFEST_FORMAT`]; 1 (the field missing) is from before regions held zones, when
+    /// `regions` named zone blobs directly
+    #[serde(default = "format_one")]
+    pub format: u16,
     /// `<unix time, 12 digits>-<serial, 8 digits>`: unique, and sorts in the order taken
     pub id: String,
     /// one more than the last snapshot's (two in the same second still differ)
@@ -168,9 +189,11 @@ pub struct Manifest {
     /// the world's edit number at the time (edits after it are in the log)
     pub seq: u64,
     pub palette_version: u16,
-    /// every region with blocks, by key (`x_z`)
+    /// every region with blocks, by key (`x_z`): its region blob's hash (format 1: zones and
+    /// their zone blobs' hashes)
     pub regions: BTreeMap<String, Hash>,
-    /// over every (region, hash): equal roots, equal worlds
+    /// over every (region, hash): equal roots, equal worlds (as regions' hashes cover their
+    /// zones' hashes, which cover their blocks)
     pub root: Hash,
 }
 
@@ -184,11 +207,6 @@ impl Manifest {
             h.update(b";");
         }
         Hash::from_blake3(h.finalize())
-    }
-
-    pub fn region_key(s: &str) -> Option<RegionKey> {
-        let (x, z) = s.split_once('_')?;
-        Some(RegionKey { x: x.parse().ok()?, z: z.parse().ok()? })
     }
 }
 
@@ -210,26 +228,56 @@ impl<S: BlobStore> Snapshots<S> {
         Snapshots { store }
     }
 
-    /// Take a snapshot: `prev` with the regions in `changed` replaced (a region with no chunks
-    /// left is dropped). With no `prev`, `changed` must hold every region.
+    /// Take a snapshot: `prev` with the zones in `changed` replaced (a zone with no chunks left
+    /// is dropped, and so is a region with no zones left). With no `prev`, `changed` must hold
+    /// every zone. Writes the changed zones' blobs and the blobs of the regions they are in.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn take(&self, prev: Option<&Manifest>, changed: &[Region], taken_at: u64, seq: u64, palette_version: u16) -> Result<Manifest, Error> {
-        let mut regions = prev.map(|m| m.regions.clone()).unwrap_or_default();
-        for r in changed {
-            let k = r.key.to_string();
-            if r.chunks.is_empty() {
-                regions.remove(&k);
+    pub fn take(&self, prev: Option<&Manifest>, changed: &[Zone], taken_at: u64, seq: u64, palette_version: u16) -> Result<Manifest, Error> {
+        let mut regions = BTreeMap::new();
+        let mut touched: BTreeMap<RegionKey, Region> = BTreeMap::new();
+        match prev {
+            Some(m) if m.format >= MANIFEST_FORMAT => regions = m.regions.clone(),
+            // from before regions: every region is new (its zone blobs are already stored)
+            Some(m) => {
+                for (z, h) in self.zone_hashes(m)? {
+                    let r = region_of_zone(z);
+                    touched.entry(r).or_insert_with(|| Region::new(r)).zones.insert(z, h);
+                }
+            }
+            None => {}
+        }
+        for zone in changed {
+            let r = region_of_zone(zone.key);
+            let region = match touched.entry(r) {
+                std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    let had = match regions.get(&r.to_string()) {
+                        Some(h) => self.region(&r.to_string(), h)?,
+                        None => Region::new(r),
+                    };
+                    e.insert(had)
+                }
+            };
+            if zone.chunks.is_empty() {
+                region.zones.remove(&zone.key);
                 continue;
             }
-            let (blob, hash) = r.encode()?;
-            let key = blob_key(&hash);
-            if self.store.get(&key)?.is_none() {
-                self.store.put(&key, &blob)?;
+            let (blob, hash) = zone.encode()?;
+            self.put_once(&hash, &blob)?;
+            region.zones.insert(zone.key, hash);
+        }
+        for (r, region) in touched {
+            if region.zones.is_empty() {
+                regions.remove(&r.to_string());
+                continue;
             }
-            regions.insert(k, hash);
+            let (blob, hash) = region.encode()?;
+            self.put_once(&hash, &blob)?;
+            regions.insert(r.to_string(), hash);
         }
         let serial = self.list()?.last().map_or(1, |m| m.serial + 1);
         let m = Manifest {
+            format: MANIFEST_FORMAT,
             id: format!("{taken_at:012}-{serial:08}"),
             serial,
             taken_at,
@@ -244,12 +292,52 @@ impl<S: BlobStore> Snapshots<S> {
         Ok(m)
     }
 
+    /// Stores a blob under its hash, unless it is there already.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn put_once(&self, hash: &Hash, blob: &[u8]) -> Result<(), Error> {
+        let key = blob_key(hash);
+        if self.store.get(&key)?.is_none() {
+            self.store.put(&key, blob)?;
+        }
+        Ok(())
+    }
+
+    /// A region blob, read and checked against its hash and its key.
+    pub fn region(&self, key: &str, h: &Hash) -> Result<Region, Error> {
+        let blob = self.store.get(&blob_key(h))?.ok_or_else(|| Error(format!("region {key}: blob {h:?} is missing")))?;
+        let r = Region::decode(&blob)?;
+        if r.hash()? != *h || r.key.to_string() != key {
+            return err(format!("region {key}: the blob isn't what the snapshot says"));
+        }
+        Ok(r)
+    }
+
+    /// Every zone a snapshot holds, with its blob's hash (reading the region blobs).
+    pub fn zone_hashes(&self, m: &Manifest) -> Result<BTreeMap<ZoneKey, Hash>, Error> {
+        let mut out = BTreeMap::new();
+        if m.format < MANIFEST_FORMAT {
+            for (k, h) in &m.regions {
+                let z = ZoneKey::parse(k).ok_or_else(|| Error(format!("not a zone: {k}")))?;
+                out.insert(z, *h);
+            }
+            return Ok(out);
+        }
+        for (k, h) in &m.regions {
+            out.extend(self.region(k, h)?.zones);
+        }
+        Ok(out)
+    }
+
     /// Every snapshot, oldest first.
     pub fn list(&self) -> Result<Vec<Manifest>, Error> {
         let mut out = Vec::new();
         for key in self.store.list("snapshots/")? {
             let Some(bytes) = self.store.get(&key)? else { continue };
             let m: Manifest = serde_json::from_slice(&bytes).map_err(|e| Error(format!("{key}: {e}")))?;
+            // a newer format would be read with the wrong rules: refuse it instead
+            if m.format > MANIFEST_FORMAT {
+                return err(format!("{key}: manifest format {}, this build reads up to {MANIFEST_FORMAT}", m.format));
+            }
             if m.root != Manifest::root_of(&m.regions) {
                 return err(format!("{key}: its root doesn't match its regions"));
             }
@@ -273,16 +361,17 @@ impl<S: BlobStore> Snapshots<S> {
         Ok(self.list()?.into_iter().rfind(|m| m.taken_at <= t))
     }
 
-    /// A snapshot's regions, read and checked against their hashes.
-    pub fn regions(&self, m: &Manifest) -> Result<Vec<Region>, Error> {
-        let mut out = Vec::with_capacity(m.regions.len());
-        for (k, h) in &m.regions {
-            let blob = self.store.get(&blob_key(h))?.ok_or_else(|| Error(format!("region {k}: blob {h:?} is missing")))?;
-            let r = Region::decode(&blob)?;
-            if r.hash()? != *h || r.key.to_string() != *k {
-                return err(format!("region {k}: the blob isn't what the snapshot says"));
+    /// A snapshot's zones, read and checked against their hashes.
+    pub fn zones(&self, m: &Manifest) -> Result<Vec<Zone>, Error> {
+        let hashes = self.zone_hashes(m)?;
+        let mut out = Vec::with_capacity(hashes.len());
+        for (k, h) in &hashes {
+            let blob = self.store.get(&blob_key(h))?.ok_or_else(|| Error(format!("zone {k}: blob {h:?} is missing")))?;
+            let z = Zone::decode(&blob)?;
+            if z.hash()? != *h || z.key != *k {
+                return err(format!("zone {k}: the blob isn't what the snapshot says"));
             }
-            out.push(r);
+            out.push(z);
         }
         Ok(out)
     }
@@ -294,10 +383,19 @@ impl<S: BlobStore> Snapshots<S> {
         let newest = all.last().map(|m| m.id.clone());
         let (gone, kept): (Vec<Manifest>, Vec<Manifest>) =
             all.into_iter().partition(|m| now.saturating_sub(m.taken_at) > keep && Some(&m.id) != newest.as_ref());
+        // what the kept snapshots name: their regions and the zones in them. A region that
+        // can't be read stops the pruning, so nothing it names is deleted by mistake.
+        let mut named: BTreeSet<String> = BTreeSet::new();
+        for m in &kept {
+            if m.format >= MANIFEST_FORMAT {
+                named.extend(m.regions.values().map(blob_key));
+            }
+            named.extend(self.zone_hashes(m)?.values().map(blob_key));
+        }
+        // only once that is known: nothing is deleted if a kept snapshot can't be read
         for m in &gone {
             self.store.delete(&format!("snapshots/{}.json", m.id))?;
         }
-        let named: BTreeSet<String> = kept.iter().flat_map(|m| m.regions.values().map(blob_key)).collect();
         let mut blobs = 0;
         for key in self.store.list("blobs/")? {
             if !named.contains(&key) {
@@ -326,9 +424,19 @@ mod tests {
         d
     }
 
-    fn region(w: &World, key: RegionKey) -> Region {
-        let ks: Vec<ChunkKey> = w.keys().into_iter().filter(|k| crate::region_of(*k) == key).collect();
-        Region::from_chunks(key, 1, ks.iter().map(|k| (*k, w.chunk(*k).unwrap())))
+    fn zone(w: &World, key: ZoneKey) -> Zone {
+        let ks: Vec<ChunkKey> = w.keys().into_iter().filter(|k| crate::zone_of(*k) == key).collect();
+        Zone::from_chunks(key, 1, ks.iter().map(|k| (*k, w.chunk(*k).unwrap())))
+    }
+
+    fn rebuild(snaps: &Snapshots<DirStore>, m: &Manifest, bounds: Bounds) -> World {
+        let mut w = World::new(bounds, 5);
+        for z in snaps.zones(m).unwrap() {
+            for (k, c) in z.decode_chunks().unwrap() {
+                w.put_chunk(k, c);
+            }
+        }
+        w
     }
 
     #[test]
@@ -336,33 +444,30 @@ mod tests {
         let dir = temp("snap");
         let snaps = Snapshots::new(DirStore::new(&dir));
         let mut w = World::new(Bounds { lo: [-600, -64, -600], hi: [600, 128, 600] }, 5);
-        let (a, b) = (RegionKey { x: 0, z: 0 }, RegionKey { x: -1, z: 0 });
+        // zones 0 and -1 are in regions 0 and -1
+        let (a, b) = (ZoneKey { x: 0, z: 0 }, ZoneKey { x: -1, z: 0 });
+        let (ra, rb) = (region_of_zone(a).to_string(), region_of_zone(b).to_string());
         w.set([1, 1, 1], 2);
         w.set([-300, 1, 1], 3);
         let day = 24 * 3600;
-        let s1 = snaps.take(None, &[region(&w, a), region(&w, b)], 1000, 10, 1).unwrap();
-        assert_eq!(s1.regions.len(), 2);
-        // a day later only region a changed: one new blob, b's shared
+        let s1 = snaps.take(None, &[zone(&w, a), zone(&w, b)], 1000, 10, 1).unwrap();
+        assert_eq!((s1.format, s1.regions.len()), (MANIFEST_FORMAT, 2));
+        assert_eq!(snaps.store.list("blobs/").unwrap().len(), 4, "two zones, two regions");
+        // a day later only zone a changed: a new zone and a new region; b's region is shared
         w.set([2, 1, 1], 4);
-        let s2 = snaps.take(Some(&s1), &[region(&w, a)], 1000 + day, 20, 1).unwrap();
-        assert_eq!(s2.regions[&b.to_string()], s1.regions[&b.to_string()]);
-        assert_ne!(s2.regions[&a.to_string()], s1.regions[&a.to_string()]);
-        assert_eq!(snaps.store.list("blobs/").unwrap().len(), 3);
+        let s2 = snaps.take(Some(&s1), &[zone(&w, a)], 1000 + day, 20, 1).unwrap();
+        assert_eq!(s2.regions[&rb], s1.regions[&rb]);
+        assert_ne!(s2.regions[&ra], s1.regions[&ra]);
+        assert_eq!(snaps.store.list("blobs/").unwrap().len(), 6);
         // reading it back gives the world as it was
-        let back = snaps.regions(&s2).unwrap();
-        let mut w2 = World::new(w.bounds, 5);
-        for r in back {
-            for (k, c) in r.decode_chunks().unwrap() {
-                w2.put_chunk(k, c);
-            }
-        }
+        let w2 = rebuild(&snaps, &s2, w.bounds);
         assert_eq!(w2.get([2, 1, 1]), 4);
         assert_eq!(w2.get([-300, 1, 1]), 3);
-        // eight days after the first: it goes, and so does the blob only it named
+        // eight days after the first: it goes, and so do the zone and region only it named
         let (gone, blobs) = snaps.prune(1000 + 8 * day, KEEP_SECS).unwrap();
-        assert_eq!((gone, blobs), (1, 1));
+        assert_eq!((gone, blobs), (1, 2));
         assert_eq!(snaps.list().unwrap().len(), 1);
-        assert!(snaps.regions(&s2).is_ok(), "the kept snapshot is whole");
+        assert!(snaps.zones(&s2).is_ok(), "the kept snapshot is whole");
         // the newest is never pruned, however old
         assert_eq!(snaps.prune(1000 + 100 * day, KEEP_SECS).unwrap(), (0, 0));
         assert_eq!(snaps.at_or_before(1000 + day).unwrap().unwrap().id, s2.id);
@@ -372,6 +477,73 @@ mod tests {
         let s4 = snaps.take(Some(&s3), &[], 1000 + 100 * day, 20, 1).unwrap();
         assert_ne!(s3.id, s4.id);
         assert_eq!(snaps.latest().unwrap().unwrap().id, s4.id);
+        // emptying zone b drops its region from the next snapshot
+        w.set([-300, 1, 1], 0);
+        let s5 = snaps.take(Some(&s4), &[zone(&w, b)], 1000 + 101 * day, 30, 1).unwrap();
+        assert_eq!(s5.regions.keys().collect::<Vec<_>>(), vec![&ra]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_change_in_one_zone_shares_the_other_zones_of_its_region() {
+        let dir = temp("one-region");
+        let snaps = Snapshots::new(DirStore::new(&dir));
+        let mut w = World::new(Bounds { lo: [-600, -64, -600], hi: [600, 128, 600] }, 5);
+        // zones 0 and 1 (zones are 512 blocks across) are both in region 0
+        let (a, b) = (ZoneKey { x: 0, z: 0 }, ZoneKey { x: 1, z: 0 });
+        w.set([1, 1, 1], 2);
+        w.set([520, 1, 1], 3);
+        let s1 = snaps.take(None, &[zone(&w, a), zone(&w, b)], 1, 1, 1).unwrap();
+        assert_eq!(s1.regions.len(), 1);
+        w.set([521, 1, 1], 4);
+        let s2 = snaps.take(Some(&s1), &[zone(&w, b)], 2, 2, 1).unwrap();
+        let (z1, z2) = (snaps.zone_hashes(&s1).unwrap(), snaps.zone_hashes(&s2).unwrap());
+        assert_eq!(z1[&a], z2[&a], "zone a is shared");
+        assert_ne!(z1[&b], z2[&b]);
+        assert_ne!(s1.root, s2.root);
+        // one zone and one region new: 2 + 2 blobs, then 1 + 1
+        assert_eq!(snaps.store.list("blobs/").unwrap().len(), 5);
+        assert_eq!(rebuild(&snaps, &s2, w.bounds).get([521, 1, 1]), 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshots_from_before_regions_still_restore_and_carry_on() {
+        let dir = temp("format1");
+        let snaps = Snapshots::new(DirStore::new(&dir));
+        let mut w = World::new(Bounds { lo: [-600, -64, -600], hi: [600, 128, 600] }, 5);
+        let (a, b) = (ZoneKey { x: 0, z: 0 }, ZoneKey { x: -1, z: 0 });
+        w.set([1, 1, 1], 2);
+        w.set([-300, 1, 1], 3);
+        // a format 1 manifest, as written before zones: zone hashes under "regions", no format
+        let mut flat = BTreeMap::new();
+        for key in [a, b] {
+            let (blob, h) = zone(&w, key).encode().unwrap();
+            snaps.store.put(&blob_key(&h), &blob).unwrap();
+            flat.insert(key.to_string(), h);
+        }
+        let json = serde_json::json!({
+            "id": "000000001000-00000001", "serial": 1, "taken_at": 1000, "seq": 10,
+            "palette_version": 1, "regions": flat, "root": Manifest::root_of(&flat),
+        });
+        snaps.store.put("snapshots/000000001000-00000001.json", json.to_string().as_bytes()).unwrap();
+        let old = snaps.latest().unwrap().unwrap();
+        assert_eq!(old.format, 1);
+        assert_eq!(rebuild(&snaps, &old, w.bounds).get([-300, 1, 1]), 3, "it restores");
+        // the next snapshot writes the regions; the zone blobs it already had are kept as they are
+        w.set([2, 1, 1], 4);
+        let new = snaps.take(Some(&old), &[zone(&w, a)], 2000, 20, 1).unwrap();
+        assert_eq!(new.format, MANIFEST_FORMAT);
+        assert_eq!(new.regions.len(), 2);
+        assert_eq!(snaps.zone_hashes(&new).unwrap()[&b], flat[&b.to_string()]);
+        let back = rebuild(&snaps, &new, w.bounds);
+        assert_eq!((back.get([2, 1, 1]), back.get([-300, 1, 1])), (4, 3));
+        // pruning with both formats kept deletes nothing either names
+        assert_eq!(snaps.prune(2000, KEEP_SECS).unwrap(), (0, 0));
+        assert!(snaps.zones(&old).is_ok() && snaps.zones(&new).is_ok());
+        // and once the old one is gone, only its own zone a goes with it
+        assert_eq!(snaps.prune(1000 + KEEP_SECS + 1, KEEP_SECS).unwrap(), (1, 1));
+        assert!(snaps.zones(&new).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -381,18 +553,28 @@ mod tests {
         let snaps = Snapshots::new(DirStore::new(&dir));
         let mut w = World::new(Bounds::default(), 5);
         w.set([1, 1, 1], 2);
-        let s = snaps.take(None, &[region(&w, RegionKey { x: 0, z: 0 })], 1, 1, 1).unwrap();
-        // a blob swapped for another region's
+        let a = ZoneKey { x: 0, z: 0 };
+        let s = snaps.take(None, &[zone(&w, a)], 1, 1, 1).unwrap();
+        // a zone blob swapped for another world's
         let mut w2 = World::new(Bounds::default(), 5);
         w2.set([3, 1, 1], 4);
-        let (other, _) = region(&w2, RegionKey { x: 0, z: 0 }).encode().unwrap();
-        let h = s.regions["0_0"];
-        snaps.store.put(&blob_key(&h), &other).unwrap();
-        assert!(snaps.regions(&s).is_err());
+        let (other, _) = zone(&w2, a).encode().unwrap();
+        let zh = snaps.zone_hashes(&s).unwrap()[&a];
+        let good = snaps.store.get(&blob_key(&zh)).unwrap().unwrap();
+        snaps.store.put(&blob_key(&zh), &other).unwrap();
+        assert!(snaps.zones(&s).is_err());
+        snaps.store.put(&blob_key(&zh), &good).unwrap();
+        // a region blob swapped for one naming another zone hash
+        let rh = s.regions["0_0"];
+        let mut forged = Region::new(RegionKey { x: 0, z: 0 });
+        forged.zones.insert(a, Hash([1; 16]));
+        snaps.store.put(&blob_key(&rh), &forged.encode().unwrap().0).unwrap();
+        assert!(snaps.zone_hashes(&s).is_err());
+        assert!(snaps.prune(10 * KEEP_SECS, KEEP_SECS).is_err(), "pruning stops rather than guess");
         // a manifest edited by hand
         let key = format!("snapshots/{}.json", s.id);
         let text = String::from_utf8(snaps.store.get(&key).unwrap().unwrap()).unwrap();
-        snaps.store.put(&key, text.replace(&h.hex(), &"0".repeat(32)).as_bytes()).unwrap();
+        snaps.store.put(&key, text.replace(&rh.hex(), &"0".repeat(32)).as_bytes()).unwrap();
         assert!(snaps.list().is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

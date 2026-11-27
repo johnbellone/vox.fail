@@ -58,7 +58,7 @@ a prop.
 ## What a prop is
 
 A `PropDef` is immutable data. Its **version** is the hash of its canonical form and its voxels
-(the same content-addressing as regions), and an instance pins that hash.
+(the same content-addressing as zones), and an instance pins that hash.
 
 ```json
 {
@@ -248,10 +248,10 @@ and reference images, as `world-graph-and-art.md` plans for builds.
 - **The library** (`vox-library`, kind `prop`) indexes accepted props by id, tags, scale, size
   and the recipe vector for search ("something to sit on, wooden, small").
 - **Built blobs**: each accepted version is built to a `VOXP` blob (the def, then the grid
-  run-length coded and zstd-compressed, the same machinery as region blobs, BLAKE3-addressed),
-  verified with the same caps as untrusted regions. Blobs are served by hash over HTTP from the
+  run-length coded and zstd-compressed, the same machinery as zone blobs, BLAKE3-addressed),
+  verified with the same caps as untrusted zones. Blobs are served by hash over HTTP from the
   directory's files (the edge already caches `/assets/`), so a client fetches only the props a
-  region names, once. A pack of all accepted props (the 143 avatar props are about 3 MB as
+  zone names, once. A pack of all accepted props (the 143 avatar props are about 3 MB as
   GLBs; these will be far smaller) ships with the desktop app.
 - **Versions**: an instance pins a hash. Changing a prop makes a new version; old ones stay as
   long as any world refers to them. The palette only grows (`palette_version`), so old props
@@ -270,7 +270,7 @@ Prop { prop: "<hash>", at: (x, y, z), yaw: 0..23, variant: 0, state: 0 }
 
 `at` is in 5 cm units (an `i32` triple: exact, compact, the same on every machine); `yaw` in 15°
 steps; `state` and `variant` small integers. It is one more world component in `vox-format`,
-stored in its region's entities, so snapshots, Oxen history, restores and instances carry props
+stored in its zone's entities, so snapshots, Oxen history, restores and instances carry props
 without further work. Props inside a structure are part of its blob, in the structure's own
 coordinates.
 
@@ -281,15 +281,15 @@ prop from the quick wheel or inventory. The server checks, in this order: the pr
 known accepted one, the player may use it (entitlements: catalogue props are open to every
 signed-in account; a player-made one needs `use`), the position is within reach and in the
 world's bounds, the footprint is free of solid blocks and other props' footprints, a surface it
-accepts is under (or beside, or over) it, and the plot and region caps hold (to begin with 64
-props a plot, 4,000 a region). Moving and removing are the same checks.
+accepts is under (or beside, or over) it, and the plot and zone caps hold (to begin with 64
+props a plot, 4,000 a zone). Moving and removing are the same checks.
 
 ### Seeing it
 
 Clients expand an instance from its blob into a small mesh (cached by hash) with the avatar
 props' look: the shared palette image, flat shading. To keep thousands cheap:
 
-- **Static props** of a region are merged into one mesh per material per chunk and rebuilt
+- **Static props** of a zone are merged into one mesh per material per chunk and rebuilt
   with the chunk, under the same per-frame budget as chunk meshing (8 ms desktop, 5 ms
   browser).
 - **Repeats** (a row of fence, a street's lamps) are instanced.
@@ -320,7 +320,7 @@ world. States persist.
 Dungeon templates (`world-network.md`) are worlds frozen as snapshots, dressed with props:
 `switch` and `door` on a channel are the puzzles (a lever opens a gate, a plate lowers a
 bridge), `marker` is the objective a raid is won on, and torches and braziers are the light.
-Because props are in the region blobs, an instance gets them for free.
+Because props are in the zone blobs, an instance gets them for free.
 
 ## Tools for a language model
 
@@ -358,7 +358,7 @@ types and none able to run code or touch files outside the project:
 - **Check tests**: known-bad props (floating part, over budget, off-palette, thin wall) fail with
   the expected reasons.
 - **Untrusted blobs**: crafted `VOXP` blobs (oversized grid, bad indices, huge part counts)
-  are refused, as regions' are.
+  are refused, as zones' are.
 - **Server tests**: placement refused for each rule above, state changes and sitting, caps, and
   that a restore brings props back.
 - **Visual tests**: contact sheets compared against approved ones, with the setup the avatar app
