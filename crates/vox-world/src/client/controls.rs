@@ -1,6 +1,7 @@
 //! Walking, looking and building from the input actions.
 
 use super::*;
+use vox_core::body::{Occupancy, with_props};
 
 /// Walking, flying, looking, choosing and building.
 ///
@@ -27,9 +28,16 @@ pub fn controls(
     mut walkers: Query<&mut Transform, With<Walker>>,
     mut shown: Query<&mut Visibility>,
     mut repeat: Local<BuildRepeat>,
-    wheel: Option<Res<crate::hud::QuickWheel>>,
+    // the quick wheel (if the HUD is in) and the prop cells that block walking (if props are in);
+    // one parameter, to stay within Bevy's sixteen
+    overlay: (Option<Res<crate::hud::QuickWheel>>, Option<Res<crate::props::PropOccupancy>>),
     mut editor: Option<ResMut<crate::editor::EditorState>>,
 ) {
+    let (wheel, props) = overlay;
+    // this frame's click is not known to be a pick until the mouse is looked at below
+    if let Some(e) = editor.as_mut() {
+        e.pointer_claimed = false;
+    }
     if !w.active() {
         return;
     }
@@ -65,6 +73,12 @@ pub fn controls(
     // always flies, at the edit flight's speed (editor::camera)
     let edit = editor.is_some();
     let fly_speed = if edit { crate::editor::camera::EDIT_FLY } else { FLY };
+    // with the editor's Select tool a click picks what it is on (editor::pick): it neither
+    // breaks a block nor walks to the point
+    let select_tool = editor.as_ref().is_some_and(|e| e.tool == Some(crate::editor::bridge::Tool::Select));
+    // no props in the world (or none loaded): the blocks alone stop the body
+    let no_props = Occupancy::default();
+    let occupancy = props.as_ref().map_or(&no_props, |p| &p.0);
     if actions.just_pressed(A::View) {
         w.cam_mode = w.cam_mode.next();
         let s = w.cam_mode.label();
@@ -99,6 +113,9 @@ pub fn controls(
             w.captured = true;
             swallowed = true;
         }
+    }
+    if let Some(e) = editor.as_mut() {
+        e.pointer_claimed = swallowed;
     }
     // the ray under the pointer, from where the camera was last frame
     w.pick = None;
@@ -197,8 +214,14 @@ pub fn controls(
         place = clicked.1 && !shift;
         remove = clicked.1 && shift;
     } else if !swallowed {
-        let held = (actions.pressed(A::Break), actions.pressed(A::Place));
-        let just = (actions.just_pressed(A::Break), actions.just_pressed(A::Place));
+        let mut held = (actions.pressed(A::Break), actions.pressed(A::Place));
+        let mut just = (actions.just_pressed(A::Break), actions.just_pressed(A::Place));
+        // the Select tool's click is the Break action; it picks, so it must not reach the
+        // repeat (zeroed before the step, so the repeat timer does not latch on it)
+        if select_tool {
+            held.0 = false;
+            just.0 = false;
+        }
         (remove, place) = repeat.step(held, just, now, turned);
     }
     let pick = actions.just_pressed(A::Pick);
@@ -220,7 +243,7 @@ pub fn controls(
     let right = Vec3::new(basis.cos(), 0.0, -basis.sin());
     let mut dir = fwd * stick.y + right * stick.x;
     // a click (or holding the button) on the ground walks there
-    if diablo && mouse.pressed(MouseButton::Left) && !shift {
+    if diablo && mouse.pressed(MouseButton::Left) && !shift && !select_tool {
         if let Some((o, d)) = w.pick {
             if let Some(h) = ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 160.0) {
                 let p = IVec3::from(h.cell).as_vec3() + Vec3::new(0.5, 1.0, 0.5);
@@ -274,13 +297,14 @@ pub fn controls(
         let mut body = w.body;
         let contact = {
             let wr: &WorldClient = &w;
-            body.travel(|c| wr.stands_on(c), (vel * dt).to_array(), step)
+            body.travel(with_props(|c| wr.stands_on(c), occupancy), (vel * dt).to_array(), step)
         };
         w.body = body;
         if contact.hit[1] {
             w.vy = 0.0;
         }
-        w.grounded = !w.fly && (contact.ground || (w.vy <= 0.0 && w.body.on_ground(|c| w.stands_on(c))));
+        w.grounded = !w.fly
+            && (contact.ground || (w.vy <= 0.0 && w.body.on_ground(with_props(|c| w.stands_on(c), occupancy))));
     }
     // walking to a point and stuck against something: give up
     if w.goal.is_some() && dir.length() > 0.1 {

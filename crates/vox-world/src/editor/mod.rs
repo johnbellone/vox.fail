@@ -18,6 +18,7 @@
 
 pub mod bridge;
 pub mod camera;
+pub mod pick;
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -86,6 +87,9 @@ pub struct EditorState {
     snapshot_due: bool,
     /// edits sent with a `ref`, oldest first
     tracked: VecDeque<Tracked>,
+    /// this frame's click captured the mouse (set by `client::controls`, which runs first):
+    /// that click is not a pick. Cleared at the start of each frame's controls.
+    pub pointer_claimed: bool,
 }
 
 impl EditorState {
@@ -169,8 +173,16 @@ impl Plugin for EditorPlugin {
             .init_resource::<EditorState>()
             .init_resource::<camera::EditFly>()
             .add_systems(Update, (apply_commands, send_changes).chain().in_set(EditorSystems).after(receive))
-            .add_systems(Update, camera::fly_to.after(EditorSystems).before(crate::client::controls));
+            .add_systems(Update, camera::fly_to.after(EditorSystems).before(crate::client::controls))
+            // after the controls, so the click that captures the mouse is known (pointer_claimed)
+            .add_systems(Update, pick::select.after(EditorSystems).after(crate::client::controls));
     }
+}
+
+/// The name as the page may hear it back in a refusal: no control characters, and at most 32
+/// characters, so a long or hostile name cannot fill the page's message.
+fn shown(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control()).take(32).collect()
 }
 
 /// The server message a command makes, if it changes an entity: `Create`, `Set` or `Remove`.
@@ -229,7 +241,18 @@ fn apply_commands(
                 continue;
             }
             Command::Block { name } => {
-                state.block = Some(name.clone());
+                // only a block of this world's palette can be painted with; the name is the
+                // page's text, so it is checked against the palette, never trusted
+                if w.block_ids().any(|id| w.block_name(id) == name.as_str()) {
+                    state.block = Some(name.clone());
+                } else {
+                    outbox.0.push(Event::Refused {
+                        id: 0,
+                        r#ref: None,
+                        why: "Invalid".into(),
+                        text: format!("there's no block called {}", shown(name)),
+                    });
+                }
                 continue;
             }
             Command::Select { entity } => {
@@ -407,6 +430,16 @@ mod tests {
     fn editor_a_refusal_with_no_tracked_edit_has_no_ref() {
         let mut st = EditorState::default();
         assert_eq!(st.refused(99, EntityWhy::Changed), Event::Refused { id: 99, r#ref: None, why: "Changed".into(), text: EntityWhy::Changed.to_string() });
+    }
+
+    #[test]
+    fn editor_shown_strips_control_characters_and_caps_at_32() {
+        assert_eq!(shown("ab\u{7}c\nd\u{0}e"), "abcde");
+        let long = "x".repeat(40);
+        assert_eq!(shown(&long).chars().count(), 32);
+        // the cap counts characters after the controls are gone
+        assert_eq!(shown(&format!("\u{1b}{}", "y".repeat(33))).chars().count(), 32);
+        assert_eq!(shown("plain"), "plain");
     }
 
     #[test]

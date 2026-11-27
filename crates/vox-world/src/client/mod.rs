@@ -343,7 +343,8 @@ pub struct WorldClient {
     pub cam_pitch: f32,
     pub fly: bool,
     pub grounded: bool,
-    captured: bool,
+    /// the mouse is captured for looking (behind camera); the editor's pick reads it
+    pub(crate) captured: bool,
     pub target: Option<Hit>,
     moving: bool,
     others: HashMap<u32, Other>,

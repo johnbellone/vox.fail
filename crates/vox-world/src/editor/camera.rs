@@ -5,6 +5,7 @@
 //! flight goes and where a fly-to ends.
 
 use bevy::prelude::*;
+use vox_core::body::{Occupancy, with_props};
 use vox_core::entity::{Component, EntityId, PROP_UNITS_PER_BLOCK};
 
 use super::EditorState;
@@ -76,6 +77,7 @@ pub fn fly_to(
     entities: Res<WorldEntities>,
     mut state: ResMut<EditorState>,
     mut w: ResMut<WorldClient>,
+    props: Option<Res<crate::props::PropOccupancy>>,
     mut stuck: Local<u32>,
 ) {
     let Some(id) = state.fly_to else {
@@ -98,8 +100,11 @@ pub fn fly_to(
     let intended = (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt();
     let mut body = w.body;
     {
+        // the same solid test as walking: blocks, and the props on screen (none when absent)
+        let no_props = Occupancy::default();
+        let occupancy = props.as_ref().map_or(&no_props, |p| &p.0);
         let wr: &WorldClient = &w;
-        body.travel(|c| wr.stands_on(c), delta, 0.0);
+        body.travel(with_props(|c| wr.stands_on(c), occupancy), delta, 0.0);
     }
     w.body = body;
     w.fly = true;
