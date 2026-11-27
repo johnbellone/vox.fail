@@ -13,6 +13,7 @@ pub mod import;
 pub mod palette;
 pub mod prop;
 pub mod recipe;
+pub mod render;
 pub mod rng;
 pub mod scale;
 pub mod vox;

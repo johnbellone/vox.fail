@@ -62,6 +62,22 @@ impl Palette {
         None
     }
 
+    /// The RGBA colour of a palette index (1-based, as [`Palette::index_of`] numbers them).
+    ///
+    /// Returns `None` for 0 ("empty") and for an index past the last colour.
+    pub fn colour(&self, index: u8) -> Option<[u8; 4]> {
+        let mut next = 1usize;
+        for material in &self.materials {
+            for colour in &material.colours {
+                if next == usize::from(index) {
+                    return Some(*colour);
+                }
+                next += 1;
+            }
+        }
+        None
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.materials.len() > MAX_MATERIALS {
             return Err(format!("palette has more than {MAX_MATERIALS} materials"));

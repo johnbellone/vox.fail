@@ -8,3 +8,6 @@ description = "Voxel art in the project's style: scales, sparse voxel grids, the
 serde.workspace = true
 serde_json.workspace = true
 blake3 = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+png.workspace = true
