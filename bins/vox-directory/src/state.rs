@@ -54,7 +54,7 @@ impl Directory {
              CREATE TABLE IF NOT EXISTS portals (
                  id INTEGER PRIMARY KEY, world TEXT NOT NULL, owner INTEGER NOT NULL, plot INTEGER NOT NULL,
                  x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, axis TEXT NOT NULL, dest TEXT NOT NULL,
-                 created INTEGER NOT NULL);
+                 dest_key INTEGER, created INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS structures (
                  id INTEGER PRIMARY KEY, name TEXT NOT NULL, owner INTEGER NOT NULL, public TEXT,
                  version TEXT NOT NULL, derived_from INTEGER, created INTEGER NOT NULL, updated INTEGER NOT NULL);
@@ -91,6 +91,13 @@ impl Directory {
              CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
+        // databases made before pairing lack `dest_key`: add it once
+        let has_key: i64 = db
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('portals') WHERE name = 'dest_key'", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if has_key == 0 {
+            db.execute_batch("ALTER TABLE portals ADD COLUMN dest_key INTEGER").map_err(|e| e.to_string())?;
+        }
         let catalogue = Catalogue::load(&cfg.data);
         if catalogue.characters.is_empty() {
             return Err(format!("no characters in {}/characters.json (tools/assets/build_catalogue.py makes it)", cfg.data.display()));
@@ -204,6 +211,7 @@ impl Directory {
             .route("/api/world/objective", post(game::objective))
             .route("/api/world/portal", post(game::world_portal))
             .route("/api/world/portal/refund", post(game::refund_portal))
+            .route("/api/world/portal/link", post(game::link_portal))
             .route("/api/worlds/editors", post(editors::change).get(editors::list))
             .route("/api/world/{id}/editor", get(editors::check))
             .route("/api/world/{id}/rules", get(game::rules))

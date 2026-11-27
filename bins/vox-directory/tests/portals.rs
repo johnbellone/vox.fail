@@ -295,3 +295,238 @@ async fn portal_older_than_a_minute_is_not_refunded() {
     assert_eq!(rules(&base, "void").await["portals"].as_array().unwrap().len(), 1);
     assert_eq!(ann.authority().await, before - game::COST_PORTAL);
 }
+
+/// A world server's request for a player portal that pairs with another of the player's portals.
+fn pair_req(world: &str, account: u64, at: [f64; 3], pair: &Value, idem: &str) -> Value {
+    json!({ "world": world, "account": account, "at": at, "axis": "x", "pair": pair, "idem": idem })
+}
+
+/// A world server's request to re-point a portal (`pair` none unlinks it).
+async fn link(base: &str, body: Value) -> (u16, Value) {
+    let r = Client::new().post(format!("{base}/api/world/portal/link")).bearer_auth(SECRET).json(&body).send().await.unwrap();
+    (r.status().as_u16(), r.json().await.unwrap_or(Value::Null))
+}
+
+/// The rules' entry for one portal key.
+fn entry(rules: &Value, key: &Value) -> Value {
+    rules["portals"].as_array().unwrap().iter().find(|p| p["key"] == *key).cloned().unwrap_or(Value::Null)
+}
+
+/// Ann claims a plot in the Yard as well (the Yard is reported with Ann standing in it first).
+async fn yard_plot(base: &str, ann: &P) {
+    report(base, "yard", json!([{ "account": ann.id, "at": [40.5, 1.0, 40.5] }])).await;
+    let (st, v) = ann.post("/api/feats/plot", json!({"world": "yard"})).await;
+    assert_eq!(st, 200, "{v}");
+}
+
+#[tokio::test]
+async fn pair_travel_arrives_at_the_other_end() {
+    let (_d, base, ann, _bob) = plotted().await;
+    yard_plot(&base, &ann).await;
+    let (st, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "pa")).await;
+    assert_eq!(st, 200, "{a}");
+    // a portal in the Yard paired with A: A is turned to lead back to it
+    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "pb")).await;
+    assert_eq!(st, 200, "{b}");
+
+    // A (in the Void) now arrives at B's place in the Yard, and names B as its pair
+    let v = rules(&base, "void").await;
+    let pa = entry(&v, &a["key"]);
+    assert_eq!(pa["pair"], b["key"]);
+    assert_eq!(pa["arrive"], json!([44.0, 1.0, 44.0]));
+    assert_eq!(pa["url"], "/w/7781/ws");
+    // B (in the Yard) arrives at A's place in the Void
+    let y = rules(&base, "yard").await;
+    let pb = entry(&y, &b["key"]);
+    assert_eq!(pb["pair"], a["key"]);
+    assert_eq!(pb["arrive"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(pb["url"], "/w/7780/ws");
+
+    // the travel into the Yard goes to the Yard, by its address as the level gives it
+    let r = Client::new()
+        .post(format!("{base}/api/world/travel"))
+        .bearer_auth(SECRET)
+        .json(&json!({ "world": "void", "account": ann.id, "to": "/w/7781/ws", "arrive": [44.0, 1.0, 44.0] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let t: Value = r.json().await.unwrap();
+    assert_eq!(t["world"], "yard");
+    assert_eq!(t["url"], "/w/7781/ws");
+}
+
+#[tokio::test]
+async fn pair_refused_for_another_owner_and_missing_keys() {
+    let (d, base, ann, bob) = plotted().await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    // Bob has a plot and a portal of his own
+    report(&base, "void", json!([{ "account": bob.id, "at": [100.5, 1.0, 100.5] }])).await;
+    assert_eq!(bob.post("/api/feats/plot", json!({"world": "void"})).await.0, 200);
+    d.grant("Bob", 100, "test").unwrap();
+    let (st, bobs) = world_portal(&base, req("void", bob.id, [100.0, 1.0, 100.0], "yard", "b")).await;
+    assert_eq!(st, 200, "{bobs}");
+    let bob_before = bob.authority().await;
+
+    // pairing with Ann's portal: refused, nothing charged
+    let (st, v) = world_portal(&base, pair_req("void", bob.id, [101.0, 1.0, 101.0], &a["key"], "steal")).await;
+    assert_eq!(st, 403, "{v}");
+    assert_eq!(bob.authority().await, bob_before);
+    // a key that does not exist (or was refunded): 404
+    let (st, _) = world_portal(&base, pair_req("void", bob.id, [101.0, 1.0, 101.0], &json!(999_999), "gone")).await;
+    assert_eq!(st, 404);
+    // Ann's portal is unchanged: still leads to the Yard's spawn
+    let pa = entry(&rules(&base, "void").await, &a["key"]);
+    assert!(pa.get("pair").is_none(), "{pa}");
+
+    // re-pointing Ann's portal at Bob's: refused too (403), and Ann's stays as it was
+    let (st, v) = link(&base, json!({ "world": "void", "account": ann.id, "key": a["key"], "pair": bobs["key"] })).await;
+    assert_eq!(st, 403, "{v}");
+    assert!(entry(&rules(&base, "void").await, &a["key"]).get("pair").is_none());
+    // a link of a key that is not Ann's (Bob's, here) is 404
+    let (st, _) = link(&base, json!({ "world": "void", "account": ann.id, "key": bobs["key"], "pair": null })).await;
+    assert_eq!(st, 404);
+}
+
+#[tokio::test]
+async fn pair_gone_end_falls_back_to_spawn() {
+    let (_d, base, ann, _bob) = plotted().await;
+    yard_plot(&base, &ann).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["arrive"], json!([44.0, 1.0, 44.0]));
+
+    // the Yard end is taken back: A has nothing to arrive at but the Yard's spawn
+    let (st, v) = refund(&base, "yard", ann.id, b["key"].as_i64().unwrap()).await;
+    assert_eq!((st, v), (200, json!({"refunded": true})));
+    let pa = entry(&rules(&base, "void").await, &a["key"]);
+    assert!(pa.get("pair").is_none(), "{pa}");
+    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pa["url"], "/w/7781/ws");
+}
+
+#[tokio::test]
+async fn pair_within_one_world_works() {
+    let (_d, base, ann, _bob) = plotted().await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    // a second portal in the same plot pairs with the first: both lead into the Void
+    let (st, c) = world_portal(&base, pair_req("void", ann.id, [41.0, 1.0, 41.0], &a["key"], "c")).await;
+    assert_eq!(st, 200, "{c}");
+    let v = rules(&base, "void").await;
+    let pc = entry(&v, &c["key"]);
+    assert_eq!(pc["pair"], a["key"]);
+    assert_eq!(pc["arrive"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(pc["url"], "/w/7780/ws");
+    let pa = entry(&v, &a["key"]);
+    assert_eq!(pa["pair"], c["key"]);
+    assert_eq!(pa["arrive"], json!([41.0, 1.0, 41.0]));
+    assert_eq!(pa["url"], "/w/7780/ws");
+}
+
+#[tokio::test]
+async fn pair_link_repoints_and_unlinks() {
+    let (_d, base, ann, _bob) = plotted().await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, c) = world_portal(&base, req("void", ann.id, [41.0, 1.0, 41.0], "yard", "c")).await;
+    // A pairs with C: both ends name each other (C was free, so it is turned to lead back)
+    let (st, v) = link(&base, json!({ "world": "void", "account": ann.id, "key": a["key"], "pair": c["key"] })).await;
+    assert_eq!(st, 200, "{v}");
+    let r = rules(&base, "void").await;
+    assert_eq!(entry(&r, &a["key"])["pair"], c["key"]);
+    assert_eq!(entry(&r, &a["key"])["arrive"], json!([41.0, 1.0, 41.0]));
+    assert_eq!(entry(&r, &c["key"])["pair"], a["key"]);
+
+    // A unlinks: it leads to its destination world's spawn, which is the Void now that it was
+    // turned to lead to C; C loses its pointer and leads to the Void's spawn too
+    let (st, v) = link(&base, json!({ "world": "void", "account": ann.id, "key": a["key"], "pair": null })).await;
+    assert_eq!(st, 200, "{v}");
+    let r = rules(&base, "void").await;
+    let pa = entry(&r, &a["key"]);
+    assert!(pa.get("pair").is_none(), "{pa}");
+    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pa["url"], "/w/7780/ws");
+    let pc = entry(&r, &c["key"]);
+    assert!(pc.get("pair").is_none(), "{pc}");
+    assert_eq!(pc["url"], "/w/7780/ws");
+
+    // a portal can't pair with itself, and a key that is gone is 404
+    let (st, _) = link(&base, json!({ "world": "void", "account": ann.id, "key": a["key"], "pair": a["key"] })).await;
+    assert_eq!(st, 400);
+    assert_eq!(refund(&base, "void", ann.id, c["key"].as_i64().unwrap()).await.1, json!({"refunded": true}));
+    let (st, _) = link(&base, json!({ "world": "void", "account": ann.id, "key": a["key"], "pair": c["key"] })).await;
+    assert_eq!(st, 404);
+}
+
+#[tokio::test]
+async fn pair_a_paired_end_is_not_taken_over() {
+    let (d, base, ann, _bob) = plotted().await;
+    yard_plot(&base, &ann).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    // a third portal pairs with A, which already has B: A keeps B, the new one still arrives at A
+    d.grant("Ann", 100, "test").unwrap();
+    let (_, c) = world_portal(&base, req("void", ann.id, [41.0, 1.0, 41.0], "yard", "c")).await;
+    let (st, v) = link(&base, json!({ "world": "void", "account": ann.id, "key": c["key"], "pair": a["key"] })).await;
+    assert_eq!(st, 200, "{v}");
+    let r = rules(&base, "void").await;
+    assert_eq!(entry(&r, &a["key"])["pair"], b["key"]);
+    assert_eq!(entry(&r, &c["key"])["pair"], a["key"]);
+    let yard = rules(&base, "yard").await;
+    assert_eq!(entry(&yard, &b["key"])["pair"], a["key"]);
+}
+
+#[tokio::test]
+async fn pair_refund_clears_the_partner_and_a_new_pair_turns_it_again() {
+    let (d, base, ann, _bob) = plotted().await;
+    yard_plot(&base, &ann).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    assert_eq!(entry(&rules(&base, "yard").await, &b["key"])["pair"], a["key"]);
+
+    // A is refunded: B's pointer goes with it, and B leads to the Void's spawn
+    assert_eq!(refund(&base, "void", ann.id, a["key"].as_i64().unwrap()).await.1, json!({"refunded": true}));
+    let pb = entry(&rules(&base, "yard").await, &b["key"]);
+    assert!(pb.get("pair").is_none(), "{pb}");
+    assert_eq!(pb["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pb["url"], "/w/7780/ws");
+
+    // C in the Void pairs with B: B has no live pair, so it is turned to lead back to C
+    d.grant("Ann", 100, "test").unwrap();
+    let (st, c) = world_portal(&base, pair_req("void", ann.id, [41.0, 1.0, 41.0], &b["key"], "c")).await;
+    assert_eq!(st, 200, "{c}");
+    let pb = entry(&rules(&base, "yard").await, &b["key"]);
+    assert_eq!(pb["pair"], c["key"]);
+    assert_eq!(pb["arrive"], json!([41.0, 1.0, 41.0]));
+    assert_eq!(pb["url"], "/w/7780/ws");
+}
+
+#[tokio::test]
+async fn pair_release_clears_the_partner() {
+    let (_d, base, ann, _bob) = plotted().await;
+    yard_plot(&base, &ann).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, _b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    // the Yard plot is released, taking B with it: A leads to the Yard's spawn, with no pair
+    let plot = rules(&base, "yard").await["plots"][0]["id"].clone();
+    assert_eq!(ann.post("/api/plots/release", json!({ "plot": plot })).await.0, 200);
+    let pa = entry(&rules(&base, "void").await, &a["key"]);
+    assert!(pa.get("pair").is_none(), "{pa}");
+    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pa["url"], "/w/7781/ws");
+}
+
+#[tokio::test]
+async fn pair_plain_to_portal_is_turned_around_when_paired_to() {
+    let (_d, base, ann, _bob) = plotted().await;
+    yard_plot(&base, &ann).await;
+    // A leads to the Yard's spawn and is paired with nothing
+    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    assert!(entry(&rules(&base, "void").await, &a["key"]).get("pair").is_none());
+    // B in the Yard pairs with A: A is turned to lead back to B
+    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    assert_eq!(st, 200, "{b}");
+    let pa = entry(&rules(&base, "void").await, &a["key"]);
+    assert_eq!(pa["pair"], b["key"]);
+    assert_eq!(pa["arrive"], json!([44.0, 1.0, 44.0]));
+}

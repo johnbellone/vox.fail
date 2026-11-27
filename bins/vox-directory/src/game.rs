@@ -19,6 +19,11 @@
 //!   their world. When a player goes through a portal to another world, their world asks for a
 //!   **ticket** (`/api/world/travel`): it lets them into that world only, once, within a minute,
 //!   at the arrival point the world they left worked out.
+//! - **Pairs**: a player portal may lead to another of its owner's portals (`pair`), in any
+//!   world; the pair is two-way, so pairing to a portal that has no live pair (it leads to a
+//!   world's spawn, or to a portal since gone) turns that portal around to lead back. A portal
+//!   already paired to a live portal is left alone. A paired portal arrives at its other end;
+//!   a gone end, at the spawn of the world it leads to.
 
 use std::collections::HashMap;
 
@@ -517,6 +522,8 @@ pub(crate) async fn release_plot(State(d): State<Directory>, h: HeaderMap, Json(
     for p in portals {
         tx.execute("DELETE FROM items WHERE kind = 'key' AND ref = ?1", params![p]).map_err(oops)?;
     }
+    // a partner elsewhere is left with no live pair (it leads to its world's spawn)
+    tx.execute("UPDATE portals SET dest_key = NULL WHERE dest_key IN (SELECT id FROM portals WHERE plot = ?1)", params![r.plot]).map_err(oops)?;
     tx.execute("DELETE FROM portals WHERE plot = ?1", params![r.plot]).map_err(oops)?;
     tx.execute("DELETE FROM items WHERE kind = 'deed' AND ref = ?1", params![r.plot]).map_err(oops)?;
     tx.execute("DELETE FROM plots WHERE id = ?1", params![r.plot]).map_err(oops)?;
@@ -530,6 +537,35 @@ fn portal_name(key: i64, dest_name: &str) -> String {
     let tag = format!(" ({key})");
     let room = vox_core::entity::MAX_NAME.saturating_sub(tag.chars().count());
     dest_name.chars().take(room).chain(tag.chars()).collect()
+}
+
+/// The world and place of a portal that a new one may pair with. It must exist (a refunded or
+/// removed key is 404, as is any key the directory never issued) and belong to `account`
+/// (another player's is 403; a pair is one owner's two ends).
+fn pair_end(db: &Connection, account: u64, key: i64) -> Res<(String, [f64; 3])> {
+    let row: Option<(i64, String, f64, f64, f64)> = db
+        .query_row("SELECT owner, world, x, y, z FROM portals WHERE id = ?1", params![key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        .optional()
+        .map_err(oops)?;
+    let Some((owner, world, x, y, z)) = row else { return Err(no(StatusCode::NOT_FOUND, "that portal is gone")) };
+    if owner != account as i64 {
+        return Err(no(StatusCode::FORBIDDEN, "that portal is another player's"));
+    }
+    Ok((world, [x, y, z]))
+}
+
+/// Turns the other end of a pair to lead back to `world`, through `key`, unless it already has a
+/// live pair. A portal with no pair, or whose `dest_key` names a portal that is gone, has no live
+/// pair (it leads to a world's spawn), so it is turned around; one paired to a live portal is
+/// left as it is.
+fn link_back(db: &Connection, other: i64, world: &str, key: i64) -> Res<()> {
+    db.execute(
+        "UPDATE portals SET dest = ?1, dest_key = ?2 WHERE id = ?3
+         AND (dest_key IS NULL OR dest_key NOT IN (SELECT id FROM portals))",
+        params![world, key, other],
+    )
+    .map_err(oops)?;
+    Ok(())
 }
 
 /// The next portal key. `portals.id` alone would reuse the highest key once its row is deleted
@@ -576,8 +612,22 @@ pub(crate) struct WorldPortal {
     account: u64,
     at: [f32; 3],
     axis: String,
-    to: String,
+    /// the world it leads to (one of `to` and `pair` is given)
+    #[serde(default)]
+    to: Option<String>,
+    /// or the key of the other end of a pair, one of the account's portals
+    #[serde(default)]
+    pair: Option<i64>,
     idem: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct LinkPortal {
+    world: String,
+    account: u64,
+    key: i64,
+    /// the portal to pair with, or none to lead to the destination world's spawn again
+    pair: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -591,10 +641,18 @@ impl Directory {
     /// Makes a player portal: charges Authority, enforces the cap, records the row and gives the
     /// key. The caller has checked that `site.plot` is the account's. With `idem`, the request
     /// is recorded under that id in the same transaction, so `replay` can answer a repeat.
-    pub(crate) fn make_portal(&self, db: &Connection, account: u64, site: Site, to: &str, idem: Option<&str>) -> Res<Made> {
-        if site.world == to {
+    /// With `pair`, the portal leads to that portal's world. A pair is two-way: a portal with no
+    /// live pair (it leads to a world's spawn, or to a portal since gone) is turned to lead back
+    /// here; a portal already paired to a live portal is left alone.
+    pub(crate) fn make_portal(&self, db: &Connection, account: u64, site: Site, to: &str, pair: Option<i64>, idem: Option<&str>) -> Res<Made> {
+        let to: String = match pair {
+            Some(key) => pair_end(db, account, key)?.0,
+            None => to.to_string(),
+        };
+        if pair.is_none() && site.world == to {
             return Err(bad("a portal leads to another world"));
         }
+        let to = to.as_str();
         let there = self.world(to)?.name.clone();
         let here = self.world_name(site.world);
         if spawn_of(db, to).is_none() {
@@ -607,10 +665,13 @@ impl Directory {
         spend(db, account, AUTH, COST_PORTAL, &format!("opened a portal from {here} to {there}"))?;
         let key = next_portal_key(db)?;
         db.execute(
-            "INSERT INTO portals (id, world, owner, plot, x, y, z, axis, dest, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![key, site.world, account as i64, site.plot, site.at[0], site.at[1], site.at[2], site.axis, to, now() as i64],
+            "INSERT INTO portals (id, world, owner, plot, x, y, z, axis, dest, dest_key, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![key, site.world, account as i64, site.plot, site.at[0], site.at[1], site.at[2], site.axis, to, pair, now() as i64],
         )
         .map_err(oops)?;
+        if let Some(other) = pair {
+            link_back(db, other, site.world, key)?;
+        }
         db.execute("INSERT OR REPLACE INTO counters (name, value) VALUES ('portal', ?1)", params![key]).map_err(oops)?;
         give(db, account, "key", &format!("Portal to {there}"), Some(site.world), Some(key), json!({ "at": site.at, "to": to, "to_name": there }))?;
         if let Some(idem) = idem {
@@ -671,7 +732,7 @@ pub(crate) async fn open_portal(State(d): State<Directory>, h: HeaderMap, Json(o
     // the doorway's sill: where you stood, on the half block
     let at = [(x * 2.0).round() / 2.0, y.floor(), (z * 2.0).round() / 2.0];
     let site = Site { world: &o.world, plot, axis: "z", at };
-    let made = d.make_portal(&tx, id, site, &o.to, None)?;
+    let made = d.make_portal(&tx, id, site, &o.to, None, None)?;
     tx.commit().map_err(oops)?;
     Ok(Json(json!({ "portal": made.key, "at": made.at })))
 }
@@ -690,6 +751,10 @@ pub(crate) async fn world_portal(State(d): State<Directory>, h: HeaderMap, Json(
     if p.axis != "x" && p.axis != "z" {
         return Err(bad("a portal's wall is along x or z"));
     }
+    if p.to.is_some() == p.pair.is_some() {
+        return Err(bad("a portal leads to a world (to) or pairs with a portal (pair), not both or neither"));
+    }
+    let to = p.to.clone().unwrap_or_default();
     let at = p.at.map(f64::from);
     let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
@@ -707,9 +772,46 @@ pub(crate) async fn world_portal(State(d): State<Directory>, h: HeaderMap, Json(
         .map_err(oops)?
         .ok_or_else(|| bad("that portal's place is not in a plot of the player's in that world"))?;
     let site = Site { world: &p.world, plot, axis: &p.axis, at };
-    let made = d.make_portal(&tx, p.account, site, &p.to, Some(&p.idem))?;
+    let made = d.make_portal(&tx, p.account, site, &to, p.pair, Some(&p.idem))?;
     tx.commit().map_err(oops)?;
     Ok(Json(json!({ "key": made.key, "at": made.at, "name": made.name })))
+}
+
+/// A world server's request to re-point one of a player's portals in that world: at another of
+/// the player's portals (a pair, two-way as in `make_portal`), or back to its destination world's
+/// spawn (`pair` none). Free. Re-pointing or unlinking takes the old partner's pointer with it:
+/// the partner still leads to the world this portal led to, and then to that world's spawn.
+pub(crate) async fn link_portal(State(d): State<Directory>, h: HeaderMap, Json(l): Json<LinkPortal>) -> Res<Json<Value>> {
+    d.from_world(&h)?;
+    d.world(&l.world)?;
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = db.transaction().map_err(oops)?;
+    let here: Option<String> = tx
+        .query_row("SELECT world FROM portals WHERE id = ?1 AND owner = ?2", params![l.key, l.account as i64], |r| r.get(0))
+        .optional()
+        .map_err(oops)?;
+    if here.as_deref() != Some(l.world.as_str()) {
+        return Err(no(StatusCode::NOT_FOUND, "that portal is gone"));
+    }
+    if l.pair == Some(l.key) {
+        return Err(bad("a portal can't pair with itself"));
+    }
+    let other = match l.pair {
+        Some(k) => Some((k, pair_end(&tx, l.account, k)?.0)),
+        None => None,
+    };
+    tx.execute("UPDATE portals SET dest_key = NULL WHERE dest_key = ?1 AND id != ?1", params![l.key]).map_err(oops)?;
+    match other {
+        Some((k, world)) => {
+            tx.execute("UPDATE portals SET dest = ?1, dest_key = ?2 WHERE id = ?3", params![world, k, l.key]).map_err(oops)?;
+            link_back(&tx, k, &l.world, l.key)?;
+        }
+        None => {
+            tx.execute("UPDATE portals SET dest_key = NULL WHERE id = ?1", params![l.key]).map_err(oops)?;
+        }
+    }
+    tx.commit().map_err(oops)?;
+    Ok(Json(json!({ "key": l.key, "pair": l.pair })))
 }
 
 /// Takes back a portal a world made a moment ago (its plot or rights went before the answer
@@ -736,6 +838,8 @@ pub(crate) async fn refund_portal(State(d): State<Directory>, h: HeaderMap, Json
         return Ok(Json(json!({ "refunded": false })));
     }
     tx.execute("DELETE FROM items WHERE kind = 'key' AND ref = ?1 AND account = ?2", params![r.key, r.account as i64]).map_err(oops)?;
+    // a partner is left with no live pair (it leads to its world's spawn)
+    tx.execute("UPDATE portals SET dest_key = NULL WHERE dest_key = ?1", params![r.key]).map_err(oops)?;
     tx.execute("DELETE FROM portals WHERE id = ?1", params![r.key]).map_err(oops)?;
     mint(&tx, r.account, AUTH, COST_PORTAL, &format!("portal {} placed and then refused: refunded", r.key)).map_err(oops)?;
     tx.commit().map_err(oops)?;
@@ -1064,23 +1168,54 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
         }
         plots.push(json!({ "id": pid, "x0": x0, "z0": z0, "x1": x1, "z1": z1, "builders": builders }));
     }
-    let mut st = db.prepare("SELECT p.id, p.x, p.y, p.z, p.axis, p.dest, s.level, s.spawn FROM portals p JOIN world_state s ON s.world = p.dest WHERE p.world = ?1").map_err(oops)?;
+    // a paired portal arrives at its other end (when that still exists) and names it as `pair`;
+    // otherwise it arrives at its destination world's spawn
+    let mut st = db
+        .prepare(
+            "SELECT p.id, p.x, p.y, p.z, p.axis, p.dest, s.level, s.spawn, p.dest_key, o.x, o.y, o.z
+             FROM portals p JOIN world_state s ON s.world = p.dest
+             LEFT JOIN portals o ON o.id = p.dest_key AND o.world = p.dest
+             WHERE p.world = ?1",
+        )
+        .map_err(oops)?;
     let portals: Vec<Value> = st
         .query_map(params![world], |r| {
-            Ok((r.get::<_, i64>(0)?, [r.get::<_, f64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?], r.get::<_, String>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?))
+            let other: Option<[f64; 3]> = match (r.get::<_, Option<f64>>(9)?, r.get::<_, Option<f64>>(10)?, r.get::<_, Option<f64>>(11)?) {
+                (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+                _ => None,
+            };
+            Ok((
+                r.get::<_, i64>(0)?,
+                [r.get::<_, f64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?],
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, Option<i64>>(8)?,
+                other,
+            ))
         })
         .map_err(oops)?
         .flatten()
-        .filter_map(|(pid, at, axis, dest, level, spawn)| {
+        .filter_map(|(pid, at, axis, dest, level, spawn, dest_key, other)| {
             let w = d.0.worlds.iter().find(|w| w.id == dest)?;
-            let arrive: Value = serde_json::from_str(&spawn).ok()?;
             // a portal's name is at most MAX_NAME characters (the server drops a longer one), so
             // the world's name is cut to fit beside " (pid)"
             let name = portal_name(pid, &w.name);
-            Some(json!({
+            let mut entry = json!({
                 "key": pid, "name": name, "at": at, "axis": axis, "size": [4, 6],
-                "level": level, "url": w.url, "arrive": arrive, "yaw": 0,
-            }))
+                "level": level, "url": w.url, "yaw": 0,
+            });
+            match (dest_key, other) {
+                (Some(pair), Some(end)) => {
+                    entry["pair"] = json!(pair);
+                    entry["arrive"] = json!(end);
+                }
+                _ => {
+                    entry["arrive"] = serde_json::from_str::<Value>(&spawn).ok()?;
+                }
+            }
+            Some(entry)
         })
         .collect();
     // Raid parties with two or more members, so a world can let them talk to each other. The
