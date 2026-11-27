@@ -254,6 +254,9 @@ pub struct WorldHud;
 #[derive(Component)]
 pub struct Crosshair;
 
+/// How long to wait for the world to answer a trip through a portal, s.
+const ASK_WITHIN: f64 = 5.0;
+
 #[derive(Resource)]
 pub struct WorldClient {
     /// the server, if this app is in a world
@@ -353,6 +356,12 @@ pub struct WorldClient {
     /// on the way to another world: the one you came from, when you left and where you stood
     /// (to go back to if the way turns out to be closed)
     travel: Option<(String, f64, [f32; 3])>,
+    /// a trip asked for and not yet answered: the arrival worked out here (the world's answer
+    /// says where exactly) and when it was asked
+    asked: Option<(Arrival, f64)>,
+    /// the ticket for the world being travelled to: sent with the next hello only (it's good
+    /// for that world, once)
+    ticket: Option<String>,
     /// `world:portal:<name>`: go through that portal now
     pub portal_go: Option<String>,
     /// watching, not playing (the front page's live view): no avatar, no input, no HUD, and a
@@ -441,6 +450,8 @@ impl Default for WorldClient {
             portals_gen: 0,
             arrival: None,
             travel: None,
+            asked: None,
+            ticket: None,
             portal_go: None,
             watch: false,
         }
@@ -562,8 +573,44 @@ impl WorldClient {
         self.arrival = Some(a);
     }
 
+    /// Into the doorway `portal` (to another world) from `side`: ask this world the way. It
+    /// checks we're there and answers with where to go and a ticket for it
+    /// ([`WorldClient::travelled`]). Not in a world (nothing to ask): straight there.
+    pub fn through(&mut self, portal: &str, side: f32, url: &str, a: Arrival) {
+        if !self.ready || self.asked.is_some() {
+            if self.link.is_none() {
+                self.travel(url, a);
+            }
+            return;
+        }
+        self.send(&ToServer::Through { portal: portal.into(), side: if side < 0.0 { -1 } else { 1 } });
+        self.asked = Some((a, self.now()));
+    }
+
+    /// The world's answer to [`WorldClient::through`]: go to `url` with `ticket`, coming out at
+    /// `arrive` (where the world there will put us).
+    pub fn travelled(&mut self, url: &str, ticket: Option<String>, arrive: [f32; 3]) {
+        if !arrive.iter().all(|v| v.is_finite()) {
+            return;
+        }
+        let mut a = match self.asked.take() {
+            Some((a, _)) => a,
+            None => self.arrival(arrive, 0.0),
+        };
+        a.pos = arrive;
+        self.ticket = ticket;
+        self.travel(url, a);
+    }
+
     /// The way through a portal was closed (no world answered): go back where you were.
     pub fn travel_check(&mut self) {
+        // asked the way and no answer: this world didn't let us through
+        if let Some((_, at)) = self.asked
+            && self.now() - at > ASK_WITHIN
+        {
+            self.asked = None;
+            self.notice("The way is closed");
+        }
         let Some((back, at, pos)) = self.travel.clone() else { return };
         // nobody there (the link says so at once), or no welcome for a long while
         let refused = self.status.starts_with("Can't reach") || self.status.starts_with("Reconnecting");

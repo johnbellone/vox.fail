@@ -4,6 +4,10 @@
 #[allow(unused_imports)]
 use super::*;
 
+/// How far from a doorway's plane (blocks) a player may be and still go through it: their last
+/// checked pose can be a step or two behind the client's.
+const THROUGH_SLACK: f32 = 3.0;
+
 impl WorldState {
     pub(super) fn open(mut cfg: Config) -> Result<WorldState, String> {
         let e = |e: rusqlite::Error| e.to_string();
@@ -102,6 +106,7 @@ impl WorldState {
             snap_changed: HashSet::new(),
             snap_full: true,
             last_snapshot: Instant::now(),
+            trips: None,
         };
         if fresh {
             s.flush()?;
@@ -120,7 +125,7 @@ impl WorldState {
     pub(super) fn run(mut self, mut rx: mpsc::Receiver<Event>) {
         while let Some(ev) = rx.blocking_recv() {
             match ev {
-                Event::Join { conn, tx, protocol, name, avatar, account } => self.join(conn, tx, protocol, name, avatar, account),
+                Event::Join { conn, tx, protocol, name, avatar, account, arrive } => self.join(conn, tx, protocol, name, avatar, account, arrive),
                 Event::Msg { conn, msg } => self.message(conn, msg),
                 Event::Watch { conn, tx, protocol } => self.watch(conn, tx, protocol),
                 Event::Leave { conn } => self.leave(conn),
@@ -167,6 +172,11 @@ impl WorldState {
                 Event::Rules(plots, portals) => {
                     self.plots = plots;
                     self.portals = portals;
+                }
+                Event::Ticket { conn, url, ticket, arrive } => {
+                    if let Some(p) = self.players.get(&conn) {
+                        let _ = Self::send_to(&p.tx, &ToClient::Travel { url, ticket, arrive });
+                    }
                 }
                 Event::Shutdown => break,
             }
@@ -318,7 +328,8 @@ impl WorldState {
         }
     }
 
-    pub(super) fn join(&mut self, conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64>) {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn join(&mut self, conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64>, arrive: Option<[f32; 3]>) {
         let bye = |why: &str| {
             let _ = tx.try_send(Message::Binary(wire::encode(&ToClient::Bye { why: why.into() }).into()));
         };
@@ -337,7 +348,17 @@ impl WorldState {
         self.broadcast(&ToClient::Joined { player: id, name: name.clone(), avatar: avatar.clone() }, None);
         eprintln!("{name} joined ({} here)", self.players.len() + 1);
         let bucket = Bucket::new(self.cfg.edit_rate, self.cfg.edit_rate);
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: None, moves: Default::default(), corrected_at: -1.0, bucket, account, placed: 0 });
+        // Where they start, as far as move checks go: a ticket's arrival point, or for someone
+        // signed in without one the spawn (a signed-in player coming through a portal brings a
+        // ticket). Guests, who can't get tickets, and worlds without sign-in take the first
+        // position as it is.
+        let mut moves = vox_core::moves::Moves::default();
+        let now = self.started.elapsed().as_secs_f64();
+        let start = arrive.or_else(|| (account.is_some() && !self.cfg.trust_moves).then_some(self.spawn));
+        if let Some(at) = start {
+            moves.start(at, now);
+        }
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, account, placed: 0 });
     }
 
     /// The settings a new arrival gets: the world's own, with the portals players opened.
@@ -374,6 +395,36 @@ impl WorldState {
         let Some(p) = self.players.get_mut(&conn) else { return };
         match msg {
             ToServer::Hello { .. } | ToServer::Watch { .. } => {}
+            ToServer::Through { portal, side } => {
+                if !p.bucket.take(now) {
+                    return;
+                }
+                let (at, account, tx) = (p.at, p.account, p.tx.clone());
+                let settings: serde_json::Value = serde_json::from_str(&self.settings_now()).unwrap_or_default();
+                let door = vox_core::portal::parse(&settings).into_iter().find(|d| d.name == portal && d.url.is_some());
+                let Some((door, at)) = door.zip(at) else { return };
+                // they must be in the doorway (or as good as: a pose or two behind), unless this
+                // world takes positions on trust
+                let side = if side < 0 { -1.0 } else { 1.0 };
+                if !self.cfg.trust_moves && !(door.within(at) && door.side_of(at).abs() <= THROUGH_SLACK) {
+                    return;
+                }
+                let arrive = door.carry(at, side);
+                let url = door.url.clone().unwrap_or_default();
+                match (&self.trips, account) {
+                    (Some(trips), Some(account)) => {
+                        let trip = Trip { conn, account, to: url.clone(), arrive };
+                        if trips.try_send(trip).is_err() {
+                            // the directory is far behind: go on without a ticket
+                            let _ = Self::send_to(&tx, &ToClient::Travel { url, ticket: None, arrive });
+                        }
+                    }
+                    // no directory here, or a guest: no ticket to be had
+                    _ => {
+                        let _ = Self::send_to(&tx, &ToClient::Travel { url, ticket: None, arrive });
+                    }
+                }
+            }
             ToServer::Climate(c) => {
                 // no air here to change
                 let Some(w) = &mut self.weather else { return };

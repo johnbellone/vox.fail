@@ -1,6 +1,6 @@
 # Design: a network of worlds, and instances
 
-Status: **proposed** · 2026-11-26 · nothing here is built yet
+Status: **proposed** · 2026-11-26 · phase 2 (tickets and server-driven travel) built; the rest not yet
 
 Related: [world-scaling.md](world-scaling.md) (one world up to 60 km: regions, generated terrain,
 streaming), [world-format.md](world-format.md) (region blobs, content-addressed snapshots),
@@ -117,14 +117,18 @@ small worlds (to be measured: it sets how long a cold portal takes). Streaming r
 
 Today the client decides to travel. Instead, the world you're leaving does:
 
-1. The client walks into a portal and sends `ToServer::Through { portal }` (new).
-2. The world checks you're really in that doorway (it already checks moves), then calls the
-   directory: `POST /api/world/travel { account, from, portal }`.
-3. The directory resolves where it leads (a world id, or a template: see 4), starts the world
-   if it's cold, and signs a **ticket**: the usual claims plus `world` (the audience), `arrive`
-   and `yaw`, a `nonce`, and an expiry a minute away.
-4. The world sends `ToClient::Travel { url, ticket }` (new). `url` is absolute
-   (`wss://vox.fail/w/crypt~a41f/ws`), so the client doesn't work out addresses any more.
+1. The client walks into a portal and sends `ToServer::Through { portal, side }` (new).
+2. The world checks you're really in that doorway (its last checked position, within a few
+   blocks of the doorway's plane; `vox-core::portal` holds the doorway geometry the client
+   draws), works out where you come out, and calls the directory:
+   `POST /api/world/travel { world, account, to, arrive }`, `to` being the portal's url.
+3. The directory resolves where it leads (`/w/<x>/` or the port names the world; later a
+   template: see 4), starts the world if it's cold (phase 3), and signs a **ticket**
+   (`vox_core::auth::Ticket`, `t1.` rather than a token's `v1.`, signed with a prefix so neither
+   passes for the other): the usual claims plus `world` (the audience), `arrive` and a `nonce`,
+   expiring a minute after it's made.
+4. The world sends `ToClient::Travel { url, ticket, arrive }` (new). `url` is the destination's
+   address on the directory's list; later, with several hosts, an absolute one.
 5. The client reconnects and says `Hello` with the ticket. The new world checks the signature,
    that `world` is its own id, that the nonce is new (it remembers nonces until they expire),
    and puts you at `arrive`, not where you say you are.
@@ -134,14 +138,17 @@ What this fixes:
 
 - **Tokens with no audience** (a known gap): a ticket only works on one world, once, for a minute.
   The day-long token is only ever sent to the directory and the first world.
-- **Arrival on trust** (a known gap): the arrival point comes from the directory, which got the
-  portal from the level or its `portals` table.
-- **Crossing hosts**: a ticket is safe to send anywhere, so `token_host` goes away.
+- **Arrival on trust** (a known gap): the arrival point comes from the world you left, which
+  checked you were in the doorway, signed into the ticket by the directory.
+- **Crossing hosts**: a ticket is safe to send anywhere. The day-long token still goes only to
+  the host you started on (`token_host`).
 
-`claims` gains optional fields (`world`, `arrive`, `yaw`, `nonce`); old tokens still verify, and
-a world that needs tickets refuses a `Hello` without a `world` claim except on entry worlds. The
-wire protocol goes from 5 to 6. Portals with a literal `"url"` and no directory (local play)
-keep the old client-side path.
+Tokens are unchanged, so signed-in players keep theirs. A signed-in player who joins without a
+ticket starts at the spawn; guests get no tickets, so their first position is still taken on
+trust. The wire protocol goes from 5 to 6. Without a
+directory (local play) the world answers `Travel` with no ticket. Still to do: refusing day-long
+tokens on worlds that aren't entry worlds, so a token leaked by one world can't be used on
+another.
 
 The echo in a doorway still shows the destination level as built (`portals.rs`); for an
 instance that's its template, which is exactly what the party will find.

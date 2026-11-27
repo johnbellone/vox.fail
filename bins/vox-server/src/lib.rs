@@ -163,7 +163,7 @@ impl Status {
 }
 
 enum Event {
-    Join { conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64> },
+    Join { conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64>, arrive: Option<[f32; 3]> },
     Watch { conn: u64, tx: mpsc::Sender<Message>, protocol: u32 },
     Msg { conn: u64, msg: ToServer },
     Leave { conn: u64 },
@@ -173,8 +173,22 @@ enum Event {
     Report(oneshot::Sender<serde_json::Value>),
     /// the directory's plots and portals
     Rules(Vec<Plot>, Vec<serde_json::Value>),
+    /// the directory's answer for a trip: where to go, and the ticket (if it gave one)
+    Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3] },
     Shutdown,
 }
+
+/// A trip through a portal to ask the directory a ticket for: who, where to (the portal's
+/// url), arriving where.
+pub(crate) struct Trip {
+    pub conn: u64,
+    pub account: u64,
+    pub to: String,
+    pub arrive: [f32; 3],
+}
+
+/// Trips waiting for the directory at most; past this a player goes on without a ticket.
+const TRIPS_QUEUED: usize = 256;
 
 /// A claimed area (all heights): only its builders' accounts may change blocks inside.
 #[derive(Debug, Clone, PartialEq)]
@@ -208,7 +222,7 @@ impl Plot {
 pub struct Server {
     tx: mpsc::Sender<Event>,
     /// who may join: the directory's key, and whether guests may too
-    gate: Arc<(Option<vox_core::auth::VerifyingKey>, bool)>,
+    gate: Arc<Gate>,
     thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     next_conn: Arc<AtomicU64>,
 }
@@ -216,14 +230,22 @@ pub struct Server {
 impl Server {
     /// Open (or create) the world and start its thread. Call from inside a tokio runtime.
     pub fn start(cfg: Config) -> Result<Server, String> {
-        let gate = Arc::new((cfg.directory, cfg.guests));
+        let gate = Arc::new(Gate { key: cfg.directory, guests: cfg.guests, world: cfg.name.clone(), used: Mutex::new(HashMap::new()) });
+        let office = match (&cfg.directory_url, &cfg.world_secret) {
+            (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone())),
+            _ => None,
+        };
+        let (trip_tx, trip_rx) = mpsc::channel(TRIPS_QUEUED);
         let link = match (&cfg.directory_url, &cfg.world_secret) {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone(), cfg.report_every, cfg.rules_every)),
             _ => None,
         };
         // named after the world, so a host running many can tell them apart
         let thread_name = format!("world-{}", cfg.name);
-        let state = WorldState::open(cfg)?;
+        let mut state = WorldState::open(cfg)?;
+        if office.is_some() {
+            state.trips = Some(trip_tx);
+        }
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
             .name(thread_name)
@@ -240,6 +262,9 @@ impl Server {
         });
         if let Some(link) = link {
             tokio::spawn(directory_link(tx.clone(), link));
+        }
+        if let Some((url, secret, world)) = office {
+            tokio::spawn(ticket_office(tx.clone(), trip_rx, url, secret, world));
         }
         Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)) })
     }
@@ -335,6 +360,9 @@ struct WorldState {
     snap_changed: HashSet<vox_format::RegionKey>,
     snap_full: bool,
     last_snapshot: Instant,
+    /// where trips go to get a ticket from the directory (None: no directory; players go on
+    /// without one)
+    trips: Option<mpsc::Sender<Trip>>,
 }
 
 /// Steps and keyframes of the weather, s.
