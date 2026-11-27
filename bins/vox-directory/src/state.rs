@@ -84,7 +84,11 @@ impl Directory {
              CREATE INDEX IF NOT EXISTS instance_opens_party ON instance_opens (party, at);
              CREATE TABLE IF NOT EXISTS crew_invites (
                  crew INTEGER NOT NULL, account INTEGER NOT NULL, by INTEGER NOT NULL, at INTEGER NOT NULL,
-                 PRIMARY KEY (crew, account));",
+                 PRIMARY KEY (crew, account));
+             CREATE TABLE IF NOT EXISTS portal_requests (
+                 idem TEXT PRIMARY KEY, world TEXT NOT NULL, account INTEGER NOT NULL, portal INTEGER NOT NULL,
+                 created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
         let catalogue = Catalogue::load(&cfg.data);
@@ -141,6 +145,13 @@ impl Directory {
         Ok(format!("{name} has {} authority", game::balance(&db, id, game::AUTH)))
     }
 
+    /// Moves a portal's creation back by `secs`, so a test can see the refund window close.
+    pub fn backdate_portal(&self, key: i64, secs: u64) -> Result<(), String> {
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute("UPDATE portals SET created = created - ?1 WHERE id = ?2", params![secs as i64, key]).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub(super) fn world_ids(&self) -> String {
         self.0.worlds.iter().map(|w| w.id.as_str()).collect::<Vec<_>>().join(", ")
     }
@@ -191,6 +202,8 @@ impl Directory {
             .route("/api/world/report", post(game::report))
             .route("/api/world/travel", post(game::travel))
             .route("/api/world/objective", post(game::objective))
+            .route("/api/world/portal", post(game::world_portal))
+            .route("/api/world/portal/refund", post(game::refund_portal))
             .route("/api/worlds/editors", post(editors::change).get(editors::list))
             .route("/api/world/{id}/editor", get(editors::check))
             .route("/api/world/{id}/rules", get(game::rules))

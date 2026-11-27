@@ -60,6 +60,10 @@ pub const PLOT_HALF: i32 = 8;
 pub const SPAWN_CLEAR: f32 = 24.0;
 const PLOTS_EACH: i64 = 3;
 const PORTALS_PER_PLOT: i64 = 2;
+/// A world's portal request id is remembered this long (a repeat after that charges again).
+const REQUESTS_KEPT: u64 = 24 * 3600;
+/// A portal can be taken back this soon after it was made.
+const REFUND_WITHIN: u64 = 60;
 /// Where you last stood counts for a week.
 const SEEN_FOR: u64 = 7 * 24 * 3600;
 
@@ -520,25 +524,133 @@ pub(crate) async fn release_plot(State(d): State<Directory>, h: HeaderMap, Json(
     Ok(Json(json!({ "released": r.plot })))
 }
 
+/// A portal's name as the rules give it: its destination's name, cut so that its key (`" (7)"`)
+/// still fits in `MAX_NAME` characters.
+fn portal_name(key: i64, dest_name: &str) -> String {
+    let tag = format!(" ({key})");
+    let room = vox_core::entity::MAX_NAME.saturating_sub(tag.chars().count());
+    dest_name.chars().take(room).chain(tag.chars()).collect()
+}
+
+/// The next portal key. `portals.id` alone would reuse the highest key once its row is deleted
+/// (SQLite without AUTOINCREMENT), and a refunded key still names the request that made it, so
+/// the last key issued is kept in `counters` too. Call this inside the transaction that inserts.
+fn next_portal_key(db: &Connection) -> Res<i64> {
+    let issued: i64 = db
+        .query_row("SELECT COALESCE((SELECT value FROM counters WHERE name = 'portal'), 0)", [], |r| r.get(0))
+        .map_err(oops)?;
+    let live: i64 = db.query_row("SELECT COALESCE(MAX(id), 0) FROM portals", [], |r| r.get(0)).map_err(oops)?;
+    Ok(issued.max(live) + 1)
+}
+
+/// A world's own request id for a portal (`Idem`): 1 to 64 letters, digits and `._:-`.
+fn idem_ok(s: &str) -> bool {
+    (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
+}
+
+/// Where a player portal goes: its plot (already checked to be the account's), the world, the
+/// wall's axis and the doorway's place.
+pub(crate) struct Site<'a> {
+    world: &'a str,
+    plot: i64,
+    axis: &'a str,
+    at: [f64; 3],
+}
+
+/// A portal as the rules and the answers describe it.
+pub(crate) struct Made {
+    key: i64,
+    at: [f64; 3],
+    name: String,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct OpenPortal {
     world: String,
     to: String,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct WorldPortal {
+    world: String,
+    account: u64,
+    at: [f32; 3],
+    axis: String,
+    to: String,
+    idem: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RefundPortal {
+    world: String,
+    account: u64,
+    key: i64,
+}
+
+impl Directory {
+    /// Makes a player portal: charges Authority, enforces the cap, records the row and gives the
+    /// key. The caller has checked that `site.plot` is the account's. With `idem`, the request
+    /// is recorded under that id in the same transaction, so `replay` can answer a repeat.
+    pub(crate) fn make_portal(&self, db: &Connection, account: u64, site: Site, to: &str, idem: Option<&str>) -> Res<Made> {
+        if site.world == to {
+            return Err(bad("a portal leads to another world"));
+        }
+        let there = self.world(to)?.name.clone();
+        let here = self.world_name(site.world);
+        if spawn_of(db, to).is_none() {
+            return Err(bad(format!("{there} hasn't been opened yet: try again once it's running")));
+        }
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM portals WHERE plot = ?1", params![site.plot], |r| r.get(0)).map_err(oops)?;
+        if count >= PORTALS_PER_PLOT {
+            return Err(bad(format!("a plot holds {PORTALS_PER_PLOT} portals")));
+        }
+        spend(db, account, AUTH, COST_PORTAL, &format!("opened a portal from {here} to {there}"))?;
+        let key = next_portal_key(db)?;
+        db.execute(
+            "INSERT INTO portals (id, world, owner, plot, x, y, z, axis, dest, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![key, site.world, account as i64, site.plot, site.at[0], site.at[1], site.at[2], site.axis, to, now() as i64],
+        )
+        .map_err(oops)?;
+        db.execute("INSERT OR REPLACE INTO counters (name, value) VALUES ('portal', ?1)", params![key]).map_err(oops)?;
+        give(db, account, "key", &format!("Portal to {there}"), Some(site.world), Some(key), json!({ "at": site.at, "to": to, "to_name": there }))?;
+        if let Some(idem) = idem {
+            db.execute(
+                "INSERT INTO portal_requests (idem, world, account, portal, created) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![idem, site.world, account as i64, key, now() as i64],
+            )
+            .map_err(oops)?;
+        }
+        Ok(Made { key, at: site.at, name: portal_name(key, &there) })
+    }
+
+    /// The answer to a request already made under `idem`, if there was one. A world's request
+    /// id used by another world or account is refused; a portal since refunded is a conflict.
+    fn replay(&self, db: &Connection, idem: &str, world: &str, account: u64) -> Res<Option<Made>> {
+        let row: Option<(String, i64, i64)> = db
+            .query_row("SELECT world, account, portal FROM portal_requests WHERE idem = ?1", params![idem], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()
+            .map_err(oops)?;
+        let Some((w, a, key)) = row else { return Ok(None) };
+        if w != world || a != account as i64 {
+            return Err(no(StatusCode::CONFLICT, "that request id belongs to another request"));
+        }
+        let portal: Option<(f64, f64, f64, String)> = db
+            .query_row("SELECT x, y, z, dest FROM portals WHERE id = ?1 AND world = ?2 AND owner = ?3", params![key, world, account as i64], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .optional()
+            .map_err(oops)?;
+        let Some((x, y, z, dest)) = portal else { return Err(no(StatusCode::CONFLICT, "that portal was refunded")) };
+        Ok(Some(Made { key, at: [x, y, z], name: portal_name(key, &self.world_name(&dest)) }))
+    }
+}
+
 pub(crate) async fn open_portal(State(d): State<Directory>, h: HeaderMap, Json(o): Json<OpenPortal>) -> Res<Json<Value>> {
     json_only(&h)?;
     let (id, _) = d.who(&h)?;
-    let here = d.world(&o.world)?.name.clone();
-    let there = d.world(&o.to)?.name.clone();
-    if o.world == o.to {
-        return Err(bad("a portal leads to another world"));
-    }
+    d.world(&o.world)?;
     let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
     let tx = db.transaction().map_err(oops)?;
-    if spawn_of(&tx, &o.to).is_none() {
-        return Err(bad(format!("{there} hasn't been opened yet: try again once it's running")));
-    }
     let since = now().saturating_sub(SEEN_FOR) as i64;
     let (x, y, z): (f64, f64, f64) = tx
         .query_row("SELECT x, y, z FROM whereabouts WHERE account = ?1 AND world = ?2 AND at > ?3", params![id as i64, o.world, since], |r| {
@@ -556,22 +668,78 @@ pub(crate) async fn open_portal(State(d): State<Directory>, h: HeaderMap, Json(o
         .optional()
         .map_err(oops)?
         .ok_or_else(|| bad("stand in a plot of yours to open a portal there"))?;
-    let count: i64 = tx.query_row("SELECT COUNT(*) FROM portals WHERE plot = ?1", params![plot], |r| r.get(0)).map_err(oops)?;
-    if count >= PORTALS_PER_PLOT {
-        return Err(bad(format!("a plot holds {PORTALS_PER_PLOT} portals")));
-    }
-    spend(&tx, id, AUTH, COST_PORTAL, &format!("opened a portal from {here} to {there}"))?;
     // the doorway's sill: where you stood, on the half block
     let at = [(x * 2.0).round() / 2.0, y.floor(), (z * 2.0).round() / 2.0];
-    tx.execute(
-        "INSERT INTO portals (world, owner, plot, x, y, z, axis, dest, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'z', ?7, ?8)",
-        params![o.world, id as i64, plot, at[0], at[1], at[2], o.to, now() as i64],
-    )
-    .map_err(oops)?;
-    let portal = tx.last_insert_rowid();
-    give(&tx, id, "key", &format!("Portal to {there}"), Some(&o.world), Some(portal), json!({ "at": at, "to": o.to, "to_name": there }))?;
+    let site = Site { world: &o.world, plot, axis: "z", at };
+    let made = d.make_portal(&tx, id, site, &o.to, None)?;
     tx.commit().map_err(oops)?;
-    Ok(Json(json!({ "portal": portal, "at": at })))
+    Ok(Json(json!({ "portal": made.key, "at": made.at })))
+}
+
+/// A world server's request, made when a player places a portal (its Authority is charged here).
+/// Repeats under the same `idem` answer the first one and charge nothing.
+pub(crate) async fn world_portal(State(d): State<Directory>, h: HeaderMap, Json(p): Json<WorldPortal>) -> Res<Json<Value>> {
+    d.from_world(&h)?;
+    d.world(&p.world)?;
+    if !idem_ok(&p.idem) {
+        return Err(bad("a request id is 1 to 64 letters, digits and . _ : -"));
+    }
+    if !p.at.iter().all(|v| v.is_finite()) {
+        return Err(bad("nowhere to put that portal"));
+    }
+    if p.axis != "x" && p.axis != "z" {
+        return Err(bad("a portal's wall is along x or z"));
+    }
+    let at = p.at.map(f64::from);
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = db.transaction().map_err(oops)?;
+    if let Some(made) = d.replay(&tx, &p.idem, &p.world, p.account)? {
+        return Ok(Json(json!({ "key": made.key, "at": made.at, "name": made.name })));
+    }
+    tx.execute("DELETE FROM portal_requests WHERE created < ?1", params![now().saturating_sub(REQUESTS_KEPT) as i64]).map_err(oops)?;
+    let plot: i64 = tx
+        .query_row(
+            "SELECT id FROM plots WHERE world = ?1 AND owner = ?2 AND x0 <= ?3 AND ?3 < x1 AND z0 <= ?4 AND ?4 < z1",
+            params![p.world, p.account as i64, at[0].floor() as i64, at[2].floor() as i64],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(oops)?
+        .ok_or_else(|| bad("that portal's place is not in a plot of the player's in that world"))?;
+    let site = Site { world: &p.world, plot, axis: &p.axis, at };
+    let made = d.make_portal(&tx, p.account, site, &p.to, Some(&p.idem))?;
+    tx.commit().map_err(oops)?;
+    Ok(Json(json!({ "key": made.key, "at": made.at, "name": made.name })))
+}
+
+/// Takes back a portal a world made a moment ago (its plot or rights went before the answer
+/// came): the portal and its key go, and the Authority comes back. Only the account that made it,
+/// in the world that made it, and only within `REFUND_WITHIN` seconds. The request id stays
+/// behind, so a repeat of it is still answered (409) and charges nothing.
+pub(crate) async fn refund_portal(State(d): State<Directory>, h: HeaderMap, Json(r): Json<RefundPortal>) -> Res<Json<Value>> {
+    d.from_world(&h)?;
+    d.world(&r.world)?;
+    let mut db = d.0.db.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = db.transaction().map_err(oops)?;
+    // any portal of this account in this world made in the last minute may go: the world secret's holder is trusted to say which
+    let recent = now().saturating_sub(REFUND_WITHIN) as i64;
+    let mine = tx
+        .query_row(
+            "SELECT 1 FROM portals WHERE id = ?1 AND world = ?2 AND owner = ?3 AND created >= ?4",
+            params![r.key, r.world, r.account as i64, recent],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(oops)?
+        .is_some();
+    if !mine {
+        return Ok(Json(json!({ "refunded": false })));
+    }
+    tx.execute("DELETE FROM items WHERE kind = 'key' AND ref = ?1 AND account = ?2", params![r.key, r.account as i64]).map_err(oops)?;
+    tx.execute("DELETE FROM portals WHERE id = ?1", params![r.key]).map_err(oops)?;
+    mint(&tx, r.account, AUTH, COST_PORTAL, &format!("portal {} placed and then refused: refunded", r.key)).map_err(oops)?;
+    tx.commit().map_err(oops)?;
+    Ok(Json(json!({ "refunded": true })))
 }
 
 #[derive(Deserialize)]
@@ -908,9 +1076,7 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
             let arrive: Value = serde_json::from_str(&spawn).ok()?;
             // a portal's name is at most MAX_NAME characters (the server drops a longer one), so
             // the world's name is cut to fit beside " (pid)"
-            let tag = format!(" ({pid})");
-            let room = vox_core::entity::MAX_NAME.saturating_sub(tag.chars().count());
-            let name: String = w.name.chars().take(room).chain(tag.chars()).collect();
+            let name = portal_name(pid, &w.name);
             Some(json!({
                 "key": pid, "name": name, "at": at, "axis": axis, "size": [4, 6],
                 "level": level, "url": w.url, "arrive": arrive, "yaw": 0,
