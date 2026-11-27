@@ -7070,6 +7070,7 @@ dependencies = [
  "ruzstd 0.8.3",
  "serde",
  "serde_json",
+ "vox-art",
  "vox-core",
  "zstd",
 ]

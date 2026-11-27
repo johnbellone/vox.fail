@@ -10,12 +10,15 @@
 //!   behind the same trait; object storage next), and snapshots: manifests of region hashes,
 //!   kept for a week, restorable.
 //! - [`oxen`]: the Oxen store, with history older than the week squashed away.
+//! - [`prop`]: a prop (its `vox-art` definition and voxels) as a `VOXP` blob named by its
+//!   version, and the catalogue of accepted props.
 //!
 //! Zones carry their entities (format 2; format 1 blobs still read). Structures and levels as
 //! files come next.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod oxen;
+pub mod prop;
 pub mod region;
 pub mod store;
 pub mod zone;
