@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# Sets up vox.fail's Cloudflare side with the cf command line (signed in with `cf auth login`):
-# the zone settings, the cache and www redirect rules, the tunnel "vox" (managed in Cloudflare,
-# so the server needs only its token) and the DNS records. Safe to run again: each step checks
-# what's there first, and it stops rather than replace a DNS record it doesn't expect.
+# Sets up vox.fail's Cloudflare side with the cf command line (signed in with `cf auth login`), for
+# the servers in a Cloudflare Container behind the edge Worker (docs/design/cloudflare-hosting.md):
+# the zone settings, the cache and www redirect rules, the DNS records, the R2 bucket the
+# databases are streamed to, and the Worker's secrets. It also takes away the old tunnel "vox".
+# Safe to run again: each step checks what's there first, a secret already set is left as it is
+# (a new directory key would sign everyone out), and it stops rather than replace a DNS record it
+# doesn't expect.
 #
 #   deploy/cloudflare-setup.sh
+#   VOX_DISCORD_CLIENT_ID=… VOX_DISCORD_CLIENT_SECRET=… VOX_STEAM_KEY=… deploy/cloudflare-setup.sh
+#                         also sets (or replaces) the sign-in sites' secrets
 #
-# The tunnel sends /w/... to vox-host (127.0.0.1:7790, every world), refuses /api/world/..., and
-# sends the rest to vox-directory (127.0.0.1:7700). With no server connected the tunnel answers
-# error 1033 and the edge Worker (apps/edge) shows the offline page. Then, on the server:
-#   sudo cloudflared service install "$(cf tunnels token get <tunnel id>)"
+# The Worker (apps/edge, vox-edge) must exist: secrets belong to it. Secrets go to Cloudflare from
+# a private temporary file, never a command line, and are never printed.
 set -euo pipefail
 
 ZONE_NAME=vox.fail
-TUNNEL_NAME=vox
+TUNNEL_NAME=vox # retired: deleted if it's still there
+WORKER=vox-edge
+BUCKET=vox-data
 CF="${CF:-cf}"
 command -v "$CF" >/dev/null || CF="$HOME/.bun/bin/cf"
 command -v "$CF" >/dev/null || { echo "needs the cf command line"; exit 1; }
@@ -67,46 +72,87 @@ log "cache rule: /pkg/, /assets/, /data/"
   }]}' >/dev/null
 log "redirect rule: www.$ZONE_NAME -> $ZONE_NAME"
 
-# ---- the tunnel, managed in Cloudflare
+# ---- the old tunnel: the Worker answers everything now
 TUNNEL_ID="$("$CF" tunnels list --name "$TUNNEL_NAME" --is-deleted false | q 'rows[0]["id"] if rows else ""')"
-if [ -z "$TUNNEL_ID" ]; then
-  TUNNEL_ID="$("$CF" tunnels create --body "{\"name\":\"$TUNNEL_NAME\",\"config_src\":\"cloudflare\"}" | q 'rows["id"]')"
-  log "tunnel $TUNNEL_NAME created ($TUNNEL_ID)"
-else
-  log "tunnel $TUNNEL_NAME exists ($TUNNEL_ID)"
-fi
-"$CF" tunnels config update "$TUNNEL_ID" --body "{\"config\":{\"ingress\":[
-  {\"hostname\":\"$ZONE_NAME\",\"path\":\"^/w/\",\"service\":\"http://127.0.0.1:7790\"},
-  {\"hostname\":\"$ZONE_NAME\",\"path\":\"^/api/world/\",\"service\":\"http_status:404\"},
-  {\"hostname\":\"$ZONE_NAME\",\"service\":\"http://127.0.0.1:7700\"},
-  {\"service\":\"http_status:404\"}]}}" >/dev/null
-log "tunnel routes: /w/ -> vox-host :7790, /api/world/ refused, the rest -> vox-directory :7700"
 
-# ---- DNS: vox.fail -> the tunnel; www.vox.fail -> anywhere proxied (the redirect answers)
-record() { # name -> "type content" of its one record, or "" (more than one: stop)
+# ---- DNS: vox.fail and www.vox.fail point nowhere, proxied: the Worker on vox.fail/* answers
+# everything, and the redirect rule answers www
+record() { # name -> "type content id" of its one record, "" for none, MANY for more
   "$CF" dns records list --zone "$ZONE_NAME" --name-exact "$1" \
     | q '"" if not rows else (" ".join([rows[0]["type"], rows[0]["content"], rows[0]["id"]]) if len(rows) == 1 else "MANY")'
 }
-TARGET="$TUNNEL_ID.cfargotunnel.com"
+placeholder() { # name comment
+  "$CF" dns records create --zone "$ZONE_NAME" --body "{\"type\":\"AAAA\",\"name\":\"$1\",\"content\":\"100::\",\"proxied\":true,\"ttl\":1,\"comment\":\"$2\"}" >/dev/null
+}
 read -r type content id <<<"$(record "$ZONE_NAME")" || true
-if [ "${type:-}" = CNAME ] && [ "$content" = "$TARGET" ]; then
-  log "$ZONE_NAME already points at the tunnel"
+if [ "${type:-}" = AAAA ] && [ "$content" = "100::" ]; then
+  log "$ZONE_NAME already points at the Worker"
 else
-  if [ "${type:-}" = AAAA ] && [ "$content" = "100::" ]; then
+  if [ "${type:-}" = CNAME ] && [ -n "$TUNNEL_ID" ] && [ "$content" = "$TUNNEL_ID.cfargotunnel.com" ]; then
     "$CF" dns records delete "$id" --zone "$ZONE_NAME" --force >/dev/null
-    log "removed the placeholder AAAA $ZONE_NAME 100::"
+    log "removed $ZONE_NAME -> tunnel $TUNNEL_NAME"
   elif [ -n "${type:-}" ]; then
     log "$ZONE_NAME has another record (${type} ${content}); not touching it"; exit 1
   fi
-  "$CF" dns records create --zone "$ZONE_NAME" --body "{\"type\":\"CNAME\",\"name\":\"$ZONE_NAME\",\"content\":\"$TARGET\",\"proxied\":true,\"ttl\":1,\"comment\":\"Tunnel vox (deploy/cloudflare-setup.sh)\"}" >/dev/null
-  log "$ZONE_NAME -> tunnel $TUNNEL_NAME"
+  placeholder "$ZONE_NAME" "For the vox-edge Worker, which answers vox.fail"
+  log "$ZONE_NAME -> proxied placeholder (the Worker answers)"
+fi
+if [ -n "$TUNNEL_ID" ]; then
+  "$CF" tunnels delete "$TUNNEL_ID" --force >/dev/null
+  log "deleted the tunnel $TUNNEL_NAME ($TUNNEL_ID)"
 fi
 read -r type content id <<<"$(record "www.$ZONE_NAME")" || true
 if [ -z "${type:-}" ]; then
-  "$CF" dns records create --zone "$ZONE_NAME" --body "{\"type\":\"AAAA\",\"name\":\"www.$ZONE_NAME\",\"content\":\"100::\",\"proxied\":true,\"ttl\":1,\"comment\":\"Only for the www redirect rule\"}" >/dev/null
+  placeholder "www.$ZONE_NAME" "Only for the www redirect rule"
   log "www.$ZONE_NAME -> proxied placeholder (for the redirect)"
 else
   log "www.$ZONE_NAME has a record already ($type $content)"
 fi
 
-log "done. On the server: sudo cloudflared service install \"\$(cf tunnels token get $TUNNEL_ID)\""
+# ---- R2: where Litestream streams the databases
+if [ "$("$CF" r2 buckets list | q '[b["name"] for b in (rows.get("buckets", []) if isinstance(rows, dict) else rows)]' | grep -c "'$BUCKET'")" = 0 ]; then
+  "$CF" r2 buckets create --body "{\"name\":\"$BUCKET\"}" >/dev/null
+  log "R2 bucket $BUCKET created"
+else
+  log "R2 bucket $BUCKET exists"
+fi
+
+# ---- the Worker's secrets (read by the container, apps/edge/src/container.ts)
+HAVE="$("$CF" workers secrets list --worker "$WORKER" | q '" ".join(r["name"] for r in rows)')"
+has() { [[ " $HAVE " == *" $1 "* ]]; }
+put() { # name; the value on stdin, sent from a private file and removed
+  python3 -I -c 'import json, sys; print(json.dumps({"name": sys.argv[1], "text": sys.stdin.read().strip(), "type": "secret_text"}))' "$1" \
+    > "$TMP/body.json"
+  "$CF" workers secrets update "$1" --worker "$WORKER" --body "@$TMP/body.json" >/dev/null
+  rm -f "$TMP/body.json"
+  log "secret $1 set"
+}
+# one private folder for every temporary file, removed however the script ends
+TMP="$(umask 077 && mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+(umask 077
+  has VOX_DIRECTORY_KEY || openssl rand -hex 32 | put VOX_DIRECTORY_KEY
+  has VOX_WORLD_SECRET || openssl rand -hex 32 | put VOX_WORLD_SECRET
+  for s in VOX_DISCORD_CLIENT_ID VOX_DISCORD_CLIENT_SECRET VOX_STEAM_KEY; do
+    if [ -n "${!s:-}" ]; then printf '%s' "${!s}" | put "$s"; elif ! has "$s"; then log "$s isn't set: pass it in the environment to set it"; fi
+  done
+  # Litestream's R2 keys: a token that can read and write this bucket only. Its id is the S3
+  # access key and the SHA-256 of its value the secret key.
+  if ! has LITESTREAM_ACCESS_KEY_ID || ! has LITESTREAM_SECRET_ACCESS_KEY; then
+    body='{"name":"vox-data (Litestream in the vox-edge container)","policies":[{"effect":"allow","resources":{"com.cloudflare.edge.r2.bucket.'"$ACCOUNT_ID"'_default_'"$BUCKET"'":"*"},"permission_groups":[{"id":"2efd5506f9c8494dacb1fa10a3e7d5b6"},{"id":"6a018a9f2fc74eb6b293b0c548f38b39"}]}]}'
+    # both keys are in hand before either is sent, so a failure can't leave one set without
+    # the other (a re-run would make a second token)
+    keys="$TMP/r2-keys"
+    "$CF" accounts tokens create --body "$body" | python3 -I -c '
+import hashlib, json, sys
+raw = sys.stdin.read(); d = json.loads(raw[raw.find("{"):]); r = d.get("result") or d
+if not (r.get("id") and r.get("value")): sys.exit("cloudflare-setup: making the R2 token failed")
+print(r["id"]); print(hashlib.sha256(r["value"].encode()).hexdigest())' > "$keys"
+    [ "$(wc -l < "$keys")" = 2 ] || { log "making the R2 token gave no keys"; exit 1; }
+    sed -n 2p "$keys" | put LITESTREAM_SECRET_ACCESS_KEY
+    sed -n 1p "$keys" | put LITESTREAM_ACCESS_KEY_ID
+    log "R2 token for $BUCKET made (Workers R2 Storage Bucket Item Read and Write on it only)"
+  fi
+)
+
+log "done"

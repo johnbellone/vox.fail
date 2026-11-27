@@ -6,13 +6,12 @@
     "build": "bun run build.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "deploy": "bun run build.ts && node node_modules/.bin/cf deploy"
+    "deploy": "bun run build.ts && wrangler deploy"
   },
   "devDependencies": {
     "@types/bun": "^1.4.5",
     "@types/react": "^19.3.3",
     "@types/react-dom": "^19.3.0",
-    "cf": "1.0.0-rc.6",
     "typescript": "^7.0.2",
     "wrangler": "^4.169.0"
   },

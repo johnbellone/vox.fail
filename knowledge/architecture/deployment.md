@@ -3,7 +3,7 @@ type: Architecture
 title: "Deployment: vox.fail on Cloudflare Tunnel, and Windows Packaging"
 description: "How vox.fail is hosted (one Linux box, systemd, Cloudflare Tunnel with no open ports) and how Block Avatar is packaged for Windows."
 tags: [deployment, cloudflare, systemd, windows, installer]
-generated: { by: agent/mcp, at: "2026-11-27T16:11:44Z" }
+generated: { by: agent/mcp, at: "2026-11-27T16:35:18Z" }
 status: stable
 code_refs: [deploy/, bins/block-avatar/installer/block-avatar.nsi, .github/workflows/windows.yml]
 ---
@@ -45,3 +45,4 @@ SSL: Always Use HTTPS. WebSockets on. **Rocket Loader off** and Email Obfuscatio
 - [Decision: Pull-Based Automatic Deploys from Version Tags](../decisions/pull-based-auto-deploy.md): How releases reach the server: v* tags build a bundle, a timer on the server installs it.
 - [Decision: A Cloudflare Worker Shows an Offline Page When the Server Is Down](../decisions/edge-worker-offline-page.md): What visitors see when the server is down: a Worker in front of the tunnel serves an offline page.
 - [Decision: vox.fail's Cloudflare Side Is Scripted, With a Tunnel Managed in Cloudflare](../decisions/cloudflare-managed-tunnel.md): How vox.fail's zone, rules, tunnel and DNS are set up: one cf script, tunnel managed in Cloudflare.
+- [Design (proposed): vox.fail on Cloudflare Containers](cloudflare-hosting-design.md): Where hosting is going: Cloudflare Containers with SQLite streamed to R2 (proposed).
