@@ -12,6 +12,8 @@ export interface Me {
   character?: Character | null;
   sign_in_with?: Site[];
   linked?: Site[];
+  /** Unix seconds: when the name may next change (capitals-only changes are always allowed). */
+  rename_after?: number | null;
 }
 
 export interface CastMember {

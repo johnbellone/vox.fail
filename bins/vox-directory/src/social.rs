@@ -18,7 +18,7 @@ use reqwest::Url;
 use rusqlite::{OptionalExtension, params};
 use serde_json::Value;
 
-use crate::{Directory, check_name, cookie, now, random_hex};
+use crate::{Directory, check_name, cookie, held_by_other, now, random_hex};
 
 const STATE: &str = "vox_auth";
 const OPENID_NS: &str = "http://specs.openid.net/auth/2.0";
@@ -324,6 +324,10 @@ impl Directory {
                             let head: String = base.chars().take(20 - tail.len()).collect();
                             format!("{}{tail}", head.trim_end())
                         };
+                        // a held name is skipped like a taken one
+                        if held_by_other(&tx, &try_name, None) {
+                            continue;
+                        }
                         if tx
                             .execute("INSERT INTO accounts (name, pass, created) VALUES (?1, '', ?2)", params![try_name, now() as i64])
                             .is_ok()

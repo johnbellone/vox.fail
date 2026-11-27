@@ -134,3 +134,156 @@ fn names() {
         assert!(check_name(bad).is_err(), "{bad}");
     }
 }
+
+/// Signs `c` up as `name` and gives it a character (a token needs one).
+async fn signed_up_with_character(base: &str, c: &reqwest::Client, name: &str) {
+    let (st, v) = post(c, format!("{base}/api/signup"), json!({"name": name, "password": "correct horse"})).await;
+    assert_eq!(st, 200, "{v}");
+    let cat: Value = c.get(format!("{base}/api/catalogue")).send().await.unwrap().json().await.unwrap();
+    let model = cat["characters"][3]["model"].as_str().unwrap().to_string();
+    let r = c.put(format!("{base}/api/character")).json(&json!({"model": model, "wear": ["cowboy", "shades"]})).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+}
+
+async fn me(c: &reqwest::Client, base: &str) -> Value {
+    c.get(format!("{base}/api/me")).send().await.unwrap().json().await.unwrap()
+}
+
+#[tokio::test]
+async fn rename_valid() {
+    let (d, base) = serve().await;
+    let c = client();
+    signed_up_with_character(&base, &c, "alice").await;
+    let (st, v) = post(&c, format!("{base}/api/name"), json!({"name": "Alicia"})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["name"], "Alicia");
+    assert!(v["rename_after"].as_u64().unwrap() > 0);
+    let m = me(&c, &base).await;
+    assert_eq!(m["name"], "Alicia");
+    assert!(m["rename_after"].as_u64().unwrap() > std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+    // a new token carries the new name
+    let (st, v) = post(&c, format!("{base}/api/token"), json!({})).await;
+    assert_eq!(st, 200, "{v}");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let key = auth::public_from_hex(&d.public_key()).unwrap();
+    let claims = auth::verify(v["token"].as_str().unwrap(), &key, now).unwrap();
+    assert_eq!(claims.name, "Alicia");
+}
+
+#[tokio::test]
+async fn rename_taken() {
+    let (_d, base) = serve().await;
+    let bob = client();
+    signed_up_with_character(&base, &bob, "bob").await;
+    let carol = client();
+    signed_up_with_character(&base, &carol, "carol").await;
+    assert_eq!(post(&carol, format!("{base}/api/name"), json!({"name": "bob"})).await.0, 409);
+    assert_eq!(post(&carol, format!("{base}/api/name"), json!({"name": "BOB"})).await.0, 409);
+    // and carol is still carol
+    assert_eq!(me(&carol, &base).await["name"], "carol");
+}
+
+#[tokio::test]
+async fn rename_invalid() {
+    let (_d, base) = serve().await;
+    let c = client();
+    signed_up_with_character(&base, &c, "dave").await;
+    for bad in ["ab", "  _x", "a  b"] {
+        let (st, v) = post(&c, format!("{base}/api/name"), json!({"name": bad})).await;
+        assert_eq!(st, 400, "{bad:?}: {v}");
+        assert!(v["error"].is_string(), "{bad:?}: {v}");
+    }
+    assert_eq!(me(&c, &base).await["name"], "dave");
+}
+
+#[tokio::test]
+async fn rename_needs_sign_in() {
+    let (_d, base) = serve().await;
+    let c = client();
+    assert_eq!(post(&c, format!("{base}/api/name"), json!({"name": "eve"})).await.0, 401);
+}
+
+#[tokio::test]
+async fn rename_limit() {
+    let (d, base) = serve().await;
+    let c = client();
+    signed_up_with_character(&base, &c, "alice").await;
+    assert_eq!(post(&c, format!("{base}/api/name"), json!({"name": "alice2"})).await.0, 200);
+    let (st, v) = post(&c, format!("{base}/api/name"), json!({"name": "alice3"})).await;
+    assert_eq!(st, 429, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("days"), "{v}");
+    // 30 days later the change is allowed
+    d.backdate_rename("alice2", 2592000 + 1).unwrap();
+    assert_eq!(post(&c, format!("{base}/api/name"), json!({"name": "alice3"})).await.0, 200);
+}
+
+#[tokio::test]
+async fn rename_capitals_only() {
+    let (_d, base) = serve().await;
+    let c = client();
+    signed_up_with_character(&base, &c, "alice").await;
+    assert_eq!(post(&c, format!("{base}/api/name"), json!({"name": "alice2"})).await.0, 200);
+    // capitals inside the 30 days are free
+    let (st, v) = post(&c, format!("{base}/api/name"), json!({"name": "Alice2"})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(me(&c, &base).await["name"], "Alice2");
+}
+
+#[tokio::test]
+async fn rename_old_name_held() {
+    let (d, base) = serve().await;
+    let alice = client();
+    signed_up_with_character(&base, &alice, "alice").await;
+    assert_eq!(post(&alice, format!("{base}/api/name"), json!({"name": "alice2"})).await.0, 200);
+    // nobody else can sign up as the old name while it is held
+    let newcomer = client();
+    let (st, _) = post(&newcomer, format!("{base}/api/signup"), json!({"name": "alice", "password": "correct horse"})).await;
+    assert_eq!(st, 409);
+    // nor change to it
+    let bob = client();
+    signed_up_with_character(&base, &bob, "bob").await;
+    assert_eq!(post(&bob, format!("{base}/api/name"), json!({"name": "Alice"})).await.0, 409);
+    // once the 30 days are up the old name is still held for a week, and alice may take it back
+    d.backdate_rename("alice2", 2592000 + 1).unwrap();
+    assert_eq!(post(&bob, format!("{base}/api/name"), json!({"name": "alice"})).await.0, 409);
+    assert_eq!(post(&alice, format!("{base}/api/name"), json!({"name": "alice"})).await.0, 200);
+    assert_eq!(me(&alice, &base).await["name"], "alice");
+}
+
+#[tokio::test]
+async fn rename_hold_ends() {
+    let (d, base) = serve().await;
+    let alice = client();
+    signed_up_with_character(&base, &alice, "alice").await;
+    assert_eq!(post(&alice, format!("{base}/api/name"), json!({"name": "alice2"})).await.0, 200);
+    let bob = client();
+    signed_up_with_character(&base, &bob, "bob").await;
+    // 30 days and the week of grace: the old name is free for anyone
+    d.backdate_rename("alice2", 2592000 + 7 * 86400 + 1).unwrap();
+    let (st, v) = post(&bob, format!("{base}/api/name"), json!({"name": "alice"})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(me(&alice, &base).await["rename_after"], Value::Null);
+}
+
+#[tokio::test]
+async fn rename_non_ascii_capitals_count_in_full() {
+    // SQLite's NOCASE folds ASCII only, so É to é is a different name to it: a full change
+    let (_d, base) = serve().await;
+    let c = client();
+    signed_up_with_character(&base, &c, "Émile").await;
+    let (st, v) = post(&c, format!("{base}/api/name"), json!({"name": "émile"})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(post(&c, format!("{base}/api/name"), json!({"name": "Émile"})).await.0, 429);
+}
+
+#[tokio::test]
+async fn rename_same_name() {
+    let (_d, base) = serve().await;
+    let c = client();
+    signed_up_with_character(&base, &c, "frank").await;
+    let (st, v) = post(&c, format!("{base}/api/name"), json!({"name": "frank"})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["name"], "frank");
+    assert_eq!(v["rename_after"], Value::Null);
+    assert_eq!(me(&c, &base).await["rename_after"], Value::Null);
+}

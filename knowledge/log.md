@@ -1,4 +1,6 @@
 ## 2026-11-27
+* **Update** [2026-11-27T22:11:30Z]: Updated concept `architecture/identity-and-tokens.md`. — Names can now change (vox-r58)
+* **Creation** [2026-11-27T22:11:19Z]: Documented concept `decisions/account-name-changes.md` (Decision: Account Name Changes with a 30-Day Limit and Held Names). — Name changes (vox-r58, gh-24)
 * **Relate** [2026-11-27T21:09:20Z]: Linked `architecture/world-editor-design.md` to `decisions/world-editor.md` (The editor already built, which this design extends.). — Linked the workshops design to the built editor.
 * **Relate** [2026-11-27T21:09:20Z]: Linked `decisions/world-editor.md` to `architecture/world-editor-design.md` (The proposed next step: workshops, whole operations, saving as a level or structure.). — Linked the built editor's decision to the workshops design that follows it.
 * **Update** [2026-11-27T21:09:20Z]: Updated concept `decisions/world-editor-scope.md`. — The design it answers moved to docs/design/world-editor-workshops.md; notes the built live editor it sits beside.

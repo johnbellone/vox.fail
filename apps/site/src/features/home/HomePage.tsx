@@ -29,7 +29,7 @@ export function HomePage() {
           ) : me.error ? (
             <Problem error={me.error} />
           ) : me.data?.name ? (
-            <SignedIn me={me.data} onSignOut={() => void me.reload()} />
+            <SignedIn me={me.data} onSignOut={() => void me.reload()} onChanged={() => void me.reload()} />
           ) : (
             <SignIn offered={me.data?.sign_in_with ?? []} onDone={() => void me.reload()} />
           )}

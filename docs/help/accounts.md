@@ -9,6 +9,22 @@ The first time you sign in with Steam or Discord, the site makes an account name
 If that name is taken, it picks the nearest free name. Once you are signed in, you can link
 your Steam account to the one you have.
 
+## Change your name
+
+On the start page, under your name, press **Change your name**. Type the new name and press
+**Save**. If the site refuses the name, it says why under the box.
+
+- A name is 3 to 20 characters. It starts with a letter or a digit.
+- It uses letters, digits, single spaces, `_`, `-` and `.`. Two spaces in a row are not allowed.
+- Nobody else can have the same name in any capitals. `Sam` and `sam` count as the same name.
+- You can change your name once every 30 days.
+- Changing only the capitals (`sam` to `Sam`) is fine any time. It does not start the 30 days.
+- Your old name is kept for you for 37 days, so nobody else can take it. When your 30 days are
+  up, you have one more week to change back to it before anyone else can have it.
+- A launch code you already copied still shows your old name in the game until it runs out. It
+  lasts one day. Copy a new code to play under the new name.
+- A world's edit history keeps the name you had when you made each edit.
+
 ## Pick your character
 
 Choose who you are from the list. The first one is Blue, Vox's main character.

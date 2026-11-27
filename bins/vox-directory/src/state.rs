@@ -3,6 +3,24 @@
 #[allow(unused_imports)]
 use super::*;
 
+/// How often a name may change in full.
+pub(super) const NAME_HOLD: u64 = 30 * 24 * 3600;
+/// How much longer than `NAME_HOLD` an old name stays held: the owner may change again after
+/// `NAME_HOLD`, and this week is theirs to take the old name back before anyone else can.
+pub(super) const NAME_GRACE: u64 = 7 * 24 * 3600;
+
+/// Is `name` held for an account other than `account` (any account when `None`)? Held names are
+/// old names given up within `NAME_HOLD` plus `NAME_GRACE`. A SQL error counts as held: refusing is the safe side.
+pub(super) fn held_by_other(db: &Connection, name: &str, account: Option<u64>) -> bool {
+    db.query_row(
+        "SELECT COUNT(*) FROM held_names WHERE name = ?1 AND until > ?2 AND (?3 IS NULL OR account != ?3)",
+        params![name, now() as i64, account.map(|a| a as i64)],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(true)
+}
+
 impl Directory {
     pub fn open(cfg: Config) -> Result<Directory, String> {
         let db = Connection::open(&cfg.db).map_err(|e| e.to_string())?;
@@ -88,7 +106,9 @@ impl Directory {
              CREATE TABLE IF NOT EXISTS portal_requests (
                  idem TEXT PRIMARY KEY, world TEXT NOT NULL, account INTEGER NOT NULL, portal INTEGER NOT NULL,
                  created INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);",
+             CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS held_names (
+                 name TEXT PRIMARY KEY COLLATE NOCASE, account INTEGER NOT NULL, until INTEGER NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
         // databases made before pairing lack `dest_key`: add it once
@@ -107,6 +127,13 @@ impl Directory {
             if has == 0 {
                 db.execute_batch(&format!("ALTER TABLE portals ADD COLUMN {column} {kind}")).map_err(|e| e.to_string())?;
             }
+        }
+        // databases made before name changes lack `renamed` (when the name last changed): add it once
+        let has_renamed: i64 = db
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name = 'renamed'", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if has_renamed == 0 {
+            db.execute_batch("ALTER TABLE accounts ADD COLUMN renamed INTEGER").map_err(|e| e.to_string())?;
         }
         let catalogue = Catalogue::load(&cfg.data);
         if catalogue.characters.is_empty() {
@@ -169,6 +196,24 @@ impl Directory {
         Ok(())
     }
 
+    /// Moves an account's last name change back by `secs`, and the holds on its old names with
+    /// it, so a test can see both the 30 days for a change and the hold on the old name end.
+    pub fn backdate_rename(&self, name: &str, secs: u64) -> Result<(), String> {
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        let id: i64 = db.query_row("SELECT id FROM accounts WHERE name = ?1", params![name], |r| r.get(0)).map_err(|e| e.to_string())?;
+        db.execute("UPDATE accounts SET renamed = renamed - ?1 WHERE id = ?2", params![secs as i64, id]).map_err(|e| e.to_string())?;
+        db.execute("UPDATE held_names SET until = until - ?1 WHERE account = ?2", params![secs as i64, id]).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// When the account may next change its name in full: `renamed` plus `NAME_HOLD`, if that is
+    /// still in the future. `None` when it may change now.
+    pub(super) fn rename_after(&self, account: u64) -> Option<u64> {
+        let db = self.0.db.lock().unwrap_or_else(|e| e.into_inner());
+        let renamed: Option<i64> = db.query_row("SELECT renamed FROM accounts WHERE id = ?1", params![account as i64], |r| r.get(0)).unwrap_or(None);
+        renamed.map(|t| t as u64 + NAME_HOLD).filter(|&at| at > now())
+    }
+
     pub(super) fn world_ids(&self) -> String {
         self.0.worlds.iter().map(|w| w.id.as_str()).collect::<Vec<_>>().join(", ")
     }
@@ -182,6 +227,7 @@ impl Directory {
         let (web, assets, data) = &*self.1;
         Router::new()
             .route("/api/me", get(me))
+            .route("/api/name", post(rename))
             .route("/api/signup", post(signup))
             .route("/api/signin", post(signin))
             .route("/api/signout", post(signout))
