@@ -105,10 +105,17 @@ ignores `*.db`).
 - **Sign-in:** the directory signs a token (Ed25519) naming you and your character. World
   servers started with `--directory-key` verify it offline. Guests are allowed only when a
   world is started without a directory key. The client sends the token only to the host it
-  started on, never to a portal destination on another host.
+  started on, never to a portal destination on another host; going through a portal it sends a
+  **ticket** instead (`vox-core::auth::Ticket`: one world, once, for a minute, with the arrival
+  point).
 - **Portals:** a level lists portals with a destination `url` (`":7781"` means the same host,
-  that port; `"/w/7781/ws"` a path). Walking through calls `WorldClient::travel`, which
-  reconnects to the destination. If it cannot be reached the client returns to the old world.
+  that port; `"/w/7781/ws"` a path). Walking into one, the client sends `Through`; the world
+  checks it's in the doorway (`vox-core::portal`), works out the arrival point, asks the
+  directory for a ticket (`POST /api/world/travel`) and answers `Travel { url, ticket, arrive }`.
+  The client then reconnects (`WorldClient::travel`) and says hello with the ticket; the world
+  there admits each ticket once and starts the player at its arrival point. Without a directory
+  (local play) the answer has no ticket. If the way can't be reached the client returns to the
+  old world.
 - **Worlds -> directory:** each world reports who is present once a minute (authority, raids,
   plots) over localhost with `VOX_WORLD_SECRET`. Those endpoints (`/api/world/*`) must not be
   exposed publicly; the tunnel config refuses them.
@@ -245,12 +252,14 @@ From the code review; none are regressions, but know they exist before relying o
 - The world server checks moves (`vox-core::moves`: a distance budget at flying speed with room
   for lag, fast falls allowed, the spawn always reachable) and sends `Correct` back when a move
   is impossible; `--trust-moves` turns this off for test and automation worlds (the control
-  page's `world:goto` teleports). Still taken on trust: the first position after joining,
-  because a portal's arrival point is set by the world you came from.
+  page's `world:goto` teleports). A signed-in player starts at their ticket's arrival point,
+  or at the spawn; guests (who get no tickets) and worlds without sign-in still take the first
+  position after joining on trust.
 - Sign-in hardening is in: Steam answers must be plain (no repeated `openid.*` keys) and signed
   over every field we read; password hashing runs at most four at a time; the relay limits shows
   and wrong codes per address (and wrong codes per show) and drops text from guests and viewers.
-  Not yet: a world's sign-in token is valid on any world (no audience in the token).
+  Not yet: the day-long sign-in token is valid on any world (no audience in it); portal trips
+  use tickets, which are good for one world only, once.
 - The avatar app's systems are plugins by pipeline (`app/plugins.rs`: `Setup`, `Frame`, `Motion`,
   `Network`, `WorldGlue`), not by folder: several chains run systems from different folders in
   a set order. Resources are built from the settings in `app/configure.rs`; `main()` is about

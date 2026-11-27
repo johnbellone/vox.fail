@@ -10,6 +10,10 @@ use vox_directory::{Config, Directory, WorldInfo, game};
 
 const SECRET: &str = "world-secret";
 
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -278,4 +282,47 @@ fn world_ids() {
     assert_eq!((w.id.as_str(), w.name.as_str(), w.url.as_str()), ("yard", "The Yard", "/w/7781/ws"));
     assert_eq!(WorldInfo::parse("The Void=:7780").unwrap().id, "void");
     assert!(WorldInfo::parse("nothing").is_none());
+}
+
+async fn travel(base: &str, secret: &str, body: Value) -> (u16, Value) {
+    let r = Client::new().post(format!("{base}/api/world/travel")).bearer_auth(secret).json(&body).send().await.unwrap();
+    (r.status().as_u16(), r.json().await.unwrap_or(Value::Null))
+}
+
+#[test]
+fn ways_into_worlds() {
+    assert_eq!(game::way(":7781").as_deref(), Some("7781"));
+    assert_eq!(game::way("/w/7781/ws").as_deref(), Some("7781"));
+    assert_eq!(game::way("wss://vox.fail/w/yard/ws").as_deref(), Some("yard"));
+    assert_eq!(game::way("ws://127.0.0.1:7781/ws").as_deref(), Some("7781"));
+    assert_eq!(game::way("ws://[::1]:7781/ws").as_deref(), Some("7781"));
+    assert_eq!(game::way("/yard/ws"), None);
+    assert_eq!(game::way("wss://vox.fail/ws"), None);
+}
+
+#[tokio::test]
+async fn tickets_for_portals() {
+    let (_d, base) = serve().await;
+    let ann = P::new(&base, "Ann").await;
+    let key = auth::key_from_seed([7; 32]).verifying_key();
+    let trip = |to: &str| json!({ "world": "void", "account": ann.id, "to": to, "arrive": [0.0, 0.0, 11.5] });
+    // a level's portal (":7781") and the directory's list ("/w/7781/ws") name the same world
+    let (st, v) = travel(&base, SECRET, trip(":7781")).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["world"], "yard");
+    assert_eq!(v["url"], "/w/7781/ws");
+    let t = auth::verify_ticket(v["ticket"].as_str().unwrap(), &key, "yard", now()).unwrap();
+    assert_eq!((t.claims.account, t.claims.name.as_str(), t.arrive), (ann.id, "Ann", [0.0, 0.0, 11.5]));
+    assert_eq!(t.claims.character.model, "models/blue.glb");
+    // good for the yard only
+    assert!(auth::verify_ticket(v["ticket"].as_str().unwrap(), &key, "void", now()).is_err());
+    // two tickets are two trips
+    let (_, w) = travel(&base, SECRET, trip("yard")).await;
+    let t2 = auth::verify_ticket(w["ticket"].as_str().unwrap(), &key, "yard", now()).unwrap();
+    assert_ne!(t.nonce, t2.nonce);
+    // only worlds ask; only to known worlds; only for real accounts and real places
+    assert_eq!(travel(&base, "guess", trip(":7781")).await.0, 401);
+    assert_eq!(travel(&base, SECRET, trip(":9999")).await.0, 404);
+    assert_eq!(travel(&base, SECRET, json!({ "world": "void", "account": 999_999, "to": ":7781", "arrive": [0, 0, 0] })).await.0, 400);
+    assert_ne!(travel(&base, SECRET, json!({ "world": "nowhere", "account": ann.id, "to": ":7781", "arrive": [0, 0, 0] })).await.0, 200);
 }

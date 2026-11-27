@@ -128,7 +128,22 @@ impl PortalDef {
 
     /// A point here (blocks) as the matching point on the other side, coming from `side`.
     pub fn carry(&self, p: Vec3, side: f32) -> Vec3 {
+        // the world server works out arrivals with vox-core's doorway; this must agree with it
         self.arrive + Quat::from_rotation_y(self.turn(side)) * (p - self.at)
+    }
+
+    /// The same doorway as vox-core sees it (what the world server checks).
+    pub fn door(&self) -> vox_core::portal::Door {
+        vox_core::portal::Door {
+            name: self.name.clone(),
+            at: self.at.to_array(),
+            along_x: self.along_x,
+            size: self.size.to_array(),
+            level: self.level.clone(),
+            url: self.url.clone(),
+            arrive: self.arrive.to_array(),
+            yaw: self.yaw,
+        }
     }
 
     /// Is `p` (blocks, feet) in the doorway's opening, sideways and up?
@@ -613,7 +628,7 @@ fn go(w: &mut WorldClient, def: &PortalDef, body: Vec3, side: f32) {
     let to = def.carry(body, side);
     let a = w.arrival(to.to_array(), def.turn(side));
     match &def.url {
-        Some(url) => w.travel(url, a),
+        Some(url) => w.through(&def.name, side, url, a),
         None => {
             w.arrive(a);
             w.notice(format!("Through to {}", def.name));
@@ -686,6 +701,26 @@ mod tests {
         assert_eq!(presence(5.0), 1.0);
         assert!(presence(20.0) > 0.3 && presence(20.0) < 0.9);
         assert!(presence(15.0) > presence(25.0));
+    }
+
+    #[test]
+    fn arrivals_agree_with_the_server() {
+        let s: Value = serde_json::from_str(
+            r#"{"portals": [{"name": "a", "at": [3, 1, -39.5], "axis": "z", "size": [8, 16], "level": "yard", "url": ":7781", "arrive": [0, 0, 11.5], "yaw": 30},
+                            {"name": "b", "at": [-7, 0, 2], "axis": "x", "size": [4, 6], "level": "sea", "url": ":7783", "arrive": [10, 2, -4], "yaw": -120}]}"#,
+        )
+        .unwrap();
+        let (here, core) = (parse(&s), vox_core::portal::parse(&s));
+        assert_eq!(here.len(), core.len());
+        for (d, c) in here.iter().zip(&core) {
+            assert_eq!(d.door(), *c);
+            for p in [Vec3::new(1.0, 0.5, -39.0), Vec3::new(-7.5, 0.0, 3.0), Vec3::new(4.0, 2.0, 0.0)] {
+                for side in [1.0, -1.0] {
+                    let (a, b) = (d.carry(p, side), Vec3::from(c.carry(p.to_array(), side)));
+                    assert!((a - b).length() < 1e-4, "{a} {b}");
+                }
+            }
+        }
     }
 
     #[test]

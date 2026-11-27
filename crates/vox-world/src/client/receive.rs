@@ -40,9 +40,14 @@ pub fn receive(
                     };
                     let avatar = postcard::to_stdvec(&hello).unwrap_or_default();
                     let name = w.name.clone();
-                    // a portal can lead to any host: the sign-in token only goes where you signed in
+                    // a portal can lead to any host: the sign-in token only goes where you signed
+                    // in; a ticket goes to the world it's for (it's good nowhere else), once
                     let here = w.url.as_deref().map(url_host);
-                    let token = if here == w.token_host { w.token.clone() } else { None };
+                    let token = match w.ticket.take() {
+                        Some(t) => Some(t),
+                        None if here == w.token_host => w.token.clone(),
+                        None => None,
+                    };
                     w.send(&ToServer::Hello { protocol: PROTOCOL, name, avatar, token });
                 } else {
                     w.ready = false;
@@ -223,6 +228,7 @@ pub fn receive(
                         w.status = if w.travel.is_some() { format!("Can't reach the world: {why}") } else { why };
                         w.ready = false;
                     }
+                    ToClient::Travel { url, ticket, arrive } => w.travelled(&url, ticket, arrive),
                     ToClient::Correct { at } => {
                         // the server says we can't have got here: back to where it last saw us
                         if at.iter().all(|v| v.is_finite()) {

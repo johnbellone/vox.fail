@@ -35,9 +35,15 @@ impl Moves {
         self.last
     }
 
+    /// Start them at `at` (time `now`, seconds): where a ticket says they arrive, or the spawn.
+    /// Their first reported position is then checked against it like any other move.
+    pub fn start(&mut self, at: [f32; 3], now: f64) {
+        self.accept(at, now);
+    }
+
     /// A reported position at time `now` (seconds). `Ok` if they could have got there; `Err`
-    /// with where they should be instead. The first position is taken as it is: a portal's
-    /// arrival point is set by the world you came from, which this server doesn't know.
+    /// with where they should be instead. Without [`Moves::start`], the first position is taken
+    /// as it is (a world with no sign-in, where a portal's arrival point isn't known).
     pub fn check(&mut self, to: [f32; 3], now: f64, block_size: f32, spawn: [f32; 3]) -> Result<(), [f32; 3]> {
         if !to.iter().all(|v| v.is_finite()) {
             return Err(self.last.unwrap_or(spawn));
