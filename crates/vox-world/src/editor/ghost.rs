@@ -734,11 +734,11 @@ mod tests {
 
     #[test]
     fn editor_prop_spot_snaps_to_5cm_inside_the_hit_cell() {
-        // 2.36 blocks is 23.6 units: 24 units, in cell 2; 7.02 blocks in cell 7 is 70 units
-        assert_eq!(prop_spot([2, -1, 7], [2.36, 7.02], 0), Some([24, 0, 70]));
-        // negative: -2.96 blocks is -29.6 units, which rounds to -30 in cell -3; -0.04 in cell -1
+        // 2.36 blocks is 11.8 units: 12 units, in cell 2; 7.02 blocks in cell 7 is 35.1: 35 units
+        assert_eq!(prop_spot([2, -1, 7], [2.36, 7.02], 0), Some([12, 0, 35]));
+        // negative: -2.96 blocks is -14.8 units, which rounds to -15 in cell -3; -0.04 in cell -1
         // rounds to 0 units, which is cell 0, so it is clamped to the cell's last unit, -1
-        assert_eq!(prop_spot([-3, 0, -1], [-2.96, -0.04], 10), Some([-30, 10, -1]));
+        assert_eq!(prop_spot([-3, 0, -1], [-2.96, -0.04], 10), Some([-15, 10, -1]));
         assert_eq!(prop_spot([0, 0, 0], [0.0, 0.0], 10), Some([0, 10, 0]));
         // no finite ground, no spot
         assert_eq!(prop_spot([0, 0, 0], [f32::NAN, 0.0], 10), None);
@@ -746,24 +746,29 @@ mod tests {
 
     #[test]
     fn editor_prop_spot_clamps_a_side_face_hit_into_its_own_cell() {
-        // a hit on the +x face of cell 4 is at exactly 5.0 blocks, which would round to unit 50,
-        // the first unit of cell 5; the same for z
-        assert_eq!(prop_spot([4, 0, 4], [5.0, 5.0], 10), Some([49, 10, 49]));
-        // and on the -x face of cell 4 it stays at 4.0 blocks, unit 40
-        assert_eq!(prop_spot([4, 0, 4], [4.0, 4.0], 10), Some([40, 10, 40]));
+        let u = PROP_UNITS_PER_BLOCK;
+        // a hit on the +x face of cell 4 is at exactly 5.0 blocks, which would round to the first
+        // unit of cell 5; the same for z
+        assert_eq!(prop_spot([4, 0, 4], [5.0, 5.0], 10), Some([5 * u - 1, 10, 5 * u - 1]));
+        // and on the -x face of cell 4 it stays at 4.0 blocks, its first unit
+        assert_eq!(prop_spot([4, 0, 4], [4.0, 4.0], 10), Some([4 * u, 10, 4 * u]));
     }
 
     #[test]
     fn editor_prop_spot_is_over_the_cell_it_stands_on() {
+        use vox_core::body::prop_base_cells;
         use vox_core::entity::prop_cell;
         // the at a hit gives must sit in the cell hit, one block up (on its top), as the rules
-        // and the footprint read it: prop_cell is where the prop's footprint starts
+        // and the footprint read it: prop_cell is the pivot's block, and a footprint cell covers
+        // the half-metre cell the pivot is in, so that block is among its blocks
         for (cell, ground) in [([4, 0, 4], [5.0, 4.3]), ([-3, 0, -1], [-3.0, -0.04]), ([0, 0, 0], [0.0, 0.0])] {
             let top = (cell[1] + 1) * PROP_UNITS_PER_BLOCK;
             let at = prop_spot(cell, ground, top).expect("a finite spot");
             let floor = [cell[0], cell[1] + 1, cell[2]];
             assert_eq!(prop_cell(at), floor, "at {at:?} for cell {cell:?}");
-            assert_eq!(prop_footprint_cells(at, 0, &[[0, 0]], 1), vec![floor]);
+            assert!(prop_footprint_cells(at, 0, &[[0, 0]], 1).contains(&floor), "at {at:?} for cell {cell:?}");
+            let base = prop_base_cells(at, 0, &[[0, 0]]);
+            assert!(base.contains(&floor) && base.iter().all(|c| c[1] == floor[1]), "{base:?}");
         }
     }
 

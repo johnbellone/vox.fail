@@ -11,6 +11,7 @@
 //! - [`relief`]: the shallow dips in natural ground, from a seed, the same on every machine.
 //! - [`portal`]: doorways to other places: where they are and where going through takes you.
 //! - [`entity`]: the things placed in a world beside its blocks (doorways, spawns, settings).
+//! - [`rescale`]: converting a world saved at half-metre blocks to quarter-metre ones.
 //! - [`predict`]: a player's view of the world: confirmed blocks plus their own edits that
 //!   the server hasn't answered yet.
 //!
@@ -30,6 +31,7 @@ pub mod predict;
 pub mod terrain;
 pub mod ray;
 pub mod relief;
+pub mod rescale;
 pub mod weather;
 pub mod wire;
 pub mod world;

@@ -4,10 +4,12 @@
 //! { "name": "yard", "boxes": [ { "block": "grass", "from": [-20, -1, -20], "to": [20, -1, 20] } ],
 //!   "blocks": [ [0, 0, 0, "stone"] ] }
 //! ```
-//! Later boxes overwrite earlier ones; `"air"` clears.
+//! Later boxes overwrite earlier ones; `"air"` clears. A level may give its world's size,
+//! `"bounds": {"lo": [x, y, z], "hi": [x, y, z]}` (hi exclusive), else the world takes
+//! [`Bounds::default`].
 
 use crate::entity::{Axis, Component, Dest, Objective, Portal, Settings};
-use crate::world::{Cell, World};
+use crate::world::{Bounds, Cell, World};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -28,6 +30,9 @@ struct LevelBox {
     /// only the outside of the box (walls, a hollow tree crown)
     #[serde(default)]
     hollow: bool,
+    /// how many blocks thick a hollow box's shell is (at least 1)
+    #[serde(default)]
+    thick: Option<u8>,
     /// a rounded box (a tree crown, a bush): corners further than this from the centre, in
     /// half-sizes, are left out
     #[serde(default)]
@@ -115,6 +120,28 @@ fn vec3(v: &Value, k: &str) -> Option<[f32; 3]> {
     p.iter().all(|c| c.is_finite()).then_some(p)
 }
 
+/// The longest a box may be corner to corner, in blocks (200 m).
+const MAX_BOX: f32 = crate::in_blocks(200.0);
+/// A level's bounds may reach this far from 0 along x and z, in blocks (about 4,000 km: the
+/// numbers stay far from overflowing), and span at most [`MAX_HEIGHT`] up.
+const MAX_REACH: i32 = 1 << 24;
+const MAX_HEIGHT: i32 = 4096;
+
+/// The size a level gives its world (`"bounds"`), if it gives a sensible one: each `lo` below
+/// its `hi`, within [`MAX_REACH`] of 0, and no taller than [`MAX_HEIGHT`].
+pub fn bounds(text: &str) -> Option<Bounds> {
+    let v: Value = serde_json::from_str(text).ok()?;
+    let b = v.get("bounds")?;
+    let cell = |k: &str| -> Option<Cell> {
+        let a = b.get(k)?.as_array()?;
+        let n = |i: usize| a.get(i)?.as_i64().and_then(|n| i32::try_from(n).ok()).filter(|n| n.abs() <= MAX_REACH);
+        Some([n(0)?, n(1)?, n(2)?])
+    };
+    let (lo, hi) = (cell("lo")?, cell("hi")?);
+    let ok = (0..3).all(|i| lo[i] < hi[i]) && hi[1] - lo[1] <= MAX_HEIGHT;
+    ok.then_some(Bounds { lo, hi })
+}
+
 /// A level's blocks: position -> id, where id is the index in `names` plus one.
 pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> {
     let f: LevelFile = serde_json::from_str(text).map_err(|e| e.to_string())?;
@@ -142,7 +169,7 @@ pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> 
         let lo: [i32; 3] = std::array::from_fn(|i| bx.from[i].min(bx.to[i]));
         let hi: [i32; 3] = std::array::from_fn(|i| bx.from[i].max(bx.to[i]));
         let size: [f32; 3] = std::array::from_fn(|i| (hi[i] - lo[i]) as f32);
-        if (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() > 400.0 {
+        if (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() > MAX_BOX {
             return Err(format!("a {} box is too big", bx.block));
         }
         let centre: [f32; 3] = std::array::from_fn(|i| (lo[i] + hi[i]) as f32 * 0.5);
@@ -151,7 +178,8 @@ pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> 
             for y in lo[1]..=hi[1] {
                 for z in lo[2]..=hi[2] {
                     let p = [x, y, z];
-                    let inside = (0..3).all(|i| p[i] > lo[i] && p[i] < hi[i]);
+                    let t = i32::from(bx.thick.unwrap_or(1).max(1));
+                    let inside = (0..3).all(|i| p[i] >= lo[i] + t && p[i] <= hi[i] - t);
                     if bx.hollow && inside {
                         continue;
                     }
@@ -218,6 +246,33 @@ mod tests {
     }
 
     #[test]
+    fn a_thick_hollow_box_keeps_a_shell_that_thick() {
+        let text = r#"{"boxes": [{ "block": "stone", "from": [0, 0, 0], "to": [5, 5, 5], "hollow": true, "thick": 2 }]}"#;
+        let c = load(text, &names()).unwrap();
+        assert_eq!(c.get(&[1, 1, 1]), Some(&2), "the shell's inner layer");
+        assert_eq!(c.get(&[2, 2, 2]), None, "the middle");
+        assert_eq!(c.get(&[3, 3, 3]), None, "the middle");
+        assert_eq!(c.get(&[4, 4, 4]), Some(&2), "the shell's inner layer, far side");
+        assert_eq!(c.len(), 6 * 6 * 6 - 2 * 2 * 2);
+    }
+
+    #[test]
+    fn a_level_may_give_its_bounds() {
+        let b = bounds(r#"{"bounds": {"lo": [-100, -8, -50], "hi": [100, 40, 50]}}"#).unwrap();
+        assert_eq!((b.lo, b.hi), ([-100, -8, -50], [100, 40, 50]));
+        assert_eq!(bounds(r#"{"boxes": []}"#), None, "none given: the default");
+        for bad in [
+            r#"{"bounds": {"lo": [10, 0, 0], "hi": [10, 5, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0, 0], "hi": [5, 5000, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0, 0], "hi": [99999999, 5, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0], "hi": [5, 5, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0, 0.5], "hi": [5, 5, 5]}}"#,
+        ] {
+            assert_eq!(bounds(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn world_settings() {
         assert_eq!(settings(r#"{"world":{"sky":"void"},"boxes":[]}"#), r#"{"sky":"void"}"#);
         assert_eq!(settings(r#"{"boxes":[]}"#), "{}");
@@ -227,7 +282,7 @@ mod tests {
     #[test]
     fn errors() {
         assert!(load(r#"{"boxes":[{"block":"lava","from":[0,0,0],"to":[0,0,0]}]}"#, &names()).is_err());
-        assert!(load(r#"{"boxes":[{"block":"stone","from":[0,0,0],"to":[500,0,0]}]}"#, &names()).is_err());
+        assert!(load(r#"{"boxes":[{"block":"stone","from":[0,0,0],"to":[900,0,0]}]}"#, &names()).is_err());
         assert!(load("not json", &names()).is_err());
     }
 
@@ -246,27 +301,30 @@ mod tests {
         let (w, names, text, n) = load_level("void");
         // a flat, nearly empty space: the floor is endless (not blocks), you arrive on it with
         // nothing overhead, and the pillars of the Circle glow at the top
-        assert!(n > 500 && n < 50_000, "{n}");
-        assert_eq!(w.ground(0, 0, 95), None);
+        assert!(n > 4_000 && n < 400_000, "{n}");
+        assert_eq!(w.ground(0, 0, 191), None);
+        // 25.6 km across, so there is room to build
+        let b = bounds(&text).expect("the void gives its bounds");
+        assert_eq!((b.lo[0], b.hi[0], b.lo[2], b.hi[2]), (-51_200, 51_200, -51_200, 51_200));
         let s: serde_json::Value = serde_json::from_str(&settings(&text)).unwrap();
         assert_eq!(s["sky"], "void");
         assert_eq!(s["floor"], 0);
         assert_eq!(s["cameras"][0]["name"], "gate");
         let lumen = names.iter().position(|n| n == "lumen").unwrap() as u16 + 1;
-        assert_eq!(w.get([22, 14, 0]), lumen);
+        assert_eq!(w.get([44, 28, 0]), lumen);
     }
 
     #[test]
     fn the_islands_load() {
         let (w, names, text, n) = load_level("islands");
-        assert!(n > 300_000, "{n}");
+        assert!(n > 2_400_000, "{n}");
         // you arrive standing on the plaza, with nothing overhead
-        assert_eq!(w.ground(0, 0, 95), Some(0));
+        assert_eq!(w.ground(0, 0, 191), Some(0));
         let fire = names.iter().position(|n| n == "fire").unwrap() as u16 + 1;
         assert!(w.keys().len() > 100);
         assert!(settings(&text).contains("islands"));
         // braziers burn round the plaza
-        assert_eq!(w.get([13, 4, 13]), fire);
+        assert_eq!(w.get([26, 8, 26]), fire);
     }
 
     #[test]
@@ -280,7 +338,7 @@ mod tests {
         assert!(n > 1000, "{n}");
         assert_eq!(w.count(), n);
         // the character stands at the origin, on the ground
-        assert_eq!(w.ground(0, 0, 20), Some(0));
+        assert_eq!(w.ground(0, 0, 40), Some(0));
     }
 
     fn entities_of(path: &str) -> Vec<Component> {
@@ -329,7 +387,7 @@ mod tests {
         });
         let objective = objective.expect("an objective");
         assert_eq!(objective.name, "the altar");
-        assert_eq!(objective.radius, 3.0);
+        assert_eq!(objective.radius, 6.0);
         assert!(all.iter().any(|c| matches!(c, Component::Portal(_))));
     }
 

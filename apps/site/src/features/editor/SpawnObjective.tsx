@@ -13,6 +13,7 @@ import { EditNotice, type Submit, useAdoptSaved, useEditFollow } from "./follow"
 import {
   createEntity,
   type Edits,
+  MAX_RADIUS,
   objectiveFormOf,
   objectiveOf,
   type ObjectiveForm,
@@ -221,7 +222,7 @@ export function ObjectivePanel({ row, spot, edits, submit, retry, forget, onClos
       />
       <PositionFields at={form.at} spot={spot} disabled={follow.busy} onChange={(at) => setForm({ ...form, at })} />
       <TextInput
-        label="Radius (blocks, more than 0, at most 256)"
+        label={`Radius (blocks, more than 0, at most ${MAX_RADIUS})`}
         inputMode="decimal"
         value={form.radius}
         disabled={follow.busy}

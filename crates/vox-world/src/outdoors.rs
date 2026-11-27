@@ -439,7 +439,8 @@ fn void_at(hours: f32) -> SkyLook {
         key: Vec3::new(0.25, 0.92, 0.3).normalize(),
         night: 0.0,
         ambient: 1400.0,
-        visibility: 130.0,
+        // far enough to see builds across the floor (it was 130 m, a wall of white close by)
+        visibility: 450.0,
         moons: [Some(pale), Some(rose), Some(blue)],
     }
 }
@@ -666,7 +667,8 @@ fn bake_fog_rows(wx: &Weather, style: Style, detail: &[f32], t: f32, centre: Vec
                 let height = (p.y - wx.climate.ground).max(0.0);
                 let mut beta = 0.11 * lwc.max(0.0).powf(0.88) + 0.02 * smooth(0.82, 1.0, rh);
                 if style == Style::Void {
-                    beta += 0.008 + 0.02 * (-height / 6.0).exp();
+                    // a thin glow everywhere (about 1 km to see through) and thicker along the floor
+                    beta += 0.003 + 0.012 * (-height / 6.0).exp();
                 }
                 // the detail, in its own repeating texels, carried along by the wind
                 let dx = ((p.x - wind[0] * t - wx.origin[0]) / period[0]).rem_euclid(1.0) * VOL[0] as f32;
@@ -1493,7 +1495,8 @@ mod tests {
         // brightest at eye level, nothing dark anywhere
         assert!(sky_colour(&v, Vec3::X).length() > sky_colour(&v, Vec3::Y).length());
         assert_eq!(v.night, 0.0);
-        assert!(v.visibility < 200.0);
+        // hazy, not clear: far enough to see builds, short of the earth's clear day
+        assert!(v.visibility > 300.0 && v.visibility < sky_at(Style::Earth, 12.0).visibility, "{}", v.visibility);
         assert!(v.moons[0].unwrap().radius > v.moons[1].unwrap().radius && v.moons[1].unwrap().radius > v.moons[2].unwrap().radius);
         assert_ne!(sky_at(Style::Void, 3.0).moons[0].unwrap().dir, v.moons[0].unwrap().dir);
         assert_eq!(Style::parse("void"), Style::Void);

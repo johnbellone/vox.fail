@@ -6,7 +6,7 @@ import { Alert, Button, Group, Paper, Select, Stack, Text, TextInput } from "@ma
 import { useEffect, useState } from "react";
 import type { Command } from "../../game/editor";
 import type { Submit } from "./follow";
-import { createEntity, type Edits, newPropAt, type PropForm, type PropSpot, propOf, retryCommand } from "./state";
+import { createEntity, type Edits, newPropAt, type PropForm, type PropSpot, propOf, retryCommand, UNITS_PER_BLOCK } from "./state";
 
 /** The codes a look or a state can take (0 to 7), as select options. */
 const CODES = ["0", "1", "2", "3", "4", "5", "6", "7"].map((c) => ({ value: c, label: c }));
@@ -64,7 +64,7 @@ export function PlaceProp({ spot, name, advanced, edits, submit, retry, forget, 
         </Group>
         <Text fz="sm">{name}</Text>
         <Text fz="xs" c="moon.5">
-          At {spot.at.map((v) => v / 10).join(", ")} blocks, turned {spot.yaw * 15}°.
+          At {spot.at.map((v) => v / UNITS_PER_BLOCK).join(", ")} blocks, turned {spot.yaw * 15}°.
         </Text>
         <Group grow gap="xs">
           <Select

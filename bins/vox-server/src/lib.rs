@@ -21,6 +21,7 @@ mod connection;
 mod entities;
 pub mod flags;
 mod props;
+mod rescale;
 mod snapshot;
 mod world;
 #[allow(unused_imports)]

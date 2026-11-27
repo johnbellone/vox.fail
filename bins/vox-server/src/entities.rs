@@ -322,7 +322,7 @@ pub(crate) fn position(c: &Component) -> Option<[f32; 3]> {
 }
 
 /// The zone an entity lies in, by its position (a settings entity has none: zone 0, 0).
-fn zone_of(c: &Component) -> (i32, i32) {
+pub(crate) fn zone_of(c: &Component) -> (i32, i32) {
     position(c).map_or((0, 0), zone_at)
 }
 

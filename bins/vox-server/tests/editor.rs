@@ -128,13 +128,13 @@ async fn editor_join_yard() {
             _ => None,
         })
         .expect("no void doorway");
-    assert_eq!(portal.to, Dest::Url { url: ":7780".into(), arrive: [0.0, 0.0, -39.5] });
+    assert_eq!(portal.to, Dest::Url { url: ":7780".into(), arrive: [0.0, 0.0, -79.0] });
     assert!(all.iter().any(|c| matches!(c.component, Some(Component::Spawn(_)))));
     assert!(all.iter().any(|c| matches!(c.component, Some(Component::Settings(_)))));
 
     // standing in the doorway and going through still answers with the yard's way on
     let send = |m: ToServer| Message::Binary(wire::encode(&m).into());
-    ws.send(send(ToServer::Pose { at: [0.0, 0.0, 11.5], blob: vec![] })).await.unwrap();
+    ws.send(send(ToServer::Pose { at: [0.0, 0.0, 23.0], blob: vec![] })).await.unwrap();
     ws.send(send(ToServer::Through { portal: "void".into(), side: 1 })).await.unwrap();
     let travel = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -147,5 +147,5 @@ async fn editor_join_yard() {
     })
     .await
     .expect("no way through");
-    assert_eq!(travel, (":7780".to_string(), None, [0.0, 0.0, -39.5]));
+    assert_eq!(travel, (":7780".to_string(), None, [0.0, 0.0, -79.0]));
 }

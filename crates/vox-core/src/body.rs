@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::entity::{PROP_YAWS, prop_cell};
+use crate::entity::{PROP_CELL_BLOCKS, PROP_UNITS_PER_CELL, PROP_YAWS, prop_cell};
 use crate::world::Cell;
 
 use crate::in_blocks;
@@ -165,25 +165,64 @@ impl Occupancy {
     }
 }
 
-/// The cells one prop blocks: its footprint (0.5 m cells, relative to the pivot's floor cell
-/// [`prop_cell`] of `at`), turned by `yaw` to the nearest quarter turn, and `height` blocks up
-/// from the floor. A quarter turn maps the cell (x, z) to (z, -x), the same turn as a rotation
-/// of +90 degrees about +y. Cells that would overflow are left out (positions come from the
-/// network).
+/// A prop's yaw (15 degree steps) to the nearest quarter turn; a half turn rounds up.
+fn quarter_turns(yaw: u8) -> i32 {
+    (((yaw % PROP_YAWS) as i32 + 3) / 6) % 4
+}
+
+/// `(x, z)` turned by `turns` quarter turns: each maps (x, z) to (z, -x), the same turn as a
+/// rotation of +90 degrees about +y.
+fn turned(x: i32, z: i32, turns: i32) -> (i32, i32) {
+    (0..turns).fold((x, z), |(x, z), _| (z, -x))
+}
+
+/// The cells one prop blocks: its footprint, turned by `yaw` to the nearest quarter turn, and
+/// `height` up from the block the pivot `at` is in ([`prop_cell`]).
+///
+/// The footprint and height are in a prop's half-metre cells (`vox-art` draws props on that
+/// grid; see [`PROP_CELL_BLOCKS`]). The footprint is relative to the half-metre cell the pivot
+/// is in, so a prop covers the same ground at any block size; each of its cells covers
+/// [`PROP_CELL_BLOCKS`] × [`PROP_CELL_BLOCKS`] blocks, and its height that many blocks for each
+/// half-metre. Cells that would overflow are left out (positions come from the network).
 pub fn prop_footprint_cells(at: [i32; 3], yaw: u8, footprint: &[[i16; 2]], height: u8) -> Vec<Cell> {
-    let floor = prop_cell(at);
-    // round to the nearest quarter turn (6 steps of 15 degrees); a half turn rounds up
-    let turns = (((yaw % PROP_YAWS) as i32 + 3) / 6) % 4;
-    let mut out = Vec::with_capacity(footprint.len() * height as usize);
+    prop_layers(at, yaw, footprint, i32::from(height) * PROP_CELL_BLOCKS)
+}
+
+/// The blocks a prop's footprint covers in the layer its pivot stands in: what it rests on is
+/// the layer below these, what it hangs from the layer above its top.
+pub fn prop_base_cells(at: [i32; 3], yaw: u8, footprint: &[[i16; 2]]) -> Vec<Cell> {
+    prop_layers(at, yaw, footprint, 1)
+}
+
+/// The block just behind the pivot's block, turned with the prop: a wall prop's pivot is its
+/// back, so this is the wall.
+pub fn prop_behind_cell(at: [i32; 3], yaw: u8) -> Option<Cell> {
+    let pivot = prop_cell(at);
+    let (x, z) = turned(0, 1, quarter_turns(yaw));
+    Some([pivot[0].checked_add(x)?, pivot[1], pivot[2].checked_add(z)?])
+}
+
+/// The footprint's blocks in `layers` layers up from the pivot's block.
+fn prop_layers(at: [i32; 3], yaw: u8, footprint: &[[i16; 2]], layers: i32) -> Vec<Cell> {
+    let floor = prop_cell(at)[1];
+    // the half-metre cell the pivot is in, along x and z
+    let (hx, hz) = (at[0].div_euclid(PROP_UNITS_PER_CELL), at[2].div_euclid(PROP_UNITS_PER_CELL));
+    let turns = quarter_turns(yaw);
+    let n = PROP_CELL_BLOCKS;
+    let mut out = Vec::with_capacity(footprint.len() * (n * n * layers.max(0)) as usize);
     for &[dx, dz] in footprint {
-        let (mut x, mut z) = (i32::from(dx), i32::from(dz));
-        for _ in 0..turns {
-            (x, z) = (z, -x);
-        }
-        let (Some(cx), Some(cz)) = (floor[0].checked_add(x), floor[2].checked_add(z)) else { continue };
-        for k in 0..i32::from(height) {
-            let Some(cy) = floor[1].checked_add(k) else { break };
-            out.push([cx, cy, cz]);
+        let (x, z) = turned(i32::from(dx), i32::from(dz), turns);
+        // the cell's first block along x and z
+        let corner = |h: i32, d: i32| h.checked_add(d)?.checked_mul(n);
+        let (Some(bx), Some(bz)) = (corner(hx, x), corner(hz, z)) else { continue };
+        for k in 0..layers {
+            let Some(cy) = floor.checked_add(k) else { break };
+            for i in 0..n {
+                for j in 0..n {
+                    let (Some(cx), Some(cz)) = (bx.checked_add(i), bz.checked_add(j)) else { continue };
+                    out.push([cx, cy, cz]);
+                }
+            }
         }
     }
     out
@@ -199,6 +238,20 @@ mod tests {
     use super::*;
     use crate::world::{Bounds, World};
 
+    /// The blocks of the half-metre cell (`cx`, `cz`) for `height` half-metres up from layer 0.
+    fn cell_blocks(cx: i32, cz: i32, height: i32) -> Vec<Cell> {
+        let n = PROP_CELL_BLOCKS;
+        let mut out = Vec::new();
+        for y in 0..height * n {
+            for x in cx * n..(cx + 1) * n {
+                for z in cz * n..(cz + 1) * n {
+                    out.push([x, y, z]);
+                }
+            }
+        }
+        out
+    }
+
     #[test]
     fn prop_cells_turn_with_yaw() {
         let fp = [[0, 0], [1, 0]];
@@ -207,31 +260,39 @@ mod tests {
             o.add_prop([0, 0, 0], yaw, &fp, 2);
             o
         };
+        // each half-metre cell is PROP_CELL_BLOCKS blocks square and, per half-metre of height,
+        // PROP_CELL_BLOCKS blocks tall
+        let per_cell = (PROP_CELL_BLOCKS * PROP_CELL_BLOCKS * 2 * PROP_CELL_BLOCKS) as usize;
         let flat = cells(0);
-        assert_eq!(flat.len(), 4);
-        for c in [[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0]] {
+        assert_eq!(flat.len(), 2 * per_cell);
+        for c in cell_blocks(0, 0, 2).into_iter().chain(cell_blocks(1, 0, 2)) {
             assert!(flat.contains(c), "{c:?}");
         }
         // 6 steps of 15 degrees is a quarter turn: the cell at (1, 0) moves to (0, -1)
         let quarter = cells(6);
-        assert_eq!(quarter.len(), 4);
-        for c in [[0, 0, 0], [0, 1, 0], [0, 0, -1], [0, 1, -1]] {
+        assert_eq!(quarter.len(), 2 * per_cell);
+        for c in cell_blocks(0, 0, 2).into_iter().chain(cell_blocks(0, -1, 2)) {
             assert!(quarter.contains(c), "{c:?}");
         }
-        assert!(!quarter.contains([1, 0, 0]));
+        for c in cell_blocks(1, 0, 2) {
+            assert!(!quarter.contains(c), "{c:?}");
+        }
     }
 
     #[test]
     fn body_stops_against_a_prop_cell() {
         let mut props = Occupancy::default();
-        // a prop whose footprint is the cell at [1, 0, 0]: at 5 cm units, x = 10 is block 1
-        props.add_prop([10, 0, 0], 0, &[[0, 0]], 2);
+        // a prop whose footprint is the half-metre cell one over from the origin's: its blocks
+        // start PROP_CELL_BLOCKS blocks along x
+        props.add_prop([PROP_UNITS_PER_CELL, 0, 0], 0, &[[0, 0]], 2);
+        let face = PROP_CELL_BLOCKS as f32;
         let none = |_: Cell| false;
         let solid = with_props(none, &props);
-        let mut b = Body { pos: [0.5, 0.0, 0.5], half: 0.3, height: 3.6 };
+        let mut b = Body { pos: [0.5, 0.0, 0.5], half: PLAYER_HALF, height: PLAYER_HEIGHT };
         let c = b.travel(&solid, [3.0, 0.0, 0.0], 0.0);
         assert!(c.hit[0], "{c:?}");
-        assert!(b.pos[0] > 0.65 && b.pos[0] < 0.7, "{:?}", b.pos);
+        let stop = face - PLAYER_HALF;
+        assert!(b.pos[0] > stop - 0.05 && b.pos[0] < stop + 0.01, "{:?}", b.pos);
     }
 
     fn world() -> World {

@@ -128,8 +128,15 @@ pub const MAX_PROP_TEXT: usize = 140;
 pub const PROP_YAWS: u8 = 24;
 /// Largest variant or state number a prop may carry.
 pub const MAX_PROP_CODE: u8 = 7;
-/// Five-centimetre units in one 0.5 m block.
-pub const PROP_UNITS_PER_BLOCK: i32 = 10;
+/// A prop's position is in units of this many metres (5 cm).
+pub const PROP_UNIT_M: f32 = 0.05;
+/// Five-centimetre units in one block.
+pub const PROP_UNITS_PER_BLOCK: i32 = (crate::BLOCK_M / PROP_UNIT_M + 0.5) as i32;
+/// Props are drawn on a half-metre grid (`vox-art`): their footprints list half-metre cells
+/// and their heights count half-metres. One such cell is this many blocks along each side.
+pub const PROP_CELL_BLOCKS: i32 = crate::whole_blocks(0.5);
+/// Five-centimetre units along one side of a prop's half-metre cell.
+pub const PROP_UNITS_PER_CELL: i32 = PROP_UNITS_PER_BLOCK * PROP_CELL_BLOCKS;
 
 /// A prop placed in a world: a catalogue prop (or a player's own) at a position. Its shape,
 /// footprint and behaviour come from its definition, which the server looks up by `prop`.
@@ -159,8 +166,8 @@ impl Prop {
 }
 
 /// The block a prop's position falls in. It is floored, so a negative position lands in the
-/// block below it: -1 is block -1, -10 is block -1, -11 is block -2. Dividing by the constant
-/// ten cannot overflow.
+/// block below it: -1 is block -1, -5 is block -1, -6 is block -2. Dividing by a constant
+/// cannot overflow.
 pub fn prop_cell(at: [i32; 3]) -> [i32; 3] {
     at.map(|c| c.div_euclid(PROP_UNITS_PER_BLOCK))
 }
@@ -570,10 +577,11 @@ mod tests {
 
     #[test]
     fn prop_cell_floors_negative_positions() {
-        assert_eq!(prop_cell([0, 9, 10]), [0, 0, 1]);
-        assert_eq!(prop_cell([-1, -10, -11]), [-1, -1, -2]);
-        assert_eq!(prop_cell([19, 20, -20]), [1, 2, -2]);
-        assert_eq!(prop_cell([i32::MIN, i32::MAX, 0]), [i32::MIN / 10 - 1, i32::MAX / 10, 0]);
+        assert_eq!(PROP_UNITS_PER_BLOCK, 5);
+        assert_eq!(prop_cell([0, 4, 5]), [0, 0, 1]);
+        assert_eq!(prop_cell([-1, -5, -6]), [-1, -1, -2]);
+        assert_eq!(prop_cell([9, 10, -10]), [1, 2, -2]);
+        assert_eq!(prop_cell([i32::MIN, i32::MAX, 0]), [i32::MIN / 5 - 1, i32::MAX / 5, 0]);
     }
 
     #[test]

@@ -407,7 +407,8 @@ mod tests {
 
     #[test]
     fn editor_gizmo_snap_prop_move_uses_five_centimetre_units() {
-        assert_eq!(snap_prop_move([1.23, -0.04], 25), Some([12, 25, 0]));
+        // 1.23 blocks is 6.15 units, -0.04 blocks is -0.2 units
+        assert_eq!(snap_prop_move([1.23, -0.04], 25), Some([6, 25, 0]));
         assert_eq!(snap_prop_move([f32::NAN, 0.0], 25), None);
     }
 
@@ -520,21 +521,23 @@ mod tests {
 
     #[test]
     fn editor_gizmo_prop_move_and_turn_drags() {
-        // a prop at block (-3, 2, 4): (-30, 25, 40) in units, its ground at y 2.5 blocks
-        let p = prop([-30, 25, 40], 0);
-        // the ground point (-2.5, 4.2) snaps to units (-25, 42), height kept
-        let moved = drag_to(Handle::Move, &p, 0.0, [-2.5, 9.0, 4.2], [0.0, -1.0, 0.0]);
-        assert_eq!(moved, Some(prop([-25, 25, 42], 0)));
+        // a prop at block (-3, 2, 4), its ground at the top of block 1
+        let u = vox_core::entity::PROP_UNITS_PER_BLOCK;
+        let at = [-3 * u, 2 * u, 4 * u];
+        let p = prop(at, 0);
+        // the ground point (-2.4, 4.2) snaps to units (-12, 21), height kept
+        let moved = drag_to(Handle::Move, &p, 0.0, [-2.4, 9.0, 4.2], [0.0, -1.0, 0.0]);
+        assert_eq!(moved, Some(prop([-12, at[1], 21], 0)));
         // a clockwise swing (seen from above) of one ring step, 15 degrees from the start angle 0,
         // turns the prop clockwise: yaw goes down, since +yaw is counter-clockwise
         let step = TAU / 24.0;
-        let ring = [-3.0 + PROP_RING * step.cos(), 2.5, 4.0 + PROP_RING * step.sin()];
+        let ring = [-3.0 + PROP_RING * step.cos(), 2.0, 4.0 + PROP_RING * step.sin()];
         let turned = drag_to(Handle::Turn, &p, 0.0, [ring[0], 9.0, ring[2]], [0.0, -1.0, 0.0]);
-        assert_eq!(turned, Some(prop([-30, 25, 40], 23)));
+        assert_eq!(turned, Some(prop(at, 23)));
         // and a counter-clockwise swing turns it counter-clockwise: yaw goes up
-        let ccw = [-3.0 + PROP_RING * step.cos(), 2.5, 4.0 - PROP_RING * step.sin()];
+        let ccw = [-3.0 + PROP_RING * step.cos(), 2.0, 4.0 - PROP_RING * step.sin()];
         let turned = drag_to(Handle::Turn, &p, 0.0, [ccw[0], 9.0, ccw[2]], [0.0, -1.0, 0.0]);
-        assert_eq!(turned, Some(prop([-30, 25, 40], 1)));
+        assert_eq!(turned, Some(prop(at, 1)));
     }
 
     #[test]

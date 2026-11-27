@@ -65,6 +65,26 @@ behind a schema version:
 4. Litestream has the pre-migration copy in R2. The migration refuses to run twice, and logs
    what it changed.
 
+## As built
+
+- `vox_core::BLOCK_M` and `in_blocks` hold the scale; the palette, the protocol (10) and relief
+  (version 2: the same ground) changed with it. Atlas tiles are 1,024 blocks (still 256 m).
+- Props are unchanged on disk: positions were already 5 cm units, and footprints stay
+  half-metre cells, each covering 2 × 2 blocks (`PROP_CELL_BLOCKS`).
+- Levels: the builders still draw in half-metre units and write through
+  `tools/assets/rescale_level.py`; the yard, the Crypt and the block showcase were converted
+  once. Hollow boxes keep their walls' thickness (`thick`). A level may give `bounds`.
+- The Void: ±51,200 blocks across, -64 to 384 high; sky visibility 450 m, the luminous weather
+  just short of saturated, and a thinner fog volume.
+- Live data: `vox_core::rescale` holds the rules; `vox-server` converts a world on its first
+  start (`bins/vox-server/src/rescale.rs`, meta `block_m`), and `vox-directory` its plots,
+  portals, last-seen places, spawns, deeds and keys (`bins/vox-directory/src/rescale.rs`,
+  counter `block_scale`). Both run once, in one transaction. Edit logs from before the change
+  are emptied; snapshots from before it are converted when restored.
+- Not converted: a world-graph node keeps its size and recipe (a recipe is drawn one voxel per
+  block, so it now builds at half the size in metres), and structure blobs (stored by hash
+  outside the databases) keep half-metre blocks. Neither is in use on vox.fail yet.
+
 ## Risks
 
 - **Eight times the blocks for the same space.** A world sends every chunk when you join

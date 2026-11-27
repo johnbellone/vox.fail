@@ -94,8 +94,9 @@ impl Climate {
             "haze" => Climate { humidity: 0.78, wind_speed: 1.5, gusts: 0.2, heating: 2.5, ..base },
             "mist" => Climate { humidity: 0.97, wind_speed: 1.5, gusts: 0.25, heating: 0.5, wetness: 0.8, temperature: 11.0, ..base },
             "fog" => Climate { humidity: 1.04, wind_speed: 1.2, gusts: 0.2, heating: -0.5, wetness: 1.0, temperature: 9.0, ..base },
+            // just short of saturated: a bright haze to see a long way through, not a fog bank
             "luminous" => {
-                Climate { humidity: 1.03, wind_speed: 1.6, gusts: 0.5, heating: 0.4, wetness: 1.0, temperature: 12.0, ..base }
+                Climate { humidity: 0.98, wind_speed: 1.6, gusts: 0.5, heating: 0.4, wetness: 1.0, temperature: 12.0, ..base }
             }
             "rain" => Climate { humidity: 1.08, wind_speed: 5.0, gusts: 0.5, heating: 1.0, wetness: 1.0, temperature: 13.0, ..base },
             "storm" => Climate { humidity: 1.25, wind_speed: 13.0, gusts: 0.9, heating: 4.0, wetness: 1.0, temperature: 17.0, ..base },
@@ -848,10 +849,10 @@ mod tests {
         w.step(600.0);
         let s = w.summary();
         assert!(s[4] > 1.0, "rain reaches the ground: {s:?}");
-        // the void's luminous fog stands still: no rain
+        // the void's luminous haze: humid, but no fog bank and no rain
         let mut l = small(Climate::preset("luminous", 0.0).unwrap());
         l.step(600.0);
-        assert!(l.summary()[2] > 0.05 && l.summary()[4] < 0.1, "{:?}", l.summary());
+        assert!(l.summary()[1] > 0.9 && l.summary()[2] < 0.05 && l.summary()[4] < 0.1, "{:?}", l.summary());
         assert!(s.iter().all(|v| v.is_finite()));
     }
 

@@ -35,9 +35,21 @@ impl WorldState {
                  account INTEGER, x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL, old INTEGER NOT NULL, new INTEGER NOT NULL);",
         )
         .map_err(e)?;
+        // a level may give its world's size (the Void is far bigger than the rest); read from the
+        // level at every start, so a change to the level file reaches a world already made
+        if cfg.tile.is_none()
+            && let Some(b) = cfg.seed.as_deref().and_then(vox_core::level::bounds)
+        {
+            cfg.bounds = b;
+        }
         // a log from before accounts were recorded gets the column (the table is kept as it is)
         crate::entities::ensure_account_column(&db, "edits")?;
         crate::entities::create_tables(&db)?;
+        // a world saved at half-metre blocks is converted once, before anything reads it
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Some(what) = crate::rescale::migrate(&db, now)? {
+            eprintln!("{}: {what}", cfg.name);
+        }
         let meta = |k: &str| -> Option<String> {
             db.query_row("SELECT value FROM meta WHERE key = ?1", [k], |r| r.get(0)).ok()
         };
