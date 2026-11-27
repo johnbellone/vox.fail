@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use super::*;
 use crate::entities::{self, Entities};
-use vox_core::entity::{Component, Dest, Settings, Spawn};
+use vox_core::entity::{Component, Settings, Spawn};
 use vox_core::portal::Door;
 use vox_core::wire::EntityChange;
 
@@ -85,7 +85,7 @@ impl WorldState {
         if meta("entities_seeded").is_none() {
             reseeded = true;
             let mut seed = if !fresh {
-                vox_core::level::entities(&format!(r#"{{"world":{settings}}}"#))?
+                seed_from_settings(&settings)
             } else if let Some(t) = &cfg.tile {
                 vec![Component::Settings(Settings { json: t.settings().to_string() })]
             } else if let Some(level) = &cfg.seed {
@@ -590,13 +590,12 @@ impl WorldState {
                 let (at, account, tx) = (p.at, p.account, p.tx.clone());
                 // the doorway is a portal entity by name. A doorway within this world (no url)
                 // is not a trip; a world or pair doorway is resolved by the directory (phase 2),
-                // so it is not a trip here either.
+                // so it is not a trip here either. `travel` says which is which.
                 let door = self.entities.map.values().find_map(|(_, c)| match c {
-                    Component::Portal(p) if p.name == portal => match &p.to {
-                        Dest::Url { url, arrive } => Some(Door::from_portal(p, Some(url.clone()), *arrive)),
-                        Dest::Dungeon { name } => Some(Door::from_portal(p, Some(format!("dungeon:{name}")), p.at)),
-                        Dest::Here { .. } | Dest::World { .. } | Dest::Pair { .. } => None,
-                    },
+                    Component::Portal(p) if p.name == portal => p
+                        .travel()
+                        .filter(|(url, _)| url.is_some())
+                        .map(|(url, arrive)| Door::from_portal(p, url, arrive)),
                     _ => None,
                 });
                 let Some((door, at)) = door.zip(at) else { return };
@@ -743,6 +742,24 @@ struct VoiceWho {
     account: Option<u64>,
 }
 
+/// The entities a world from before entities takes from its stored settings. A stored value
+/// that doesn't seed (a malformed objective, say) is logged and left out, and the rest is
+/// seeded, so the world still opens: first all of it, then without the objective, then without
+/// the portals too, and at last with no settings entity (the world then reads its defaults).
+fn seed_from_settings(settings: &str) -> Vec<Component> {
+    let mut world: serde_json::Map<String, serde_json::Value> = serde_json::from_str(settings).unwrap_or_default();
+    for drop in [None, Some("objective"), Some("portals")] {
+        if let Some(key) = drop {
+            world.remove(key);
+        }
+        match vox_core::level::entities(&serde_json::json!({ "world": world }).to_string()) {
+            Ok(list) => return list,
+            Err(why) => eprintln!("stored settings don't seed entities (without {drop:?}): {why}"),
+        }
+    }
+    Vec::new()
+}
+
 fn finite(p: [f32; 3]) -> bool {
     p.iter().all(|v| v.is_finite())
 }
@@ -777,6 +794,29 @@ fn voice_audience(sender: &VoiceWho, others: &[VoiceWho], radius: f32, party_of:
                 .collect()
         }
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_objective_that_does_not_seed_leaves_the_rest() {
+        // no radius: the objective can't be read, so it is left out and the settings are kept
+        let list = seed_from_settings(r#"{"sky":"earth","objective":{"name":"altar","at":[0,0,0]}}"#);
+        assert!(list.iter().any(|c| matches!(c, Component::Settings(s) if s.json.contains("earth"))));
+        assert!(!list.iter().any(|c| matches!(c, Component::Objective(_))));
+    }
+
+    #[test]
+    fn a_stored_portal_that_does_not_seed_leaves_the_settings() {
+        // a name past MAX_NAME: the portals are left out, the settings are not
+        let long = "p".repeat(vox_core::entity::MAX_NAME + 1);
+        let s = format!(r#"{{"sky":"earth","portals":[{{"name":"{long}","at":[0,0,5],"level":"x","url":":7781","arrive":[0,0,0]}}]}}"#);
+        let list = seed_from_settings(&s);
+        assert!(list.iter().any(|c| matches!(c, Component::Settings(_))));
+        assert!(!list.iter().any(|c| matches!(c, Component::Portal(_))));
     }
 }
 

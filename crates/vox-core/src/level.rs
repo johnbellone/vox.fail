@@ -68,7 +68,7 @@ pub fn entities(text: &str) -> Result<Vec<Component>, String> {
             let to = match p.get("url").and_then(|u| u.as_str()) {
                 None => Dest::Here { arrive },
                 Some(url) => match url.strip_prefix("dungeon:") {
-                    Some(name) => Dest::Dungeon { name: name.to_string() },
+                    Some(name) => Dest::Dungeon { name: name.to_string(), arrive },
                     None => Dest::Url { url: url.to_string(), arrive },
                 },
             };
@@ -355,7 +355,7 @@ mod tests {
         ] } }"#;
         let all = entities(text).unwrap();
         let Component::Portal(p) = &all[0] else { panic!("a portal first") };
-        assert_eq!(p.to, Dest::Dungeon { name: "crypt".into() });
+        assert_eq!(p.to, Dest::Dungeon { name: "crypt".into(), arrive: [0.0, 0.0, 1.0] });
     }
 
     #[test]
@@ -381,14 +381,9 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(portals.len(), doors.len(), "{}", path.display());
-                let list = world.get("portals").and_then(|p| p.as_array()).cloned().unwrap_or_default();
-                for ((p, door), json) in portals.iter().zip(&doors).zip(&list) {
-                    let (url, arrive) = match &p.to {
-                        Dest::Here { arrive } => (None, *arrive),
-                        Dest::Url { url, arrive } => (Some(url.clone()), *arrive),
-                        // a dungeon's arrival is only in the file, not in the entity
-                        Dest::Dungeon { name } => (Some(format!("dungeon:{name}")), vec3(json, "arrive").unwrap()),
-                        other => panic!("{}: {other:?}", path.display()),
+                for (p, door) in portals.iter().zip(&doors) {
+                    let Some((url, arrive)) = p.travel() else {
+                        panic!("{}: {:?}", path.display(), p.to)
                     };
                     assert_eq!(Door::from_portal(p, url, arrive), *door, "{} {}", path.display(), p.name);
                 }

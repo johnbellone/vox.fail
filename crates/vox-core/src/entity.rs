@@ -54,6 +54,19 @@ pub struct Portal {
 
 impl Portal {
     pub const VERSION: u16 = 1;
+
+    /// Where walking through this doorway leads: the url to dial (None for somewhere in this
+    /// world) and the arrival point there. None for a `World` or `Pair` destination, which the
+    /// directory resolves (phase 2). Every place that reads a doorway's destination uses this,
+    /// so the server and the client agree.
+    pub fn travel(&self) -> Option<(Option<String>, [f32; 3])> {
+        match &self.to {
+            Dest::Here { arrive } => Some((None, *arrive)),
+            Dest::Url { url, arrive } => Some((Some(url.clone()), *arrive)),
+            Dest::Dungeon { name, arrive } => Some((Some(format!("dungeon:{name}")), *arrive)),
+            Dest::World { .. } | Dest::Pair { .. } => None,
+        }
+    }
 }
 
 /// Where a doorway leads.
@@ -65,8 +78,8 @@ pub enum Dest {
     World { world: String },
     /// the other half of a pair of doorways with this key
     Pair { key: i64 },
-    /// the traveller's raid party's copy of a dungeon
-    Dungeon { name: String },
+    /// the traveller's raid party's copy of a dungeon, arriving at `arrive` there
+    Dungeon { name: String, arrive: [f32; 3] },
     /// another host, at `url`, arriving at `arrive` there
     Url { url: String, arrive: [f32; 3] },
 }
@@ -151,7 +164,7 @@ impl Component {
                 match &mut p.to {
                     Dest::Here { .. } | Dest::Pair { .. } => {}
                     Dest::World { world } => *world = strip_control(world),
-                    Dest::Dungeon { name } => *name = strip_control(name),
+                    Dest::Dungeon { name, .. } => *name = strip_control(name),
                     Dest::Url { url, .. } => *url = strip_control(url),
                 }
                 p.size = [tidy_size(p.size[0], 4.0), tidy_size(p.size[1], 6.0)];
@@ -178,7 +191,10 @@ impl Component {
                     Dest::Here { arrive } => finite(arrive),
                     Dest::World { world } => text(world, MAX_ID),
                     Dest::Pair { .. } => Ok(()),
-                    Dest::Dungeon { name } => text(name, MAX_ID),
+                    Dest::Dungeon { name, arrive } => {
+                        text(name, MAX_ID)?;
+                        finite(arrive)
+                    }
                     Dest::Url { url, arrive } => {
                         text(url, MAX_URL)?;
                         finite(arrive)
@@ -315,7 +331,7 @@ mod tests {
             Component::Portal(portal(Dest::Here { arrive: [0.0, 0.0, -39.5] })),
             Component::Portal(portal(Dest::World { world: "yard".into() })),
             Component::Portal(Portal { key: Some(7), ..portal(Dest::Pair { key: 7 }) }),
-            Component::Portal(portal(Dest::Dungeon { name: "crypt".into() })),
+            Component::Portal(portal(Dest::Dungeon { name: "crypt".into(), arrive: [0.0, 0.0, 1.0] })),
             Component::Portal(portal(Dest::Url { url: ":7781".into(), arrive: [1.0, 0.0, 2.0] })),
             Component::Spawn(Spawn { at: [1.0, 2.0, 3.0], yaw: 90.0 }),
             Component::Objective(Objective { name: "the altar".into(), at: [0.0, 0.0, -9.0], radius: 3.0 }),
@@ -333,6 +349,27 @@ mod tests {
         assert_eq!(p.name(), "vox::Portal");
         assert_eq!(p.version(), 1);
         assert_eq!(settings("{}").name(), "vox::Settings");
+    }
+
+    #[test]
+    fn travel_names_the_url_and_the_arrival() {
+        let arrive = [1.0, 2.0, 3.0];
+        assert_eq!(portal(Dest::Here { arrive }).travel(), Some((None, arrive)));
+        assert_eq!(
+            portal(Dest::Url { url: ":7781".into(), arrive }).travel(),
+            Some((Some(":7781".into()), arrive))
+        );
+        assert_eq!(
+            portal(Dest::Dungeon { name: "crypt".into(), arrive }).travel(),
+            Some((Some("dungeon:crypt".into()), arrive))
+        );
+        assert_eq!(portal(Dest::World { world: "yard".into() }).travel(), None);
+        assert_eq!(portal(Dest::Pair { key: 7 }).travel(), None);
+
+        let mut bad = portal(Dest::Dungeon { name: "crypt".into(), arrive: [f32::NAN, 0.0, 0.0] });
+        assert_eq!(Component::Portal(bad.clone()).validate(), Err(EntityWhy::Invalid));
+        bad.to = Dest::Dungeon { name: "crypt".into(), arrive: [0.0; 3] };
+        assert_eq!(Component::Portal(bad).validate(), Ok(()));
     }
 
     #[test]
@@ -398,7 +435,7 @@ mod tests {
         level.level = "vo\nid".into();
         assert_eq!(Component::Portal(level).validate(), Err(EntityWhy::Invalid));
 
-        let dungeon = portal(Dest::Dungeon { name: "cr\u{1b}ypt".into() });
+        let dungeon = portal(Dest::Dungeon { name: "cr\u{1b}ypt".into(), arrive: [0.0; 3] });
         assert_eq!(Component::Portal(dungeon).validate(), Err(EntityWhy::Invalid));
     }
 
@@ -424,13 +461,13 @@ mod tests {
 
     #[test]
     fn tidy_replaces_a_non_finite_size_with_the_default() {
-        let mut p = portal(Dest::Dungeon { name: "cr\u{1b}ypt".into() });
+        let mut p = portal(Dest::Dungeon { name: "cr\u{1b}ypt".into(), arrive: [0.0; 3] });
         p.size = [f32::NAN, f32::INFINITY];
         let mut c = Component::Portal(p);
         c.tidy();
         let Component::Portal(p) = c else { panic!("still a portal") };
         assert_eq!(p.size, [4.0, 6.0]);
-        assert_eq!(p.to, Dest::Dungeon { name: "crypt".into() });
+        assert_eq!(p.to, Dest::Dungeon { name: "crypt".into(), arrive: [0.0; 3] });
         assert_eq!(Component::Portal(p).validate(), Ok(()));
     }
 }

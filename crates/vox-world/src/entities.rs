@@ -93,12 +93,11 @@ impl WorldEntities {
             .values()
             .filter_map(|(_, c)| {
                 let Component::Portal(p) = c else { return None };
+                // a world or pair doorway is a label here (the directory resolves it), with the sill as its arrival
                 let (url, arrive) = match &p.to {
-                    Dest::Here { arrive } => (None, *arrive),
-                    Dest::Url { url, arrive } => (Some(url.clone()), *arrive),
                     Dest::World { world } => (Some(format!("/w/{world}/ws")), p.at),
-                    Dest::Dungeon { name } => (Some(format!("dungeon:{name}")), p.at),
                     Dest::Pair { key } => (Some(format!("pair:{key}")), p.at),
+                    _ => p.travel()?,
                 };
                 Some(PortalDef {
                     name: p.name.clone(),
@@ -224,7 +223,7 @@ mod tests {
             change(1, 1, Some(portal(Dest::Here { arrive }))),
             change(2, 2, Some(portal(Dest::Url { url: ":7781".into(), arrive }))),
             change(3, 3, Some(portal(Dest::World { world: "yard".into() }))),
-            change(4, 4, Some(portal(Dest::Dungeon { name: "crypt".into() }))),
+            change(4, 4, Some(portal(Dest::Dungeon { name: "crypt".into(), arrive }))),
             change(5, 5, Some(portal(Dest::Pair { key: 7 }))),
             change(6, 6, Some(Component::Objective(Objective { name: "altar".into(), at: [0.0; 3], radius: 3.0 }))),
         ]);
@@ -238,6 +237,7 @@ mod tests {
         assert_eq!(defs[2].url.as_deref(), Some("/w/yard/ws"));
         assert_eq!(defs[2].arrive, Vec3::from_array([0.0, 0.0, -39.5]));
         assert_eq!(defs[3].url.as_deref(), Some("dungeon:crypt"));
+        assert_eq!(defs[3].arrive, Vec3::from_array(arrive));
         assert_eq!(defs[4].url.as_deref(), Some("pair:7"));
 
         assert_eq!(defs[0].name, "yard");

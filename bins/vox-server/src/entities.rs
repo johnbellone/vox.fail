@@ -66,8 +66,11 @@ impl Entities {
         let rows = q
             .query_map([], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, i64>(1)?, r.get::<_, Vec<u8>>(2)?)))
             .map_err(e)?;
+        // the highest id in the table, skipped rows included, so a skipped id is never reused
+        let mut highest = 0u32;
         for row in rows {
             let (id, seq, data) = row.map_err(e)?;
+            highest = highest.max(id);
             match wire::decode::<Component>(&data) {
                 Ok(c) => match c.validate() {
                     Ok(()) => {
@@ -78,7 +81,7 @@ impl Entities {
                 Err(why) => eprintln!("entity {id} can't be read, skipped: {why}"),
             }
         }
-        out.next = out.map.keys().next_back().map_or(1, |id| id.0.saturating_add(1));
+        out.next = highest.saturating_add(1);
         Ok(out)
     }
 
@@ -308,13 +311,27 @@ fn zone_at(at: [f32; 3]) -> (i32, i32) {
 /// A doorway the directory lists for a world (in the level format, with the directory's `key`):
 /// the key and the portal entity holding it. None when there is no key or the doorway is not a
 /// valid one. The level format's own reading is used, so a doorway is judged as a level's is.
+/// A dropped one is named on stderr with its key and why.
 pub(crate) fn from_directory(v: &serde_json::Value) -> Option<(i64, Component)> {
-    let key = v.get("key")?.as_i64()?;
+    let Some(key) = v.get("key").and_then(|k| k.as_i64()) else {
+        eprintln!("a directory portal has no key, dropped: {v}");
+        return None;
+    };
     let text = serde_json::json!({ "world": { "portals": [v] } }).to_string();
-    let portal = vox_core::level::entities(&text).ok()?.into_iter().find_map(|c| match c {
-        Component::Portal(p) => Some(p),
-        _ => None,
-    })?;
+    let portal = match vox_core::level::entities(&text) {
+        Ok(list) => list.into_iter().find_map(|c| match c {
+            Component::Portal(p) => Some(p),
+            _ => None,
+        }),
+        Err(why) => {
+            eprintln!("directory portal {key} dropped: {why}");
+            return None;
+        }
+    };
+    let Some(portal) = portal else {
+        eprintln!("directory portal {key} dropped: it needs a position, a level and an arrival");
+        return None;
+    };
     Some((key, Component::Portal(Portal { key: Some(key), ..portal })))
 }
 
@@ -402,7 +419,8 @@ mod tests {
         assert_eq!(back.map, e.map);
         assert_eq!(back.map.len(), 3);
         assert!(!back.map.contains_key(&EntityId(77)));
-        assert_eq!(back.next, 5);
+        // the skipped rows 77 and 78 count: the next new id is past them, never one of them
+        assert_eq!(back.next, 79);
 
         // the log has the new portal (no old) and the removed spawn (no new)
         let count = |sql: &str| -> i64 { db.query_row(sql, [], |r| r.get(0)).unwrap() };

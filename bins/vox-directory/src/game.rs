@@ -906,8 +906,13 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
         .filter_map(|(pid, at, axis, dest, level, spawn)| {
             let w = d.0.worlds.iter().find(|w| w.id == dest)?;
             let arrive: Value = serde_json::from_str(&spawn).ok()?;
+            // a portal's name is at most MAX_NAME characters (the server drops a longer one), so
+            // the world's name is cut to fit beside " (pid)"
+            let tag = format!(" ({pid})");
+            let room = vox_core::entity::MAX_NAME.saturating_sub(tag.chars().count());
+            let name: String = w.name.chars().take(room).chain(tag.chars()).collect();
             Some(json!({
-                "key": pid, "name": format!("{} ({pid})", w.name), "at": at, "axis": axis, "size": [4, 6],
+                "key": pid, "name": name, "at": at, "axis": axis, "size": [4, 6],
                 "level": level, "url": w.url, "arrive": arrive, "yaw": 0,
             }))
         })
