@@ -2,7 +2,7 @@
 // the README's screenshots beside it. Everything is under /_offline/ so it never shadows a path
 // the directory serves.
 //
-//   bun run build.ts        then: bunx wrangler deploy
+//   bun run build.ts        then: node node_modules/.bin/cf deploy (or: bun run deploy)
 
 import { cp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";

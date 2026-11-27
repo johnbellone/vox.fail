@@ -1,8 +1,8 @@
 name: Edge worker
 
-# Deploys vox.fail's Cloudflare Worker (apps/edge): it passes every request on to the server and
-# shows the offline page when the server can't be reached. Runs when the Worker or the offline
-# page changes on main, after the tests pass.
+# Deploys vox.fail's Cloudflare Worker (apps/edge) with the cf command line: it passes every
+# request on to the server and shows the offline page when the server can't be reached. Runs when
+# the Worker or the offline page changes on main, after the tests pass.
 #
 # The deploy job uses the "production" environment: give it required reviewers (Settings →
 # Environments) so a deploy waits for an approval, and put the secrets there, not on the
@@ -52,7 +52,6 @@ jobs:
           bun test
           bun run typecheck
           bun run build
-          bunx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/edge"
 
   deploy:
     needs: check
@@ -65,6 +64,10 @@ jobs:
         with:
           bun-version: 1.4.5
       - run: bun install --frozen-lockfile
+      # cf loads cloudflare.config.ts on Node, not Bun
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Deploy
         working-directory: apps/edge
         env:
@@ -72,4 +75,4 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           bun run build
-          bunx wrangler deploy
+          node node_modules/.bin/cf deploy --message "$GITHUB_SHA"

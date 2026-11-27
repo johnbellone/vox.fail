@@ -1,4 +1,5 @@
 ## 2026-11-27
+* **Update** [2026-11-27T16:02:00Z]: Updated concept `decisions/edge-worker-offline-page.md`. — Deployed with the cf CLI (cloudflare.config.ts); placeholder DNS record until the tunnel is routed.
 * **Relate** [2026-11-27T15:15:21Z]: Linked `architecture/deployment.md` to `decisions/edge-worker-offline-page.md` (What visitors see when the server is down: a Worker in front of the tunnel serves an offline page.).
 * **Creation** [2026-11-27T15:15:18Z]: Documented concept `decisions/edge-worker-offline-page.md` (Decision: A Cloudflare Worker Shows an Offline Page When the Server Is Down). — Offline fallback for vox.fail while it runs on a dev server.
 * **Update** [2026-11-27T14:07:57Z]: Updated concept `architecture/ground-relief-design.md`. — Phases 1-4 built: relief, wet ground, puddles, rings, ice; protocol 8

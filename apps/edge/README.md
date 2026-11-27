@@ -16,11 +16,18 @@ The directory's own `503` ("busy") passes through untouched. The offline page's 
 ```bash
 bun test                 # the Worker against a stand-in server
 bun run build            # the offline page into dist/_offline/ (with docs/screenshots)
-bun run deploy           # build and deploy (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID)
+bun run deploy           # build and deploy with cf (signed in with `cf auth login`, or
+                         # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)
 ```
 
 The page shares its text with the home page (`apps/site/src/features/home/Pitch.tsx`). To look at
 it, build and serve `dist/` (`python3 -m http.server -d dist`), then open `/_offline/offline.html`.
+
+The Worker is set up in `cloudflare.config.ts` (name, route `vox.fail/*`, the `ASSETS` binding)
+and `wrangler.config.ts` (the assets folder); `cf` runs on Node, not Bun. The route only gets
+traffic while vox.fail has a proxied DNS record: until the tunnel is routed there, a placeholder
+`AAAA vox.fail 100::` (proxied) points nowhere, so the Worker always shows the offline page.
+Delete it before `cloudflared tunnel route dns vox vox.fail`.
 
 Deploys run from `.github/workflows/edge.yml` on main, through the `production` environment
 (set its required reviewers and secrets as that file says). Requests through a Worker count
