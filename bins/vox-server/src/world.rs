@@ -152,6 +152,7 @@ impl WorldState {
                         players,
                         blocks: self.world.count(),
                         seq: self.seq,
+                        watchers: self.watchers.len(),
                     });
                 }
                 Event::Report(reply) => {

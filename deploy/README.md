@@ -64,7 +64,10 @@ Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port
 3. In the tunnel, replace the per-port rules with one: `vox.fail` path `^/w/` →
    `http://127.0.0.1:7790`, before the directory's rule.
 
-Adding a world is then a `--world <id>` in the unit, not a new unit and tunnel rule. Design:
+Adding a world is then a `--world <id>` in the unit, not a new unit and tunnel rule. With
+`--idle-stop 10`, a world starts when the first player (or watcher) comes and is saved and
+stopped after ten minutes with nobody there; `--keep void` keeps the Void always running. A
+world's status page (`/w/<id>/`) says `"running": false` while it's stopped, without starting it. Design:
 `docs/design/world-network.md`.
 
 ## In the Cloudflare dashboard (vox.fail)

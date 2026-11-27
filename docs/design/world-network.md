@@ -270,8 +270,11 @@ Each phase ships on its own.
    and Helm route `/w/` to it. Portals keep `"url"`, now `"/w/yard/ws"`.
 2. **Tickets and server-driven travel.** `Through`, `Travel`, `/api/world/travel`, ticket claims,
    protocol 6. Closes the two known gaps.
-3. **Registry, cold start and idle stop**, on one machine.
-4. **Instances**: templates from snapshots, template portals, party lock, lockout, objective,
+3. **Cold start and idle stop**, on one machine: built into `vox-host` (`--idle-stop`,
+   `--keep`), for the worlds it's given. A known world starts on its first connection, so the
+   directory needn't be involved yet.
+4. **Registry and instances**: the directory's world registry (worlds that exist only once
+   asked for), templates from snapshots, template portals, party lock, lockout, objective,
    raids on templates. The first dungeon is a hand-built level with a reach-the-end objective.
 5. **Several hosts**: registration, placement, per-world credentials.
 6. **Atlas**: atlas coordinates in the generator (needs world-scaling.md phase 3), edge portals,

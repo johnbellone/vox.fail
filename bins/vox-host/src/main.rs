@@ -4,6 +4,11 @@
 //! `--max-watchers`, `--trust-moves`, `--no-snapshots`, `--oxen`, `--snapshot-every`; see
 //! `vox_server::flags`), which apply to every world.
 //!
+//! `--idle-stop <minutes>` (at least 1): worlds start when someone first connects and are saved and stopped
+//! after that long with nobody playing or watching. `--keep <id>` (repeatable) names worlds that
+//! start with the host and never stop, such as the Void. Without `--idle-stop` every world
+//! starts with the host.
+//!
 //! Each `--world` is one world: `<id>` is its name (for the directory too) and its path,
 //! `/w/<id>/ws`; it is kept in `<data>/<id>.db`, with snapshots in `<data>/<id>.db.snapshots/`,
 //! the same files `vox-server --db /var/lib/vox/<id>.db` uses, so worlds move over as they are.
@@ -36,6 +41,13 @@ async fn main() {
         eprintln!("vox-host: name at least one world: --world void@7780");
         std::process::exit(2);
     }
+    let keep: Vec<String> = args.windows(2).filter(|w| w[0] == "--keep").map(|w| w[1].clone()).collect();
+    let idle = arg("--idle-stop").map(|m| {
+        // at least a minute: a world remembers which tickets were used only while it runs, and
+        // a ticket lasts a minute, so a world can't stop and start again within one's life
+        let m: f64 = m.parse().ok().filter(|m: &f64| m.is_finite() && *m >= 1.0).unwrap_or_else(|| panic!("--idle-stop takes minutes, at least 1"));
+        std::time::Duration::from_secs_f64(m * 60.0)
+    });
     let mut specs = Vec::new();
     for w in &worlds {
         let (id, seed, alias) = parse_world(w).unwrap_or_else(|e| panic!("--world {w}: {e}"));
@@ -49,12 +61,19 @@ async fn main() {
         }
         cfg.level = seed.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         vox_server::flags::apply(&mut cfg, &args).unwrap_or_else(|e| panic!("{e}"));
-        specs.push(Spec { id, aliases: alias.into_iter().collect(), cfg });
+        let keep = keep.contains(&id);
+        specs.push(Spec { id, aliases: alias.into_iter().collect(), cfg, keep });
     }
 
-    let host = Host::start(specs).await.unwrap_or_else(|e| panic!("vox-host: {e}"));
+    if let Some(k) = keep.iter().find(|k| !worlds.iter().any(|w| parse_world(w).is_ok_and(|(id, ..)| &id == *k))) {
+        panic!("--keep {k}: there's no --world {k}");
+    }
+    let host = Host::start(specs, idle).await.unwrap_or_else(|e| panic!("vox-host: {e}"));
     let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| panic!("can't listen on {listen}: {e}"));
     eprintln!("vox-host: {} on {listen} (ws://{listen}/w/<id>/ws), saved in {}", host.ids().join(", "), data_dir.display());
+    if let Some(idle) = idle {
+        eprintln!("vox-host: running {}; the others start when asked for and stop after {} s unused", host.running().await.join(", "), idle.as_secs());
+    }
     let stop = host.clone();
     axum::serve(listener, host.router())
         .with_graceful_shutdown(async move {
