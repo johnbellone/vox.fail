@@ -180,6 +180,14 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
         if p.key != kept {
             return Err(EntityWhy::NotYours);
         }
+        // A keyed portal's name and level come from the directory, which filled them in when
+        // it charged the portal; nobody may change them by a Put, whatever their role.
+        if let Some(Component::Portal(o)) = old
+            && o.key.is_some()
+            && (p.name != o.name || p.level != o.level)
+        {
+            return Err(EntityWhy::NotYours);
+        }
     }
 
     if ctx.role == Role::Builder {
@@ -573,6 +581,36 @@ mod tests {
         let old = Component::Portal(keyed([5.5, 0.0, 5.5], world_dest(), 3));
         let new = Component::Portal(portal([5.5, 0.0, 5.5], world_dest()));
         assert_eq!(check_put(&c, Some(&old), &new), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn builder_renaming_a_keyed_portal_is_not_yours() {
+        let plots = [plot(&[7])];
+        let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let old = Component::Portal(keyed([5.5, 0.0, 5.5], world_dest(), 3));
+        let mut p = keyed([5.5, 0.0, 5.5], world_dest(), 3);
+        p.name = "renamed".into();
+        assert_eq!(check_put(&c, Some(&old), &Component::Portal(p)), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn editor_relevelling_a_keyed_portal_is_not_yours() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let old = Component::Portal(keyed([5.5, 0.0, 5.5], world_dest(), 3));
+        let mut p = keyed([5.5, 0.0, 5.5], world_dest(), 3);
+        p.level = "orbit".into();
+        assert_eq!(check_put(&c, Some(&old), &Component::Portal(p)), Err(EntityWhy::NotYours));
+    }
+
+    #[test]
+    fn editor_renaming_an_unkeyed_portal_is_ok() {
+        let plots: [PlotArea; 0] = [];
+        let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        let old = Component::Portal(portal([5.5, 0.0, 5.5], world_dest()));
+        let mut p = portal([5.5, 0.0, 5.5], world_dest());
+        p.name = "renamed".into();
+        assert_eq!(check_put(&c, Some(&old), &Component::Portal(p)), Ok(()));
     }
 
     #[test]

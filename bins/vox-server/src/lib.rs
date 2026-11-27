@@ -194,8 +194,10 @@ enum Event {
     Status(oneshot::Sender<Status>),
     /// who's here for the directory (and start counting edits again)
     Report(oneshot::Sender<serde_json::Value>),
-    /// the directory's plots, portals and raid parties (lists of account ids)
-    Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>),
+    /// the directory's plots, portals and raid parties (lists of account ids), and when the fetch
+    /// that got them began (a portal list that began before the world's last keyed-portal change
+    /// predates it, and is not applied)
+    Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>, Instant),
     /// the directory's answer for a trip: where to go, and the ticket (if it gave one)
     Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3] },
     /// the directory's answer on whether an account may make advanced edits (None: no answer,
@@ -312,6 +314,10 @@ pub struct Server {
 impl Server {
     /// Open (or create) the world and start its thread. Call from inside a tokio runtime.
     pub fn start(cfg: Config) -> Result<Server, String> {
+        // as flags.rs refuses it: every account an editor is for local play only
+        if cfg.editors_all && (cfg.directory_url.is_some() || cfg.directory.is_some()) {
+            return Err("editors_all is for local play and tests; not with a directory".into());
+        }
         let gate = Arc::new(Gate { key: cfg.directory, guests: cfg.guests, world: cfg.name.clone(), used: Mutex::new(HashMap::new()) });
         let office = match (&cfg.directory_url, &cfg.world_secret) {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone())),
@@ -335,6 +341,7 @@ impl Server {
             state.goals = Some(goal_tx);
             state.editors = Some(ask_tx);
             state.portals = Some(portal_tx);
+            state.rules_now = Some(rules_now.clone());
         }
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
@@ -480,6 +487,12 @@ struct WorldState {
     portal_routes: HashMap<i64, entities::Route>,
     /// refunds that could not be queued, tried once more on the next tick
     refunds_due: Vec<(u64, i64)>,
+    /// when a keyed portal was last made, moved, linked or removed here (the directory has
+    /// changed its list): a rules fetch that began before it is not applied to the portals
+    last_keyed_commit: Option<Instant>,
+    /// woken after a keyed-portal change here, so the rules are fetched again at once and the
+    /// fetch that follows is one that began after the change (None: no directory)
+    rules_now: Option<Arc<Notify>>,
     /// the directory's answers on advanced rights, by account, with when they came
     editor_cache: HashMap<u64, (Instant, bool)>,
     /// the settings the ground, climate and sun were last built from
@@ -544,16 +557,27 @@ async fn portal_office(tx: mpsc::Sender<Event>, mut asks: mpsc::Receiver<PortalA
             // the world and the account are the world's own words, not the player's
             ask.body["world"] = serde_json::json!(world);
             ask.body["account"] = serde_json::json!(ask.account);
-            let got = http.post(format!("{url}/api/world/{path}")).bearer_auth(&secret).json(&ask.body).send().await;
-            let (status, reply) = match got {
-                Ok(r) => {
-                    let status = r.status().as_u16();
-                    (Some(status), r.json::<serde_json::Value>().await.unwrap_or(serde_json::Value::Null))
+            // a refund that got no 200 is asked once more after a second: a charge given back
+            // by a directory that was briefly away must not be lost
+            let mut attempts = 0;
+            let (status, reply) = loop {
+                attempts += 1;
+                let got = http.post(format!("{url}/api/world/{path}")).bearer_auth(&secret).json(&ask.body).send().await;
+                let (status, reply) = match got {
+                    Ok(r) => {
+                        let status = r.status().as_u16();
+                        (Some(status), r.json::<serde_json::Value>().await.unwrap_or(serde_json::Value::Null))
+                    }
+                    Err(e) => {
+                        eprintln!("can't reach the directory for a portal: {e}");
+                        (None, serde_json::Value::Null)
+                    }
+                };
+                if ask.call == PortalCall::Refund && attempts == 1 && status != Some(200) {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
                 }
-                Err(e) => {
-                    eprintln!("can't reach the directory for a portal: {e}");
-                    (None, serde_json::Value::Null)
-                }
+                break (status, reply);
             };
             // the directory's list has changed (or, for a refund, its charge): the world fetches
             // the rules now rather than at its next time, so a new portal can be walked through
@@ -575,5 +599,24 @@ async fn portal_office(tx: mpsc::Sender<Event>, mut asks: mpsc::Receiver<PortalA
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `editors_all` (every account an editor) is for local play only: a world with a directory
+    /// URL or a directory key refuses to start with it, as flags.rs does.
+    #[test]
+    fn editors_all_is_refused_with_a_directory() {
+        let mut c = Config::new(":memory:", vec![]);
+        c.editors_all = true;
+        c.directory_url = Some("http://127.0.0.1:7700".into());
+        assert_eq!(Server::start(c).err().as_deref(), Some("editors_all is for local play and tests; not with a directory"));
+        let mut c = Config::new(":memory:", vec![]);
+        c.editors_all = true;
+        c.directory = Some(vox_core::auth::key_from_seed([9; 32]).verifying_key());
+        assert!(Server::start(c).is_err());
     }
 }

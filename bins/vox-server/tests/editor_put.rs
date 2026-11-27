@@ -34,15 +34,14 @@ fn key() -> SigningKey {
 }
 
 /// A world that takes sign-in from `key`. Positions are taken as players report them, so a
-/// test stands where it needs to with a pose. With `editors_all`, every signed-in player edits
-/// advanced things (no question to a directory).
-fn config(editors_all: bool) -> Config {
+/// test stands where it needs to with a pose. Advanced rights are asked of a directory (see
+/// `asking`): `editors_all` is for local play without one, and is refused with a directory.
+fn config() -> Config {
     let mut c = Config::new(":memory:", ["grass", "stone", "planks"].map(String::from).to_vec());
     c.name = "test".into();
     c.seed = Some(LEVEL.into());
     c.directory = Some(key().verifying_key());
     c.trust_moves = true;
-    c.editors_all = editors_all;
     c
 }
 
@@ -55,7 +54,6 @@ fn yard_config() -> Config {
     c.seed = Some(std::fs::read_to_string(format!("{data}levels/yard.json")).unwrap());
     c.directory = Some(key().verifying_key());
     c.trust_moves = true;
-    c.editors_all = true;
     c
 }
 
@@ -192,7 +190,7 @@ async fn directory(asks: Arc<AtomicUsize>) -> String {
 
 /// A world that asks `dir` about advanced rights (not every player is an editor).
 fn asking(dir: &str) -> Config {
-    let mut c = config(false);
+    let mut c = config();
     c.directory_url = Some(dir.into());
     c.world_secret = Some("s3cret".into());
     c
@@ -200,7 +198,8 @@ fn asking(dir: &str) -> Config {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_an_editor_moves_and_removes_a_portal_for_everyone() {
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     let mut b = join(&url, "Bob", Some(token(8, "Bob"))).await;
     send(&mut a.ws, &pose(a.spawn)).await;
@@ -229,7 +228,8 @@ async fn editor_put_an_editor_moves_and_removes_a_portal_for_everyone() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_stale_or_unknown_entity_is_changed() {
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &pose(a.spawn)).await;
     send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("door", [2.5, 0.0, 2.5], url_to(":7781")) }).await;
@@ -250,7 +250,8 @@ async fn editor_put_a_stale_or_unknown_entity_is_changed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_guest_is_not_yours() {
-    let mut cfg = config(true);
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let mut cfg = asking(&dir);
     cfg.guests = true;
     let (_server, url) = serve(cfg).await;
     let mut g = join(&url, "Gus", None).await;
@@ -286,7 +287,6 @@ async fn editor_put_a_builder_cannot_move_a_level_portal_or_place_one() {
 /// The yard, asking the directory at `dir` about advanced rights.
 fn yard_config_asking(dir: &str) -> Config {
     let mut c = yard_config();
-    c.editors_all = false;
     c.directory_url = Some(dir.into());
     c.world_secret = Some("s3cret".into());
     c
@@ -294,7 +294,8 @@ fn yard_config_asking(dir: &str) -> Config {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_far_entity_cannot_be_moved_or_placed_out_of_reach() {
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     // a portal far off, placed while standing there
     send(&mut a.ws, &pose([100.0, 0.0, 0.0])).await;
@@ -314,7 +315,8 @@ async fn editor_put_a_far_entity_cannot_be_moved_or_placed_out_of_reach() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_eleven_in_a_second_are_too_fast() {
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &pose(a.spawn)).await;
     for i in 0..11u32 {
@@ -343,7 +345,8 @@ async fn editor_put_eleven_in_a_second_are_too_fast() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_second_objective_or_settings_is_too_many() {
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &pose(a.spawn)).await;
     let altar = Component::Objective(Objective { name: "altar".into(), at: [2.5, 0.0, 2.5], radius: 3.0 });
@@ -360,7 +363,8 @@ async fn editor_put_a_second_objective_or_settings_is_too_many() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_changing_the_settings_sky_reaches_a_second_player() {
-    let (_server, url) = serve(yard_config()).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(yard_config_asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     let mut b = join(&url, "Bob", Some(token(8, "Bob"))).await;
     let (id, seq, mut json) = a
@@ -388,7 +392,8 @@ async fn editor_put_changing_the_settings_sky_reaches_a_second_player() {
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_dungeon_doorway_travels_by_name() {
     // no directory here: a trip is answered at once, without a ticket
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &pose(a.spawn)).await;
     let to = Dest::Dungeon { name: "crypt".into(), arrive: [1.0, 0.0, 1.5] };
@@ -406,7 +411,8 @@ async fn editor_put_a_dungeon_doorway_travels_by_name() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_doorway_in_place_answers_no_travel() {
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &pose(a.spawn)).await;
     let here = Dest::Here { arrive: [1.0, 0.0, 1.5] };
@@ -454,7 +460,8 @@ async fn editor_put_rights_are_asked_once_and_refused_without_an_answer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_put_a_settings_entity_cannot_become_a_spawn() {
-    let (_server, url) = serve(yard_config()).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(yard_config_asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &pose(a.spawn)).await;
     let (id, seq) = a
@@ -507,7 +514,8 @@ async fn editor_put_a_held_edit_is_dropped_when_the_player_leaves() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn editor_build_is_still_unavailable() {
-    let (_server, url) = serve(config(true)).await;
+    let dir = directory(Arc::new(AtomicUsize::new(0))).await;
+    let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
     send(&mut a.ws, &ToServer::Build { id: 6, node: EntityId(1) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (6, EntityWhy::Unavailable));

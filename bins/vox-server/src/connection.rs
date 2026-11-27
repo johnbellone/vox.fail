@@ -235,6 +235,7 @@ pub(super) async fn directory_link(
     loop {
         if Instant::now() >= next_rules {
             next_rules = Instant::now() + rules_every;
+            let started = Instant::now();
             let got = http.get(format!("{url}/api/world/{world}/rules")).bearer_auth(&secret).send().await;
             match got {
                 Ok(r) if r.status().is_success() => {
@@ -242,7 +243,7 @@ pub(super) async fn directory_link(
                         let plots = v["plots"].as_array().map(|a| a.iter().filter_map(Plot::from_json).collect()).unwrap_or_default();
                         let portals = v["portals"].as_array().cloned().unwrap_or_default();
                         let parties = parse_parties(&v["parties"]);
-                        if tx.send(Event::Rules(plots, portals, parties)).await.is_err() {
+                        if tx.send(Event::Rules(plots, portals, parties, started)).await.is_err() {
                             return;
                         }
                         said = false;

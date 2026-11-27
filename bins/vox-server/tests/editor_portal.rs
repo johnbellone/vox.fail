@@ -186,6 +186,10 @@ struct Stand {
     on_make: Mutex<bool>,
     /// how many times the world fetched the rules
     fetches: Mutex<usize>,
+    /// the next rules fetch is answered this late (with the list as it was when the fetch came)
+    slow_rules: Mutex<Option<Duration>>,
+    /// how many refunds are answered with an error first
+    refund_fails: Mutex<usize>,
 }
 
 impl Stand {
@@ -213,9 +217,16 @@ async fn directory(st: Arc<Stand>) -> String {
             get({
                 let st = st.clone();
                 move || {
-                    *st.fetches.lock().unwrap() += 1;
-                    let rules = st.rules.lock().unwrap().clone();
-                    async move { Json(rules) }
+                    let st = st.clone();
+                    async move {
+                        *st.fetches.lock().unwrap() += 1;
+                        let rules = st.rules.lock().unwrap().clone();
+                        let slow = st.slow_rules.lock().unwrap().take();
+                        if let Some(d) = slow {
+                            tokio::time::sleep(d).await;
+                        }
+                        Json(rules)
+                    }
                 }
             }),
         )
@@ -262,8 +273,20 @@ async fn directory(st: Arc<Stand>) -> String {
             post({
                 let st = st.clone();
                 move |Json(body): Json<Value>| {
-                    st.calls.lock().unwrap().push(("portal/refund".into(), body));
-                    async { Json(json!({ "refunded": true })) }
+                    let st = st.clone();
+                    async move {
+                        st.calls.lock().unwrap().push(("portal/refund".into(), body));
+                        let fail = {
+                            let mut left = st.refund_fails.lock().unwrap();
+                            let fail = *left > 0;
+                            *left = left.saturating_sub(1);
+                            fail
+                        };
+                        if fail {
+                            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                        }
+                        Json(json!({ "refunded": true })).into_response()
+                    }
                 }
             }),
         )
@@ -420,6 +443,47 @@ async fn editor_portal_without_a_directory_a_builder_has_no_plot() {
     send(&mut a.ws, &pose([2.5, 0.0, 2.5])).await;
     send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("door", [3.5, 0.0, 2.5], Dest::World { world: "yard".into() }, None) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NotYours));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_portal_a_rules_fetch_begun_before_a_make_does_not_undo_it() {
+    let st = Arc::new(Stand::default());
+    st.set_rules(vec![plot(&[8])], vec![]);
+    *st.on_make.lock().unwrap() = true;
+    let (_server, url) = serve(asking(&directory(st.clone()).await)).await;
+    let mut a = join(&url, "Cy", 8).await;
+    send(&mut a.ws, &pose([2.5, 0.0, 2.5])).await;
+    // the next rules fetch is answered late, with a list that has no portal in it: it begins
+    // now, before the charge and the Make
+    *st.slow_rules.lock().unwrap() = Some(Duration::from_millis(1500));
+    wait_until("the slow fetch to begin", || st.slow_rules.lock().unwrap().is_none()).await;
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("door", [3.5, 0.0, 2.5], Dest::World { world: "yard".into() }, None) }).await;
+    let made = next_entities(&mut a.ws).await;
+    assert_eq!(portal_of(&made[0]).key, Some(100));
+    // the late answer comes back and must not take the new portal away
+    let later = quiet_for(&mut a.ws, Duration::from_millis(2500)).await;
+    assert!(later.iter().all(|c| c.component.is_some()), "a portal was removed by a stale list: {later:?}");
+    let newcomer = join(&url, "Di", 7).await;
+    assert!(keyed(&newcomer.entities, 100).is_some(), "the new portal is still placed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_portal_a_refund_that_fails_is_asked_once_more() {
+    let st = Arc::new(Stand::default());
+    st.set_rules(vec![plot(&[10])], vec![]);
+    *st.refund_fails.lock().unwrap() = 1;
+    let (_server, url) = serve(asking(&directory(st.clone()).await)).await;
+    // as the plot-released test: the plot goes while the charge is asked, so the charge is refunded
+    let mut a = join(&url, "Ed", 10).await;
+    send(&mut a.ws, &pose([2.5, 0.0, 2.5])).await;
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("door", [3.5, 0.0, 2.5], Dest::World { world: "yard".into() }, None) }).await;
+    wait_until("the charge to be asked", || !st.calls_to("portal").is_empty()).await;
+    st.set_rules(vec![], vec![]);
+    assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NotYours));
+    wait_until("the refund to be asked twice", || st.calls_to("portal/refund").len() >= 2).await;
+    let refunds = st.calls_to("portal/refund");
+    assert_eq!(refunds.len(), 2, "the refused refund is asked once more, and no more");
+    assert_eq!(refunds[1]["key"], json!(100));
 }
 
 /// Sets the rules to one plot (accounts 7 and 8 build there) and `portals`.

@@ -135,6 +135,8 @@ impl WorldState {
             portals: None,
             portal_routes: HashMap::new(),
             refunds_due: Vec::new(),
+            last_keyed_commit: None,
+            rules_now: None,
             applied: set,
             settings_unsaved: false,
         };
@@ -211,10 +213,15 @@ impl WorldState {
                         "world": self.cfg.name, "level": self.cfg.level, "spawn": self.spawn, "players": players,
                     }));
                 }
-                Event::Rules(plots, portals, parties) => {
+                Event::Rules(plots, portals, parties, started) => {
                     self.plots = plots;
-                    let changes = self.reconcile_portals(&portals);
-                    self.broadcast_entities(changes);
+                    // a list fetched before this world last changed a keyed portal predates that
+                    // change, and would undo it: it is not applied, and the fetch the change woke
+                    // brings the portals up to date
+                    if !self.last_keyed_commit.is_some_and(|t| started < t) {
+                        let changes = self.reconcile_portals(&portals);
+                        self.broadcast_entities(changes);
+                    }
                     // rebuilt whole, so a party the directory dropped stops applying. Parties come
                     // from the directory's rules, fetched every `rules_every` (default 30 s), so a
                     // new party can take up to that long to be able to talk.
@@ -913,9 +920,12 @@ impl WorldState {
         let (name, tx) = (p.name.clone(), p.tx.clone());
         let seq = self.seq + 1;
         let when = now_unix();
+        let keyed: bool;
         let (change, zones, touched) = match edit {
             Edit::Put { entity, component, .. } => {
                 let old = entity.and_then(|e| self.entities.map.get(&e)).map(|(_, c)| c.clone());
+                keyed = matches!(component, Component::Portal(ref p) if p.key.is_some())
+                    || matches!(old, Some(Component::Portal(ref p)) if p.key.is_some());
                 let Some(eid) = self.entities.put(seq, when, name, entity, component.clone()) else {
                     // no id left to give a new entity
                     self.refuse_entity(conn, &tx, id, EntityWhy::TooMany);
@@ -931,10 +941,20 @@ impl WorldState {
                     self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
                     return false;
                 };
+                keyed = matches!(old, Component::Portal(ref p) if p.key.is_some());
                 (EntityChange { seq, entity, component: None }, vec![entities::zone_key(&old)], is_objective_or_settings(&old))
             }
         };
         self.seq = seq;
+        if keyed {
+            // the directory's list is about to change: its fetch is woken, and any list fetched
+            // from now on (that began after this) is applied. The time is taken first, so a
+            // fetch that begins after the wake is never older than it.
+            self.last_keyed_commit = Some(Instant::now());
+            if let Some(now) = &self.rules_now {
+                now.notify_one();
+            }
+        }
         // the zones it was in and is in are changed for the next snapshot
         self.snap_changed.extend(zones);
         self.broadcast_entities(vec![change]);
