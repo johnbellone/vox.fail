@@ -5,7 +5,7 @@
 use super::*;
 use crate::entities::{self, Entities};
 use vox_core::edit::{self, Ctx, EYES, PlotArea, REACH, Role};
-use vox_core::entity::{Component, EntityWhy, Portal, Settings, Spawn};
+use vox_core::entity::{Axis, Component, Dest, EntityWhy, Portal, Settings, Spawn};
 use vox_core::portal::Door;
 use vox_core::wire::EntityChange;
 
@@ -132,6 +132,9 @@ impl WorldState {
             entities: ents,
             editors: None,
             editor_cache: HashMap::new(),
+            portals: None,
+            portal_routes: HashMap::new(),
+            refunds_due: Vec::new(),
             applied: set,
             settings_unsaved: false,
         };
@@ -175,6 +178,12 @@ impl WorldState {
                     }
                     if self.last_flush.elapsed() >= self.cfg.flush_every {
                         self.save();
+                    }
+                    // a refund that could not be queued is tried once more, here
+                    for (account, key) in std::mem::take(&mut self.refunds_due) {
+                        if !self.ask_refund(account, key) {
+                            eprintln!("couldn't refund portal {key} to account {account}: the directory's queue is full twice");
+                        }
                     }
                 }
                 Event::Status(reply) => {
@@ -222,6 +231,7 @@ impl WorldState {
                     }
                 }
                 Event::Editor { conn, account, editor } => self.editor_answer(conn, account, editor),
+                Event::Portal { conn, account, call, status, body } => self.portal_answer(conn, account, call, status, body),
                 Event::Shutdown => break,
             }
         }
@@ -332,12 +342,18 @@ impl WorldState {
     /// logged like an edit; the changes come back for everyone to be told.
     pub(super) fn reconcile_portals(&mut self, portals: &[serde_json::Value]) -> Vec<EntityChange> {
         let mut wanted: std::collections::BTreeMap<i64, Component> = std::collections::BTreeMap::new();
+        let mut routes = HashMap::new();
         for v in portals {
             // a portal without a valid key (or doorway) is left out
-            if let Some((key, c)) = entities::from_directory(v) {
-                wanted.entry(key).or_insert(c);
+            if let Some((key, c, route)) = entities::from_directory(v)
+                && !wanted.contains_key(&key)
+            {
+                wanted.insert(key, c);
+                routes.insert(key, route);
             }
         }
+        // where each keyed portal leads (for travel and for a destination change), as the list says
+        self.portal_routes = routes;
         let (have, stale) = self.entities.keyed_portals(&wanted);
         let at = now_unix();
         let mut changes = Vec::new();
@@ -647,7 +663,8 @@ impl WorldState {
             return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
         }
         if let Some(p) = self.players.get_mut(&conn) {
-            p.pending = Some(Pending { id, edit });
+            // the role is set when the answer comes (see `Pending`)
+            p.pending = Some(Pending { id, edit, role: Role::Builder });
         }
     }
 
@@ -690,15 +707,210 @@ impl WorldState {
         }
     }
 
-    /// Checks an edit against the rules, then makes it: a new edit number (taken only once the
-    /// change is made), the entity log, and the change to everyone. An Objective or Settings
-    /// change is taken up by the running world.
+    /// Checks an edit against the rules, then makes it. A player portal the directory keeps
+    /// (a new one, which costs Authority, or a keyed one, moved, re-linked or removed) is held
+    /// while the directory answers (`hold_for_directory`, `portal_answer`); anything else is
+    /// made at once (`commit_edit`).
     fn apply_entity_edit(&mut self, conn: u64, id: u32, edit: Edit, role: Role) {
         let Some(p) = self.players.get(&conn) else { return };
-        let (account, at, name, tx) = (p.account, p.at, p.name.clone(), p.tx.clone());
+        let (account, at, tx) = (p.account, p.at, p.tx.clone());
         if let Err(why) = self.judge(&edit, role, account, at) {
             return self.refuse_entity(conn, &tx, id, why);
         }
+        if let Some(account) = account {
+            match self.directory_first(&edit, role, false) {
+                Ok(None) => {}
+                Ok(Some((call, body))) => return self.hold_for_directory(conn, Pending { id, edit, role }, account, call, body),
+                Err(why) => return self.refuse_entity(conn, &tx, id, why),
+            }
+        }
+        self.commit_edit(conn, id, edit);
+    }
+
+    /// The directory call a judged edit needs before the world may make it, if any: a new
+    /// portal by a builder is charged (`Make`); a keyed portal is moved (`Update`, unless
+    /// `moved` is already done), given another destination (`Link`), or removed (`Remove`).
+    /// None: the world makes the edit alone. Errors refuse the edit: a destination the
+    /// directory cannot hold for a keyed portal (see `keyed_call`).
+    fn directory_first(&self, edit: &Edit, role: Role, moved: bool) -> Result<Option<(PortalCall, serde_json::Value)>, EntityWhy> {
+        match edit {
+            Edit::Put { entity: None, component: Component::Portal(p), .. } if role == Role::Builder => {
+                // the directory charges a builder's portal and keeps its key, so it is asked
+                // before it is placed; an editor's is free, and unkeyed
+                Ok(Some((PortalCall::Make, make_body(p))))
+            }
+            Edit::Put { entity: Some(id), component: Component::Portal(new), .. } => match self.entities.map.get(id) {
+                Some((_, Component::Portal(old))) if old.key.is_some() => {
+                    // a player's portal belongs to its owner: an editor's change is refused here,
+                    // not asked of the directory, which would refuse it for the owner check
+                    if role == Role::Editor {
+                        return Err(EntityWhy::NotYours);
+                    }
+                    let current = old.key.and_then(|k| self.portal_routes.get(&k)).and_then(|r| r.to.as_deref());
+                    keyed_call(old, new, moved, current)
+                }
+                _ => Ok(None),
+            },
+            Edit::Remove { entity, .. } => match self.entities.map.get(entity) {
+                Some((_, Component::Portal(p))) => match p.key {
+                    // as above: an editor may not remove a player's portal
+                    Some(_) if role == Role::Editor => Err(EntityWhy::NotYours),
+                    Some(key) => Ok(Some((PortalCall::Remove, serde_json::json!({ "key": key })))),
+                    None => Ok(None),
+                },
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
+    /// Holds a judged edit while the directory answers a portal call (one held edit per player),
+    /// and asks it. Without a directory, or when the question can't be queued, the edit is
+    /// refused as unavailable.
+    ///
+    /// A `Make` carries an idempotency key built from the world, the account, the connection
+    /// and the edit's id, so a retry of the same edit on the same connection is answered by the
+    /// directory without a second charge. A client that retries after `Unavailable` with a new
+    /// edit id (or after reconnecting) makes a new request, which the directory may charge
+    /// again. The editor reuses the id for a retry; any other client must do the same.
+    fn hold_for_directory(&mut self, conn: u64, pending: Pending, account: u64, call: PortalCall, mut body: serde_json::Value) {
+        let Some(tx) = self.players.get(&conn).map(|p| p.tx.clone()) else { return };
+        let id = pending.id;
+        if self.portals.is_none() {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
+        }
+        if call == PortalCall::Make {
+            // one request id per edit: a repeat of the same request is answered, not charged again
+            body["idem"] = serde_json::json!(idem_key(&self.cfg.name, account, conn, id));
+        }
+        let asked = self.portals.as_ref().is_some_and(|asks| {
+            asks.try_send(PortalAsk { conn: Some(conn), account, call, body }).is_ok()
+        });
+        if !asked {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
+        }
+        if let Some(p) = self.players.get_mut(&conn) {
+            p.pending = Some(pending);
+        }
+    }
+
+    /// Asks the directory to refund a portal's charge, for a portal the world did not place.
+    /// Nobody waits for the answer; a failed refund is logged by the office.
+    fn refund_portal(&mut self, account: u64, key: i64) {
+        if !self.ask_refund(account, key) {
+            // the queue is full: the tick tries once more (see `run`)
+            self.refunds_due.push((account, key));
+        }
+    }
+
+    fn ask_refund(&self, account: u64, key: i64) -> bool {
+        self.portals.as_ref().is_some_and(|asks| {
+            asks.try_send(PortalAsk { conn: None, account, call: PortalCall::Refund, body: serde_json::json!({ "key": key }) }).is_ok()
+        })
+    }
+
+    /// Where walking through a doorway leads: its own url and arrival, or for a keyed portal to
+    /// a world or a pair, the url and arrival its rules row gives (None: no travel).
+    fn travel_of(&self, p: &Portal) -> Option<(Option<String>, [f32; 3])> {
+        match &p.to {
+            Dest::World { .. } | Dest::Pair { .. } => {
+                let route = self.portal_routes.get(&p.key?)?;
+                Some((Some(route.url.clone()?), route.arrive))
+            }
+            _ => p.travel(),
+        }
+    }
+
+    /// The directory answered a held portal call for `conn`'s edit. Refusals (no answer, a
+    /// refused call) refuse the edit. A new portal the directory made is judged again as it
+    /// stands now, and placed with its key (or refunded, when the rules no longer allow it). A
+    /// moved keyed portal is then given its destination, if that changed, or is made here.
+    fn portal_answer(&mut self, conn: u64, account: u64, call: PortalCall, status: Option<u16>, body: serde_json::Value) {
+        let Some(p) = self.players.get_mut(&conn) else {
+            // they left while the directory answered: a portal it made is given back, not placed
+            if let (PortalCall::Make, Some(200), Some(key)) = (call, status, body["key"].as_i64()) {
+                self.refund_portal(account, key);
+            }
+            return;
+        };
+        let (tx, at) = (p.tx.clone(), p.at);
+        let Some(Pending { id, edit, role }) = p.pending.take() else { return };
+        let Some(status) = status else {
+            return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
+        };
+        if status != 200 {
+            return self.refuse_entity(conn, &tx, id, portal_refusal(call, status));
+        }
+        match call {
+            PortalCall::Make => {
+                let Edit::Put { component: Component::Portal(mut made), .. } = edit else {
+                    return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
+                };
+                // a reply with no key cannot be placed or refunded by key: the player is refused
+                let Some(key) = body["key"].as_i64() else {
+                    return self.refuse_entity(conn, &tx, id, EntityWhy::Unavailable);
+                };
+                // a rules fetch that came first has already placed this portal (its key is in
+                // the list the directory keeps): it is placed, so nothing more is answered
+                if self.entities.map.values().any(|(_, c)| matches!(c, Component::Portal(p) if p.key == Some(key))) {
+                    return;
+                }
+                // judged as the builder proposed it (with no key, as a new portal must be), now
+                let proposed = Edit::Put { entity: None, expect: None, component: Component::Portal(made.clone()) };
+                if let Err(why) = self.judge(&proposed, role, Some(account), at) {
+                    self.refund_portal(account, key);
+                    return self.refuse_entity(conn, &tx, id, why);
+                }
+                made.key = Some(key);
+                if let Some(name) = body["name"].as_str() {
+                    made.name = name.to_string();
+                }
+                if let Err(why) = Component::Portal(made.clone()).validate() {
+                    self.refund_portal(account, key);
+                    return self.refuse_entity(conn, &tx, id, why);
+                }
+                let placed = self.commit_edit(conn, id, Edit::Put { entity: None, expect: None, component: Component::Portal(made) });
+                if !placed {
+                    // no id was left for it: the charge is given back (the player was refused)
+                    self.refund_portal(account, key);
+                }
+            }
+            PortalCall::Update => match self.directory_first(&edit, role, true) {
+                Ok(Some((next, next_body))) => self.hold_for_directory(conn, Pending { id, edit, role }, account, next, next_body),
+                Ok(None) => self.commit_after_directory(conn, id, edit, role),
+                Err(why) => self.refuse_entity(conn, &tx, id, why),
+            },
+            PortalCall::Link => self.commit_after_directory(conn, id, edit, role),
+            PortalCall::Remove => {
+                if body["removed"].as_bool() == Some(true) {
+                    self.commit_after_directory(conn, id, edit, role);
+                } else {
+                    // the directory had no such portal: the list it keeps has already moved on
+                    self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
+                }
+            }
+            PortalCall::Refund => {}
+        }
+    }
+
+    /// Judges an edit again, now the directory has answered (the place, the rights and the
+    /// caps may all have changed while it was held), then makes it.
+    fn commit_after_directory(&mut self, conn: u64, id: u32, edit: Edit, role: Role) {
+        let Some(p) = self.players.get(&conn) else { return };
+        let (account, at, tx) = (p.account, p.at, p.tx.clone());
+        if let Err(why) = self.judge(&edit, role, account, at) {
+            return self.refuse_entity(conn, &tx, id, why);
+        }
+        self.commit_edit(conn, id, edit);
+    }
+
+    /// Makes an edit the rules have passed: a new edit number (taken only once the change is
+    /// made), the entity log, and the change to everyone. An Objective or Settings change is
+    /// taken up by the running world. Returns whether it was made; when it was not (no id left
+    /// for a new entity), the player has been refused.
+    fn commit_edit(&mut self, conn: u64, id: u32, edit: Edit) -> bool {
+        let Some(p) = self.players.get(&conn) else { return false };
+        let (name, tx) = (p.name.clone(), p.tx.clone());
         let seq = self.seq + 1;
         let when = now_unix();
         let (change, zones, touched) = match edit {
@@ -706,7 +918,8 @@ impl WorldState {
                 let old = entity.and_then(|e| self.entities.map.get(&e)).map(|(_, c)| c.clone());
                 let Some(eid) = self.entities.put(seq, when, name, entity, component.clone()) else {
                     // no id left to give a new entity
-                    return self.refuse_entity(conn, &tx, id, EntityWhy::TooMany);
+                    self.refuse_entity(conn, &tx, id, EntityWhy::TooMany);
+                    return false;
                 };
                 let mut zones = vec![entities::zone_key(&component)];
                 zones.extend(old.as_ref().map(entities::zone_key));
@@ -715,7 +928,8 @@ impl WorldState {
             }
             Edit::Remove { entity, .. } => {
                 let Some(old) = self.entities.remove(seq, when, name, entity) else {
-                    return self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
+                    self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
+                    return false;
                 };
                 (EntityChange { seq, entity, component: None }, vec![entities::zone_key(&old)], is_objective_or_settings(&old))
             }
@@ -727,6 +941,7 @@ impl WorldState {
         if touched {
             self.refresh_from_entities();
         }
+        true
     }
 
     /// The entity the edit is about, as the sender last saw it: it must exist, and `expect` must
@@ -754,11 +969,6 @@ impl WorldState {
                     None => None,
                     Some(id) => Some(self.held(*id, *expect)?),
                 };
-                // a builder's new portal costs authority (phase 2's charge through the directory,
-                // not yet): refused until that lands, so no one places one for free
-                if role == Role::Builder && account.is_some() && old.is_none() && matches!(component, Component::Portal(_)) {
-                    return Err(EntityWhy::Unavailable);
-                }
                 let zone = entities::zone_key(component);
                 let ctx = Ctx {
                     role,
@@ -832,8 +1042,8 @@ impl WorldState {
                 // is not a trip; a world or pair doorway is resolved by the directory (phase 2),
                 // so it is not a trip here either. `travel` says which is which.
                 let door = self.entities.map.values().find_map(|(_, c)| match c {
-                    Component::Portal(p) if p.name == portal => p
-                        .travel()
+                    Component::Portal(p) if p.name == portal => self
+                        .travel_of(p)
                         .filter(|(url, _)| url.is_some())
                         .map(|(url, arrive)| Door::from_portal(p, url, arrive)),
                     _ => None,
@@ -965,6 +1175,76 @@ impl WorldState {
             }
         }
     }
+}
+
+/// The body of a directory `Make` call for a new portal: where, which way, how big, and where it
+/// leads (a world by id, or a pair's key). Other destinations never reach here: the rules refuse
+/// them for a builder first.
+fn make_body(p: &Portal) -> serde_json::Value {
+    let mut body = serde_json::json!({ "at": p.at, "axis": axis_name(p.axis), "size": p.size, "yaw": p.yaw });
+    match &p.to {
+        Dest::World { world } => body["to"] = serde_json::json!(world),
+        Dest::Pair { key } => body["pair"] = serde_json::json!(key),
+        _ => {}
+    }
+    body
+}
+
+/// The directory call a keyed portal's edit needs, after the rules have passed it: `Update`
+/// when its place, axis, size or yaw changed (and `moved` is not yet done), else `Link` when its
+/// destination changed, else None. `current` is the world the portal leads to now (its rules
+/// row's `to`). A pair is `Link` to its other end. A world is the portal's own world: from a
+/// pair it is `Link` with no pair, and otherwise no call. Any other world is `Unavailable` (make
+/// a new portal for it).
+fn keyed_call(old: &Portal, new: &Portal, moved: bool, current: Option<&str>) -> Result<Option<(PortalCall, serde_json::Value)>, EntityWhy> {
+    let key = old.key.unwrap_or_default();
+    let changed = old.at != new.at || old.axis != new.axis || old.size != new.size || old.yaw != new.yaw;
+    if changed && !moved {
+        let body = serde_json::json!({ "key": key, "at": new.at, "axis": axis_name(new.axis), "size": new.size, "yaw": new.yaw });
+        return Ok(Some((PortalCall::Update, body)));
+    }
+    if old.to == new.to {
+        return Ok(None);
+    }
+    let was_paired = matches!(old.to, Dest::Pair { .. });
+    match &new.to {
+        Dest::Pair { key: other } => Ok(Some((PortalCall::Link, serde_json::json!({ "key": key, "pair": other })))),
+        Dest::World { world } if current == Some(world.as_str()) => {
+            if was_paired { Ok(Some((PortalCall::Link, serde_json::json!({ "key": key, "pair": null })))) } else { Ok(None) }
+        }
+        _ => Err(EntityWhy::Unavailable),
+    }
+}
+
+/// The name the directory's wire form gives an axis.
+fn axis_name(a: Axis) -> &'static str {
+    match a {
+        Axis::X => "x",
+        Axis::Z => "z",
+    }
+}
+
+/// What a refused directory call says to the player: not enough Authority (the directory's 402)
+/// is `CantAfford`, a portal not theirs or gone (403, 404) is `NotYours`, anything else
+/// `Unavailable`.
+fn portal_refusal(call: PortalCall, status: u16) -> EntityWhy {
+    match status {
+        402 if call == PortalCall::Make => EntityWhy::CantAfford,
+        403 | 404 => EntityWhy::NotYours,
+        _ => EntityWhy::Unavailable,
+    }
+}
+
+/// The directory's request id for a portal this world asks it to make: 32 hex characters
+/// from the world's name, the account, the connection and the edit id. Hashed because the
+/// directory accepts at most 64 characters of `[A-Za-z0-9._:-]` and a world's name can be long
+/// or hold other characters; two 64-bit FNV-1a hashes with different offsets make a collision
+/// between two requests practically impossible (and the directory also checks the world and
+/// account of a repeat).
+fn idem_key(world: &str, account: u64, conn: u64, id: u32) -> String {
+    let text = format!("{world}\u{0}{account}\u{0}{conn}\u{0}{id}");
+    let fnv = |offset: u64| text.bytes().fold(offset, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3));
+    format!("{:016x}{:016x}", fnv(0xcbf2_9ce4_8422_2325), fnv(0x6c62_272e_07bb_0142))
 }
 
 pub(super) fn within_reach(at: Option<[f32; 3]>, cell: [i32; 3]) -> bool {

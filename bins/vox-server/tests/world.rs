@@ -487,7 +487,7 @@ async fn plots_portals_and_reports_with_a_directory() {
                 axum::Json(serde_json::json!({
                     "plots": [{ "id": 1, "x0": 2, "z0": -2, "x1": 6, "z1": 2, "builders": [7] }],
                     "portals": [{ "key": 1, "name": "The Yard (1)", "at": [0, 0, -6], "axis": "z", "size": [4, 6], "level": "yard",
-                                  "url": "/w/7781/ws", "arrive": [0.5, 0, 0.5], "yaw": 0 }],
+                                  "url": "/w/7781/ws", "arrive": [0.5, 0, 0.5], "yaw": 0, "to": "7781" }],
                 }))
             }),
         )
@@ -542,7 +542,7 @@ async fn plots_portals_and_reports_with_a_directory() {
     let (mut ann, settings, entities) = enter(7, "Ann").await;
     let (mut bob, _, _) = enter(8, "Bob").await;
     // the settings carry no portals: the portal Ann opened at the directory is an entity, keyed
-    // by the directory's id, and it leads where the directory said
+    // by the directory's id, and it leads to the world the directory named
     let s: serde_json::Value = serde_json::from_str(&settings).unwrap();
     assert_eq!(s["sky"], "void");
     assert!(s.get("portals").is_none(), "{settings}");
@@ -550,7 +550,7 @@ async fn plots_portals_and_reports_with_a_directory() {
         Some(vox_core::entity::Component::Portal(p)) if p.key == Some(1) => Some(p.to.clone()),
         _ => None,
     });
-    assert_eq!(opened, Some(vox_core::entity::Dest::Url { url: "/w/7781/ws".into(), arrive: [0.5, 0.0, 0.5] }));
+    assert_eq!(opened, Some(vox_core::entity::Dest::World { world: "7781".into() }));
     // Ann builds in her plot; Bob can't, but can outside it
     send(&mut ann, &ToServer::Edit { id: 1, cell: [3, 0, 0], block: 2 }).await;
     send(&mut bob, &ToServer::Edit { id: 1, cell: [4, 0, 0], block: 2 }).await;

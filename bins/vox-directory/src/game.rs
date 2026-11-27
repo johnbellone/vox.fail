@@ -1359,7 +1359,7 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
             let name = portal_name(pid, &w.name);
             let mut entry = json!({
                 "key": pid, "name": name, "at": at, "axis": axis, "size": size,
-                "level": level, "url": w.url, "yaw": yaw,
+                "level": level, "url": w.url, "yaw": yaw, "to": w.id,
             });
             match (dest_key, other) {
                 (Some(pair), Some(end)) => {

@@ -93,6 +93,8 @@ from before the upgrade (`vox-server --db <world>.db --restore <id>`, world stop
 world's current entities, since that snapshot predates them. Then roll the binary back. The restore
 itself is a snapshot, so the newer binary can still undo it.
 
+Deploy the directory before the worlds: a world on this code ignores player portals without `to` or `pair` from an older directory, and would drop them.
+
 ## All worlds in one process (vox-host)
 
 Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port

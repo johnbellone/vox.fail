@@ -50,9 +50,10 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use rusqlite::{Connection, params};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use vox_core::{
     Bounds, Chunk, ChunkKey, Why, World,
+    edit::Role,
     entity::{Component, EntityId},
     weather::{Climate, Weather},
     wire::{self, Applied, MAX_MESSAGE, PROTOCOL, ToClient, ToServer},
@@ -81,6 +82,8 @@ const EDIT_RATE: f32 = 10.0;
 const EDITOR_CACHE: Duration = Duration::from_secs(5);
 /// Rights questions waiting for the directory at most; past this an edit is refused.
 const ASKS_QUEUED: usize = 256;
+/// Player portal calls to the directory waiting at most; past this an edit is refused.
+const PORTAL_ASKS_QUEUED: usize = 256;
 
 #[derive(Clone)]
 pub struct Config {
@@ -198,6 +201,8 @@ enum Event {
     /// the directory's answer on whether an account may make advanced edits (None: no answer,
     /// which refuses the edit)
     Editor { conn: u64, account: u64, editor: Option<bool> },
+    /// the directory's answer to a player's portal call (`status` None: no answer in time)
+    Portal { conn: u64, account: u64, call: PortalCall, status: Option<u16>, body: serde_json::Value },
     Shutdown,
 }
 
@@ -211,11 +216,36 @@ pub(crate) enum Edit {
     Remove { entity: EntityId, expect: Option<u64> },
 }
 
-/// An edit held while the directory answers, with the request id to refuse it under.
+/// An edit held while the directory answers, with the request id to refuse it under, and the
+/// role it is judged as. A held edit for advanced rights (`editor_answer`) has no role yet: the
+/// directory's answer sets it, so the placeholder there is never read.
 #[derive(Debug)]
 pub(crate) struct Pending {
     pub id: u32,
     pub edit: Edit,
+    pub role: Role,
+}
+
+/// A directory call about a player's portal: a new one is charged (`Make`), a keyed one is moved
+/// (`Update`), given another destination (`Link`) or removed (`Remove`); `Refund` gives a charge
+/// back for a portal that was not placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PortalCall {
+    Make,
+    Update,
+    Link,
+    Remove,
+    Refund,
+}
+
+/// A call for the directory's portal endpoints. `conn` is the player waiting for the answer
+/// (None: nobody waits, as for a refund).
+pub(crate) struct PortalAsk {
+    pub conn: Option<u64>,
+    pub account: u64,
+    pub call: PortalCall,
+    /// the call's fields (the world and the account are added when it is sent)
+    pub body: serde_json::Value,
 }
 
 /// A question for the directory: may this account make advanced edits here? The answer comes
@@ -290,6 +320,9 @@ impl Server {
         let (trip_tx, trip_rx) = mpsc::channel(TRIPS_QUEUED);
         let (goal_tx, goal_rx) = mpsc::channel(GOALS_QUEUED);
         let (ask_tx, ask_rx) = mpsc::channel(ASKS_QUEUED);
+        let (portal_tx, portal_rx) = mpsc::channel(PORTAL_ASKS_QUEUED);
+        // woken when the directory has changed its portals, so the rules are fetched at once
+        let rules_now = Arc::new(Notify::new());
         let link = match (&cfg.directory_url, &cfg.world_secret) {
             (Some(u), Some(s)) => Some((u.trim_end_matches('/').to_string(), s.clone(), cfg.name.clone(), cfg.report_every, cfg.rules_every)),
             _ => None,
@@ -301,6 +334,7 @@ impl Server {
             state.trips = Some(trip_tx);
             state.goals = Some(goal_tx);
             state.editors = Some(ask_tx);
+            state.portals = Some(portal_tx);
         }
         let (tx, rx) = mpsc::channel(4096);
         let thread = std::thread::Builder::new()
@@ -317,11 +351,12 @@ impl Server {
             }
         });
         if let Some(link) = link {
-            tokio::spawn(directory_link(tx.clone(), link));
+            tokio::spawn(directory_link(tx.clone(), link, rules_now.clone()));
         }
         if let Some((url, secret, world)) = office {
             tokio::spawn(objective_reached(goal_rx, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(editor_office(tx.clone(), ask_rx, url.clone(), secret.clone(), world.clone()));
+            tokio::spawn(portal_office(tx.clone(), portal_rx, rules_now, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(ticket_office(tx.clone(), trip_rx, url, secret, world));
         }
         Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)) })
@@ -439,6 +474,12 @@ struct WorldState {
     entities: entities::Entities,
     /// where questions on advanced rights go (to the directory); None: no directory to ask
     editors: Option<mpsc::Sender<Asking>>,
+    /// where player portal calls go (to the directory); None: no directory, so no player portals
+    portals: Option<mpsc::Sender<PortalAsk>>,
+    /// where each keyed portal leads (its rules row), by key, rebuilt on every rules fetch
+    portal_routes: HashMap<i64, entities::Route>,
+    /// refunds that could not be queued, tried once more on the next tick
+    refunds_due: Vec<(u64, i64)>,
     /// the directory's answers on advanced rights, by account, with when they came
     editor_cache: HashMap<u64, (Instant, bool)>,
     /// the settings the ground, climate and sun were last built from
@@ -479,4 +520,60 @@ fn sun_at(hours: f32) -> f32 {
 
 fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Asking the directory about player portals for the world thread (a charge, a change or a
+/// removal of one, a refund). Each call runs on its own task, so one slow answer holds nobody
+/// up, and gives up after five seconds (no answer). The answer goes back to the player as
+/// `Event::Portal`. A refund has no one waiting: a failed one is only logged.
+async fn portal_office(tx: mpsc::Sender<Event>, mut asks: mpsc::Receiver<PortalAsk>, rules_now: Arc<Notify>, url: String, secret: String, world: String) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(5)).build() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("no link to the directory for portals: {e}"),
+    };
+    while let Some(mut ask) = asks.recv().await {
+        let (http, tx, rules_now, url, secret, world) = (http.clone(), tx.clone(), rules_now.clone(), url.clone(), secret.clone(), world.clone());
+        tokio::spawn(async move {
+            let path = match ask.call {
+                PortalCall::Make => "portal",
+                PortalCall::Update => "portal/update",
+                PortalCall::Link => "portal/link",
+                PortalCall::Remove => "portal/remove",
+                PortalCall::Refund => "portal/refund",
+            };
+            // the world and the account are the world's own words, not the player's
+            ask.body["world"] = serde_json::json!(world);
+            ask.body["account"] = serde_json::json!(ask.account);
+            let got = http.post(format!("{url}/api/world/{path}")).bearer_auth(&secret).json(&ask.body).send().await;
+            let (status, reply) = match got {
+                Ok(r) => {
+                    let status = r.status().as_u16();
+                    (Some(status), r.json::<serde_json::Value>().await.unwrap_or(serde_json::Value::Null))
+                }
+                Err(e) => {
+                    eprintln!("can't reach the directory for a portal: {e}");
+                    (None, serde_json::Value::Null)
+                }
+            };
+            // the directory's list has changed (or, for a refund, its charge): the world fetches
+            // the rules now rather than at its next time, so a new portal can be walked through
+            let changed = match ask.call {
+                PortalCall::Refund => status == Some(200) && reply["refunded"].as_bool() == Some(true),
+                _ => status == Some(200),
+            };
+            if changed {
+                rules_now.notify_one();
+            }
+            match ask.conn {
+                Some(conn) => {
+                    let _ = tx.send(Event::Portal { conn, account: ask.account, call: ask.call, status, body: reply }).await;
+                }
+                None => {
+                    if ask.call == PortalCall::Refund && !changed {
+                        eprintln!("the directory didn't refund portal {} to account {} ({status:?})", ask.body["key"], ask.account);
+                    }
+                }
+            }
+        });
+    }
 }

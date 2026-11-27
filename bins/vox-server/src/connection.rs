@@ -217,9 +217,14 @@ fn parse_parties(v: &serde_json::Value) -> Vec<Vec<u64>> {
         .collect()
 }
 
-/// Talking to the directory: rules every `rules_every`, a report every `report_every`. A
-/// directory that's down is tried again next time; the world goes on meanwhile.
-pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world, report_every, rules_every): (String, String, String, Duration, Duration)) {
+/// Talking to the directory: rules every `rules_every`, a report every `report_every`, and the
+/// rules at once when `rules_now` is woken (the directory's portals changed). A directory that's
+/// down is tried again next time; the world goes on meanwhile.
+pub(super) async fn directory_link(
+    tx: mpsc::Sender<Event>,
+    (url, secret, world, report_every, rules_every): (String, String, String, Duration, Duration),
+    rules_now: Arc<Notify>,
+) {
     let http = match reqwest::Client::builder().timeout(Duration::from_secs(10)).build() {
         Ok(h) => h,
         Err(e) => return eprintln!("no link to the directory: {e}"),
@@ -265,7 +270,11 @@ pub(super) async fn directory_link(tx: mpsc::Sender<Event>, (url, secret, world,
             }
         }
         let wake = next_rules.min(next_report);
-        tokio::time::sleep(wake.saturating_duration_since(Instant::now()).max(Duration::from_millis(20))).await;
+        let nap = tokio::time::sleep(wake.saturating_duration_since(Instant::now()).max(Duration::from_millis(20)));
+        tokio::select! {
+            _ = nap => {}
+            _ = rules_now.notified() => next_rules = Instant::now(),
+        }
     }
 }
 

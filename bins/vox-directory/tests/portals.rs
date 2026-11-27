@@ -142,6 +142,8 @@ async fn portal_charged_once_for_a_repeated_request() {
     assert_eq!(r["portals"].as_array().unwrap().len(), 1);
     assert_eq!(r["portals"][0]["key"], first["key"]);
     assert_eq!(r["portals"][0]["axis"], "x");
+    // the destination world's id, so the server can keep the portal's destination as a world
+    assert_eq!(r["portals"][0]["to"], "yard");
 }
 
 #[tokio::test]

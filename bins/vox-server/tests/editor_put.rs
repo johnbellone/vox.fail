@@ -277,9 +277,10 @@ async fn editor_put_a_builder_cannot_move_a_level_portal_or_place_one() {
     let moved = portal("void", [void.2[0] + 1.0, void.2[1], void.2[2]], url_to(":7780"));
     send(&mut c.ws, &ToServer::Put { id: 1, entity: Some(void.0), expect: Some(void.1), component: moved }).await;
     assert_eq!(next_refusal(&mut c.ws).await, (1, EntityWhy::NotYours));
-    // a builder's new portal waits for the charge (not yet built): refused, not placed
+    // a builder's new portal: the rules are judged first (this stand-in has no plot of theirs),
+    // so it is refused before any charge is asked for
     send(&mut c.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: portal("door", [void.2[0], void.2[1], void.2[2] + 1.0], url_to(":7781")) }).await;
-    assert_eq!(next_refusal(&mut c.ws).await, (2, EntityWhy::Unavailable));
+    assert_eq!(next_refusal(&mut c.ws).await, (2, EntityWhy::NotYours));
 }
 
 /// The yard, asking the directory at `dir` about advanced rights.

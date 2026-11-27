@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, Transaction, params};
 use vox_core::{
     ChunkKey, wire,
-    entity::{Component, EntityId, Portal},
+    entity::{Component, Dest, EntityId, Portal},
     wire::EntityChange,
 };
 
@@ -306,11 +306,23 @@ fn zone_at(at: [f32; 3]) -> (i32, i32) {
     (zone.x, zone.z)
 }
 
+/// Where a keyed portal leads, as the directory's rules row says it: the world it leads to (`to`),
+/// and for travel the url there (`url`, None: no travel) and where one arrives (`arrive`). Kept
+/// beside the entity, since a player portal's destination is a world or a pair, which carry no
+/// url of their own.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Route {
+    pub to: Option<String>,
+    pub url: Option<String>,
+    pub arrive: [f32; 3],
+}
+
 /// A doorway the directory lists for a world (in the level format, with the directory's `key`):
-/// the key and the portal entity holding it. None when there is no key or the doorway is not a
-/// valid one. The level format's own reading is used, so a doorway is judged as a level's is.
-/// A dropped one is named on stderr with its key and why.
-pub(crate) fn from_directory(v: &serde_json::Value) -> Option<(i64, Component)> {
+/// the key, the portal entity holding it, and its route. Its destination is the paired portal
+/// (`pair`) when there is one, else the world (`to`); a row with neither is dropped. None when
+/// there is no key or the doorway is not a valid one. The level format's own reading is used, so
+/// a doorway is judged as a level's is. A dropped one is named on stderr with its key and why.
+pub(crate) fn from_directory(v: &serde_json::Value) -> Option<(i64, Component, Route)> {
     let Some(key) = v.get("key").and_then(|k| k.as_i64()) else {
         eprintln!("a directory portal has no key, dropped: {v}");
         return None;
@@ -330,7 +342,20 @@ pub(crate) fn from_directory(v: &serde_json::Value) -> Option<(i64, Component)> 
         eprintln!("directory portal {key} dropped: it needs a position, a level and an arrival");
         return None;
     };
-    Some((key, Component::Portal(Portal { key: Some(key), ..portal })))
+    let to = match (v.get("pair").and_then(|p| p.as_i64()), v.get("to").and_then(|t| t.as_str())) {
+        (Some(pair), _) => Dest::Pair { key: pair },
+        (None, Some(world)) => Dest::World { world: world.to_string() },
+        (None, None) => {
+            eprintln!("directory portal {key} dropped: it leads nowhere (no world or pair)");
+            return None;
+        }
+    };
+    let route = Route {
+        to: v.get("to").and_then(|t| t.as_str()).map(String::from),
+        url: v.get("url").and_then(|u| u.as_str()).map(String::from),
+        arrive: portal.travel().map_or([0.0; 3], |(_, arrive)| arrive),
+    };
+    Some((key, Component::Portal(Portal { key: Some(key), to, ..portal }), route))
 }
 
 /// Changes split into `Entities` messages: at most `wire::ENTITIES_PER_MESSAGE` to a message,
