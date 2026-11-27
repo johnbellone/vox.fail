@@ -20,6 +20,10 @@ export interface CastMember {
   group: string;
   portrait: string;
   about?: string;
+  /** one character in several outfits (build_catalogue.py FAMILIES): its id, its name, this outfit */
+  family?: string;
+  family_name?: string;
+  outfit?: string;
 }
 
 export type Slot = "hat" | "face" | "hand";

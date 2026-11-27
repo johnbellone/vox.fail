@@ -9,20 +9,26 @@
    "about": "Vox's main character: an American pit bull terrier with a blue nose, a blue-grey coat, white blaze, chest and paws, rose ears and an orange collar."
   },
   {
-   "id": "agent_bun",
-   "name": "Agent (bun)",
-   "group": "Cast",
-   "model": "models/agent_bun.glb",
-   "portrait": "portraits/agent_bun.png",
-   "about": "Secret Service agent: same suit, sunglasses and earpiece, hair in a tight bun."
-  },
-  {
    "id": "agent_buzz",
    "name": "Agent (buzz cut)",
    "group": "Cast",
    "model": "models/agent_buzz.glb",
    "portrait": "portraits/agent_buzz.png",
-   "about": "Secret Service agent: black suit, white shirt, black tie, red lapel pin, sunglasses, earpiece with coil, buzz cut."
+   "about": "Secret Service agent: black suit, white shirt, black tie, red lapel pin, sunglasses, earpiece with coil, buzz cut.",
+   "family": "agent",
+   "family_name": "Agent",
+   "outfit": "Buzz cut"
+  },
+  {
+   "id": "agent_bun",
+   "name": "Agent (bun)",
+   "group": "Cast",
+   "model": "models/agent_bun.glb",
+   "portrait": "portraits/agent_bun.png",
+   "about": "Secret Service agent: same suit, sunglasses and earpiece, hair in a tight bun.",
+   "family": "agent",
+   "family_name": "Agent",
+   "outfit": "Bun"
   },
   {
    "id": "agent_shaved",
@@ -30,7 +36,10 @@
    "group": "Cast",
    "model": "models/agent_shaved.glb",
    "portrait": "portraits/agent_shaved.png",
-   "about": "Secret Service agent: same suit, sunglasses and earpiece, shaved head."
+   "about": "Secret Service agent: same suit, sunglasses and earpiece, shaved head.",
+   "family": "agent",
+   "family_name": "Agent",
+   "outfit": "Shaved head"
   },
   {
    "id": "executive",
@@ -86,7 +95,10 @@
    "group": "Cast",
    "model": "models/rally_hat.glb",
    "portrait": "portraits/rally_hat.png",
-   "about": "Stars-and-stripes shirt, khaki shorts with tube socks, white beard, sunglasses, bucket hat."
+   "about": "Stars-and-stripes shirt, khaki shorts with tube socks, white beard, sunglasses, bucket hat.",
+   "family": "rally",
+   "family_name": "Rally-goer",
+   "outfit": "Bucket hat"
   },
   {
    "id": "rally_sign",
@@ -94,7 +106,10 @@
    "group": "Cast",
    "model": "models/rally_sign.glb",
    "portrait": "portraits/rally_sign.png",
-   "about": "Flag-print T-shirt, jeans, white sneakers, navy USA cap with a blonde ponytail through the back; waves a sign."
+   "about": "Flag-print T-shirt, jeans, white sneakers, navy USA cap with a blonde ponytail through the back; waves a sign.",
+   "family": "rally",
+   "family_name": "Rally-goer",
+   "outfit": "Sign"
   },
   {
    "id": "reporter",
@@ -110,7 +125,10 @@
    "group": "Cast",
    "model": "models/representative.glb",
    "portrait": "portraits/representative.png",
-   "about": "House member: burgundy blazer, gold member pin and earrings, full curly hair. Not based on anyone."
+   "about": "House member: burgundy blazer, gold member pin and earrings, full curly hair. Not based on anyone.",
+   "family": "representative",
+   "family_name": "Representative",
+   "outfit": "Burgundy blazer"
   },
   {
    "id": "rep_beard",
@@ -118,7 +136,10 @@
    "group": "Cast",
    "model": "models/rep_beard.glb",
    "portrait": "portraits/rep_beard.png",
-   "about": "Grey suit, purple tie, short black hair and full trimmed beard. Not based on anyone."
+   "about": "Grey suit, purple tie, short black hair and full trimmed beard. Not based on anyone.",
+   "family": "representative",
+   "family_name": "Representative",
+   "outfit": "Beard"
   },
   {
    "id": "rep_cream",
@@ -126,7 +147,10 @@
    "group": "Cast",
    "model": "models/rep_cream.glb",
    "portrait": "portraits/rep_cream.png",
-   "about": "Cream skirt suit over a navy top, long straight black hair. Not based on anyone."
+   "about": "Cream skirt suit over a navy top, long straight black hair. Not based on anyone.",
+   "family": "representative",
+   "family_name": "Representative",
+   "outfit": "Cream blazer"
   },
   {
    "id": "rep_open_collar",
@@ -134,7 +158,10 @@
    "group": "Cast",
    "model": "models/rep_open_collar.glb",
    "portrait": "portraits/rep_open_collar.png",
-   "about": "Navy blazer, open-collar blue shirt, no tie, brown quiff. Not based on anyone."
+   "about": "Navy blazer, open-collar blue shirt, no tie, brown quiff. Not based on anyone.",
+   "family": "representative",
+   "family_name": "Representative",
+   "outfit": "Open collar"
   },
   {
    "id": "rep_ginger",
@@ -142,7 +169,10 @@
    "group": "Cast",
    "model": "models/rep_ginger.glb",
    "portrait": "portraits/rep_ginger.png",
-   "about": "Green blazer, white blouse, copper-red ponytail. Not based on anyone."
+   "about": "Green blazer, white blouse, copper-red ponytail. Not based on anyone.",
+   "family": "representative",
+   "family_name": "Representative",
+   "outfit": "Ponytail"
   },
   {
    "id": "riot_a",
@@ -150,7 +180,10 @@
    "group": "Cast",
    "model": "models/riot_a.glb",
    "portrait": "portraits/riot_a.png",
-   "about": "Riot officer: black helmet with clear visor and neck guard, chest and back plates, shoulder pads, knee and shin guards, gloves, POLICE on the back."
+   "about": "Riot officer: black helmet with clear visor and neck guard, chest and back plates, shoulder pads, knee and shin guards, gloves, POLICE on the back.",
+   "family": "riot",
+   "family_name": "Riot officer",
+   "outfit": "A"
   },
   {
    "id": "riot_b",
@@ -158,7 +191,10 @@
    "group": "Cast",
    "model": "models/riot_b.glb",
    "portrait": "portraits/riot_b.png",
-   "about": "Riot officer, second face under the same gear."
+   "about": "Riot officer, second face under the same gear.",
+   "family": "riot",
+   "family_name": "Riot officer",
+   "outfit": "B"
   },
   {
    "id": "senator",
@@ -166,7 +202,10 @@
    "group": "Cast",
    "model": "models/senator.glb",
    "portrait": "portraits/senator.png",
-   "about": "Generic legislator: charcoal suit, blue tie, flag pin, silver side-parted hair. Not based on anyone."
+   "about": "Generic legislator: charcoal suit, blue tie, flag pin, silver side-parted hair. Not based on anyone.",
+   "family": "senator",
+   "family_name": "Senator",
+   "outfit": "Blue tie"
   },
   {
    "id": "senator_glasses",
@@ -174,7 +213,10 @@
    "group": "Cast",
    "model": "models/senator_glasses.glb",
    "portrait": "portraits/senator_glasses.png",
-   "about": "Charcoal suit, green tie, wire glasses, thinning white hair. Not based on anyone."
+   "about": "Charcoal suit, green tie, wire glasses, thinning white hair. Not based on anyone.",
+   "family": "senator",
+   "family_name": "Senator",
+   "outfit": "Glasses"
   },
   {
    "id": "senator_plum",
@@ -182,7 +224,10 @@
    "group": "Cast",
    "model": "models/senator_plum.glb",
    "portrait": "portraits/senator_plum.png",
-   "about": "Plum pantsuit, gold pin, short natural hair with grey flecks. Not based on anyone."
+   "about": "Plum pantsuit, gold pin, short natural hair with grey flecks. Not based on anyone.",
+   "family": "senator",
+   "family_name": "Senator",
+   "outfit": "Plum suit"
   },
   {
    "id": "senator_bob",
@@ -190,7 +235,10 @@
    "group": "Cast",
    "model": "models/senator_bob.glb",
    "portrait": "portraits/senator_bob.png",
-   "about": "Slate skirt suit, silver brooch, silver chin-length bob. Not based on anyone."
+   "about": "Slate skirt suit, silver brooch, silver chin-length bob. Not based on anyone.",
+   "family": "senator",
+   "family_name": "Senator",
+   "outfit": "Silver bob"
   },
   {
    "id": "senator_tan",
@@ -198,7 +246,10 @@
    "group": "Cast",
    "model": "models/senator_tan.glb",
    "portrait": "portraits/senator_tan.png",
-   "about": "Tan suit, brown tie, close-cropped black hair greying at the temples. Not based on anyone."
+   "about": "Tan suit, brown tie, close-cropped black hair greying at the temples. Not based on anyone.",
+   "family": "senator",
+   "family_name": "Senator",
+   "outfit": "Tan suit"
   },
   {
    "id": "staffer",
@@ -233,54 +284,6 @@
    "about": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off."
   },
   {
-   "id": "roasted_army",
-   "name": "Army peanut",
-   "group": "Roast",
-   "model": "models/roasted_army.glb",
-   "portrait": "portraits/roasted_army.png",
-   "about": "Roasted peanut as an army man: olive helmet with chin strap, webbing, belt pouches, radio pack, rifle slung on the back, combat boots."
-  },
-  {
-   "id": "roasted_cook",
-   "name": "Fry cook peanut",
-   "group": "Roast",
-   "model": "models/roasted_cook.glb",
-   "portrait": "portraits/roasted_cook.png",
-   "about": "Roasted peanut as a fry cook: red uniform, white apron with a name tag, paper fold hat, black work shoes."
-  },
-  {
-   "id": "roasted_garbage",
-   "name": "Garbage collector peanut",
-   "group": "Roast",
-   "model": "models/roasted_garbage.glb",
-   "portrait": "portraits/roasted_garbage.png",
-   "about": "Roasted peanut as a garbage collector: lime hi-vis vest with silver reflective bands over navy work clothes, orange cap, yellow work gloves, brown boots."
-  },
-  {
-   "id": "roasted_medic",
-   "name": "Medic peanut",
-   "group": "Roast",
-   "model": "models/roasted_medic.glb",
-   "portrait": "portraits/roasted_medic.png",
-   "about": "Roasted peanut as a medic: teal scrubs, white vest with a green first-aid cross front and back, stethoscope, headband, blue gloves."
-  },
-  {
-   "id": "roasted_miami",
-   "name": "Miami Travis",
-   "group": "Roast",
-   "model": "models/roasted_miami.glb",
-   "portrait": "portraits/roasted_miami.png",
-   "about": "Roasted peanut as a 1980s Miami detective: pastel teal jacket with pushed-up sleeves over a pink tee, white pants, loafers without socks, aviator shades."
-  },
-  {
-   "id": "roasted_riot",
-   "name": "Riot peanut",
-   "group": "Roast",
-   "model": "models/roasted_riot.glb",
-   "portrait": "portraits/roasted_riot.png",
-   "about": "Roasted peanut as a riot officer: black helmet with a clear visor and neck guard, chest and back plates, shoulder and knee pads; clear shield, baton, radio."
-  },
-  {
    "id": "cat",
    "name": "Cat",
    "group": "Animals",
@@ -310,7 +313,76 @@
    "group": "Animals",
    "model": "models/peanut.glb",
    "portrait": "portraits/peanut.png",
-   "about": "Original peanut character: two-lobed dimpled shell, stick limbs, cream hands, orange ball cap, sneakers."
+   "about": "Original peanut character: two-lobed dimpled shell, stick limbs, cream hands, orange ball cap, sneakers.",
+   "family": "peanut",
+   "family_name": "Peanut",
+   "outfit": "Classic"
+  },
+  {
+   "id": "roasted_army",
+   "name": "Army peanut",
+   "group": "Animals",
+   "model": "models/roasted_army.glb",
+   "portrait": "portraits/roasted_army.png",
+   "about": "Roasted peanut as an army man: olive helmet with chin strap, webbing, belt pouches, radio pack, rifle slung on the back, combat boots.",
+   "family": "peanut",
+   "family_name": "Peanut",
+   "outfit": "Army"
+  },
+  {
+   "id": "roasted_cook",
+   "name": "Fry cook peanut",
+   "group": "Animals",
+   "model": "models/roasted_cook.glb",
+   "portrait": "portraits/roasted_cook.png",
+   "about": "Roasted peanut as a fry cook: red uniform, white apron with a name tag, paper fold hat, black work shoes.",
+   "family": "peanut",
+   "family_name": "Peanut",
+   "outfit": "Fry cook"
+  },
+  {
+   "id": "roasted_garbage",
+   "name": "Garbage collector peanut",
+   "group": "Animals",
+   "model": "models/roasted_garbage.glb",
+   "portrait": "portraits/roasted_garbage.png",
+   "about": "Roasted peanut as a garbage collector: lime hi-vis vest with silver reflective bands over navy work clothes, orange cap, yellow work gloves, brown boots.",
+   "family": "peanut",
+   "family_name": "Peanut",
+   "outfit": "Garbage collector"
+  },
+  {
+   "id": "roasted_medic",
+   "name": "Medic peanut",
+   "group": "Animals",
+   "model": "models/roasted_medic.glb",
+   "portrait": "portraits/roasted_medic.png",
+   "about": "Roasted peanut as a medic: teal scrubs, white vest with a green first-aid cross front and back, stethoscope, headband, blue gloves.",
+   "family": "peanut",
+   "family_name": "Peanut",
+   "outfit": "Medic"
+  },
+  {
+   "id": "roasted_miami",
+   "name": "Miami Travis",
+   "group": "Animals",
+   "model": "models/roasted_miami.glb",
+   "portrait": "portraits/roasted_miami.png",
+   "about": "Roasted peanut as a 1980s Miami detective: pastel teal jacket with pushed-up sleeves over a pink tee, white pants, loafers without socks, aviator shades.",
+   "family": "peanut",
+   "family_name": "Peanut",
+   "outfit": "Miami Travis"
+  },
+  {
+   "id": "roasted_riot",
+   "name": "Riot peanut",
+   "group": "Animals",
+   "model": "models/roasted_riot.glb",
+   "portrait": "portraits/roasted_riot.png",
+   "about": "Roasted peanut as a riot officer: black helmet with a clear visor and neck guard, chest and back plates, shoulder and knee pads; clear shield, baton, radio.",
+   "family": "peanut",
+   "family_name": "Peanut",
+   "outfit": "Riot"
   },
   {
    "id": "rhino",
