@@ -1,13 +1,19 @@
-// The left column: the tools (each sends a tool command to the client) and a placeholder for
-// the block palette and catalogue, which later beads fill in.
+// The left column: the tools (each sends a tool command to the client), then the block palette
+// while the Blocks tool is held, or a placeholder for the catalogue (a later bead).
 
 import { Box, Button, Stack, Text, Tooltip } from "@mantine/core";
 import type { Tool } from "../../game/editor";
+import { BlockPalette } from "./BlockPalette";
 
 interface Props {
   active: Tool;
   onTool: (t: Tool) => void;
   advanced: boolean;
+  /** the world's block names, from `ready` */
+  palette: string[];
+  /** the block the page has chosen to paint with */
+  block?: string;
+  onBlock: (name: string) => void;
 }
 
 const TOOLS: { tool: Tool; label: string; soon?: boolean; advancedOnly?: boolean }[] = [
@@ -18,7 +24,7 @@ const TOOLS: { tool: Tool; label: string; soon?: boolean; advancedOnly?: boolean
   { tool: "node", label: "Node", soon: true, advancedOnly: true },
 ];
 
-export function ToolRail({ active, onTool, advanced }: Props) {
+export function ToolRail({ active, onTool, advanced, palette, block, onBlock }: Props) {
   return (
     <Stack gap="xs" p="sm" w={{ base: "100%", md: 180 }} style={{ flexShrink: 0 }}>
       <Text fw={700} fz="sm">
@@ -46,12 +52,18 @@ export function ToolRail({ active, onTool, advanced }: Props) {
           <Box key={t.tool}>{button}</Box>
         );
       })}
-      <Text fw={700} fz="sm" mt="md">
-        Palette
-      </Text>
-      <Text c="moon.5" fz="sm">
-        Blocks and the prop catalogue appear here.
-      </Text>
+      {active === "blocks" ? (
+        <BlockPalette palette={palette} chosen={block} onChoose={onBlock} />
+      ) : (
+        <>
+          <Text fw={700} fz="sm" mt="md">
+            Palette
+          </Text>
+          <Text c="moon.5" fz="sm">
+            Blocks and the prop catalogue appear here.
+          </Text>
+        </>
+      )}
     </Stack>
   );
 }

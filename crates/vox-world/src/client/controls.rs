@@ -373,12 +373,32 @@ pub fn controls(
             w.edit(h.cell, 0);
         } else if place {
             let c = [h.cell[0] + h.normal[0], h.cell[1] + h.normal[1], h.cell[2] + h.normal[2]];
-            let b = w.selected();
+            let b = placed_block(
+                editor.as_ref().and_then(|e| e.tool),
+                editor.as_ref().and_then(|e| e.block.as_deref()),
+                |n| w.block_id(n),
+                w.selected(),
+            );
             w.edit(c, b);
         } else if pick {
             let b = w.view.get(h.cell);
             w.pick_block(b);
         }
+    }
+}
+
+/// The block a place click builds. With the editor's Blocks tool, it is the block the page
+/// chose, found by name in this world's palette (`lookup`); otherwise, or when the name is not
+/// in the palette, it is the hotbar's block.
+pub fn placed_block(
+    tool: Option<crate::editor::bridge::Tool>,
+    chosen: Option<&str>,
+    lookup: impl Fn(&str) -> Option<u16>,
+    hotbar: u16,
+) -> u16 {
+    match (tool, chosen) {
+        (Some(crate::editor::bridge::Tool::Blocks), Some(name)) => lookup(name).unwrap_or(hotbar),
+        _ => hotbar,
     }
 }
 
@@ -440,5 +460,22 @@ impl BuildRepeat {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::bridge::Tool;
+
+    #[test]
+    fn editor_blocks_tool_places_the_chosen_block() {
+        let lookup = |n: &str| (n == "glass").then_some(7u16);
+        assert_eq!(placed_block(Some(Tool::Blocks), Some("glass"), lookup, 1), 7);
+        // another tool, no choice, or a name not in the palette: the hotbar's block
+        assert_eq!(placed_block(Some(Tool::Select), Some("glass"), lookup, 1), 1);
+        assert_eq!(placed_block(Some(Tool::Blocks), None, lookup, 1), 1);
+        assert_eq!(placed_block(Some(Tool::Blocks), Some("nope"), lookup, 1), 1);
+        assert_eq!(placed_block(None, Some("glass"), lookup, 1), 1);
     }
 }

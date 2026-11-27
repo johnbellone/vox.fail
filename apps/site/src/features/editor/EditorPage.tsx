@@ -9,6 +9,7 @@ import { api, ApiError, messageOf, post, worldUrl } from "../../api/client";
 import type { Me, Token, WorldEntry } from "../../api/types";
 import { loadClient } from "../../game/wasm";
 import { type Command, type Tool, onEvent, sendCommand } from "../../game/editor";
+import { chooseBlock } from "./BlockPalette";
 import { EditorHeader, type Mode } from "./EditorHeader";
 import { EntityList } from "./EntityList";
 import { Inspector } from "./Inspector";
@@ -32,6 +33,9 @@ export function EditorPage() {
   const [entities, setEntities] = useState<Entities>(cleared);
   const [selected, setSelected] = useState<number | null>(null);
   const [here, setHere] = useState(0);
+  // the world's block names (from `ready`) and the one the page has chosen to paint with
+  const [palette, setPalette] = useState<string[]>([]);
+  const [block, setBlock] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +48,8 @@ export function EditorPage() {
           setEntities(cleared());
           setSelected(null);
           setRefusal(undefined);
+          setPalette(e.palette);
+          setBlock(undefined);
           break;
         case "entities":
           setEntities((prev) => applyChanges(prev, e.changes));
@@ -136,6 +142,13 @@ export function EditorPage() {
     send({ type: "tool", tool: t });
   };
 
+  // choosing a block paints with it: the Blocks tool is held, then the block command is sent
+  const pickBlock = (name: string) => {
+    setBlock(name);
+    pickTool("blocks");
+    send(chooseBlock(name));
+  };
+
   // the Node tool is hidden in Basic, so leaving Advanced while it is active puts the Select tool back
   const changeMode = (m: Mode) => {
     setMode(m);
@@ -169,7 +182,14 @@ export function EditorPage() {
         </Alert>
       )}
       <Flex direction={{ base: "column", md: "row" }} flex={1} style={{ minHeight: 0 }}>
-        <ToolRail active={tool} onTool={pickTool} advanced={canAdvanced && mode === "advanced"} />
+        <ToolRail
+          active={tool}
+          onTool={pickTool}
+          advanced={canAdvanced && mode === "advanced"}
+          palette={palette}
+          block={block}
+          onBlock={pickBlock}
+        />
         <Box flex={1} mih={420} pos="relative" style={{ minWidth: 0 }}>
           <canvas
             id={CANVAS}
