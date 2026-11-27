@@ -295,8 +295,14 @@ export function newPortalForm(spot: Spot): PortalForm {
 
 /** A portal from its form. `level` and `key` come from what the portal already is (or the new
  *  portal's world, and no key). A Basic builder's size is checked against the Basic bounds here,
- *  before anything is sent; an Advanced builder's size is left to the world's own checks. */
-export function portalOf(f: PortalForm, base: { level: string; key: number | null }, advanced: boolean): Built<Portal> {
+ *  before anything is sent; an Advanced builder's size is left to the world's own checks. `yaw` is
+ *  the turn the portal has now: Apply keeps it even when it is not a quarter turn, so an edit that
+ *  does not touch the turn does not change it. */
+export function portalOf(
+  f: PortalForm,
+  base: { level: string; key: number | null; yaw?: number },
+  advanced: boolean,
+): Built<Portal> {
   const name = f.name.trim();
   if (!name) return fail("Give the portal a name.");
   if ([...name].length > MAX_PORTAL_NAME) return fail(`The name is at most ${MAX_PORTAL_NAME} characters.`);
@@ -309,7 +315,11 @@ export function portalOf(f: PortalForm, base: { level: string; key: number | nul
     return fail(`In Basic a portal is ${BASIC_SIZE_HINT}.`);
   }
   const yaw = numberOf(f.yaw);
-  if (yaw === null || !(YAWS as readonly number[]).includes(yaw)) return fail("Turn it to 0, 90, 180 or 270 degrees.");
+  // a finite number only (numberOf); a quarter turn, or the turn the portal already has
+  const kept = yaw !== null && yaw === base.yaw;
+  if (yaw === null || (!(YAWS as readonly number[]).includes(yaw) && !kept)) {
+    return fail("Turn it to 0, 90, 180 or 270 degrees.");
+  }
   const to = destOf(f.dest);
   if (!to.ok) return to;
   return {
@@ -318,10 +328,12 @@ export function portalOf(f: PortalForm, base: { level: string; key: number | nul
   };
 }
 
-/** What an editor may change on a portal. A player's portal is read-only to an Advanced editor
- *  (they cannot change other people's portals); its name is read-only to everyone. */
+/** What an editor may change on a portal. A player's portal (keyed) is read-only to an Advanced
+ *  editor, who may not change other people's portals; its name is read-only to everyone. A level
+ *  file's portal (keyless) is read-only to a Basic builder: the server refuses Builders any keyless
+ *  portal (`vox-core::edit`). */
 export function rightsFor(advanced: boolean, keyed: boolean): { editable: boolean; nameEditable: boolean } {
-  if (keyed && advanced) return { editable: false, nameEditable: false };
+  if (advanced ? keyed : !keyed) return { editable: false, nameEditable: false };
   return { editable: true, nameEditable: !keyed };
 }
 

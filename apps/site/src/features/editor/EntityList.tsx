@@ -11,6 +11,10 @@ interface Props {
   onError: (text: string) => void;
 }
 
+/** Most buttons the strip draws; a world with more entities than this would flood the page, so the
+ *  rest are counted in a line instead. */
+const MAX_ROWS = 500;
+
 export function EntityList({ rows, selected, onError }: Props) {
   const go = (entity: number) => {
     const commands: Command[] = [
@@ -33,18 +37,25 @@ export function EntityList({ rows, selected, onError }: Props) {
           Nothing here yet.
         </Text>
       ) : (
-        <Group gap="xs" wrap="wrap">
-          {rows.map((r) => (
-            <Button
-              key={r.entity}
-              size="xs"
-              variant={r.entity === selected ? "filled" : "default"}
-              onClick={() => go(r.entity)}
-            >
-              {labelOf(r)}
-            </Button>
-          ))}
-        </Group>
+        <>
+          <Group gap="xs" wrap="wrap">
+            {rows.slice(0, MAX_ROWS).map((r) => (
+              <Button
+                key={r.entity}
+                size="xs"
+                variant={r.entity === selected ? "filled" : "default"}
+                onClick={() => go(r.entity)}
+              >
+                {labelOf(r)}
+              </Button>
+            ))}
+          </Group>
+          {rows.length > MAX_ROWS && (
+            <Text c="moon.5" fz="sm">
+              and {rows.length - MAX_ROWS} more
+            </Text>
+          )}
+        </>
       )}
     </Stack>
   );

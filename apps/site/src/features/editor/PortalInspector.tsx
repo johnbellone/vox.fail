@@ -6,9 +6,10 @@
 // fields are shared with the new-portal form.
 
 import { Alert, Button, Group, Select, Stack, Text, TextInput } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { Item, WorldEntry } from "../../api/types";
-import type { Command, Portal } from "../../game/editor";
+import type { Portal } from "../../game/editor";
+import { EditNotice, type Submit, useAdoptSaved, useEditFollow } from "./follow";
 import {
   BASIC_SIZE_HINT,
   destKinds,
@@ -20,12 +21,11 @@ import {
   type PortalKey,
   portalKeys,
   portalOf,
-  refusalLine,
   reloaded,
   removePortal,
-  retryCommand,
   rightsFor,
   setPortal,
+  YAWS,
 } from "./state";
 
 const KIND_LABEL: Record<DestKind, string> = {
@@ -35,6 +35,13 @@ const KIND_LABEL: Record<DestKind, string> = {
   Url: "url",
   Dungeon: "dungeon",
 };
+
+/** The turns the Turn select offers: the quarter turns, and the form's own turn when it is another
+ *  angle (a level file may turn a portal to any angle), so the select can show it. */
+function turnChoices(yaw: string): string[] {
+  const quarters = YAWS.map(String);
+  return quarters.includes(yaw) ? quarters : [...quarters, yaw];
+}
 
 /** Three or two text fields in a row, one per number. */
 function NumberFields({
@@ -235,7 +242,8 @@ export function PortalFields({
         />
         <Select
           label="Turn"
-          data={["0", "90", "180", "270"].map((d) => ({ value: d, label: `${d}°` }))}
+          // a portal turned to some other angle shows that angle, so Apply keeps it
+          data={turnChoices(form.yaw).map((d) => ({ value: d, label: `${d}°` }))}
           value={form.yaw}
           allowDeselect={false}
           disabled={disabled}
@@ -283,7 +291,7 @@ interface Props {
   items: readonly Item[];
   itemsError?: string;
   edits: Edits;
-  submit: (make: (ref: number) => Command) => number;
+  submit: Submit;
   retry: (ref: number) => void;
   forget: (ref: number) => void;
 }
@@ -292,48 +300,33 @@ export function PortalInspector({ entity, seq, portal, advanced, worlds, items, 
   const keyed = portal.key !== null;
   const rights = rightsFor(advanced, keyed);
   const [form, setForm] = useState<PortalForm>(() => portalFormOf(portal));
-  // the seq this form opened at (the form is remounted per entity, by its key): what Apply and
-  // Remove expect, so a change made since is refused as Changed rather than overwritten
+  // the seq this form expects (the form is remounted per entity, by its key): what Apply and
+  // Remove send, so a change made since is refused as Changed rather than overwritten. After this
+  // form's own Apply or Remove goes through, it takes the seq the portal now has (useAdoptSaved).
   const [expectSeq, setExpectSeq] = useState<number>(seq);
-  const [pending, setPending] = useState<number>();
-  const [problem, setProblem] = useState<string>();
+  const follow = useEditFollow(edits, submit, forget);
+  const current = useMemo(() => ({ seq }), [seq]);
+  useAdoptSaved(current, expectSeq, follow.doneTick, (r) => setExpectSeq(r.seq));
   const keys = portalKeys(items, portal.key);
 
-  // the edit this form follows: done takes it out (the form lets go), a refusal stays with its text
-  const mine = pending === undefined ? undefined : edits.get(pending);
-  useEffect(() => {
-    if (pending !== undefined && !edits.has(pending)) setPending(undefined);
-  }, [edits, pending]);
-
-  const start = (make: (ref: number) => Command) => {
-    if (pending !== undefined) forget(pending);
-    setProblem(undefined);
-    setPending(submit(make));
-  };
-
   const apply = () => {
-    const built = portalOf(form, { level: portal.level, key: portal.key }, advanced);
-    if (!built.ok) {
-      setProblem(built.error);
-      return;
-    }
+    const built = portalOf(form, { level: portal.level, key: portal.key, yaw: portal.yaw }, advanced);
+    if (!built.ok) return follow.setProblem(built.error);
     const portalNow = built.value;
-    start((ref) => setPortal(entity, portalNow, expectSeq, ref));
+    follow.start((ref) => setPortal(entity, portalNow, expectSeq, ref));
   };
 
-  const remove = () => start((ref) => removePortal(entity, expectSeq, ref));
+  const remove = () => follow.start((ref) => removePortal(entity, expectSeq, ref));
 
   // takes the portal as it now is, and the seq it now has, after a Changed refusal
   const reload = () => {
-    if (pending !== undefined) forget(pending);
-    setPending(undefined);
-    setProblem(undefined);
+    follow.clear();
     const next = reloaded(portal, seq);
     setForm(next.form);
     setExpectSeq(next.expect);
   };
 
-  const busy = mine?.status === "sent";
+  const busy = follow.busy;
   const disabled = !rights.editable;
 
   return (
@@ -348,6 +341,11 @@ export function PortalInspector({ entity, seq, portal, advanced, worlds, items, 
             : "Its name belongs to its owner."}
         </Text>
       )}
+      {!keyed && !rights.editable && (
+        <Text fz="xs" c="moon.5">
+          Only an Advanced editor can change a level's portal.
+        </Text>
+      )}
       <PortalFields
         form={form}
         advanced={advanced}
@@ -358,29 +356,12 @@ export function PortalInspector({ entity, seq, portal, advanced, worlds, items, 
         disabled={disabled}
         onChange={setForm}
       />
-      {problem && (
+      {follow.problem && (
         <Alert color="ember" role="alert">
-          {problem}
+          {follow.problem}
         </Alert>
       )}
-      {mine?.status === "refused" && pending !== undefined && (
-        <Alert color="ember" role="alert">
-          <Stack gap="xs">
-            <Text fz="sm">{refusalLine(mine)}</Text>
-            {mine.why === "Changed" ? (
-              <Button size="xs" variant="default" onClick={reload} w="fit-content">
-                Reload
-              </Button>
-            ) : (
-              retryCommand(edits, pending) !== undefined && (
-                <Button size="xs" variant="default" onClick={() => retry(pending)} w="fit-content">
-                  Try again
-                </Button>
-              )
-            )}
-          </Stack>
-        </Alert>
-      )}
+      <EditNotice edits={edits} pending={follow.pending} retry={retry} reload={reload} />
       {rights.editable && (
         <Group gap="xs">
           <Button size="sm" onClick={apply} disabled={busy}>

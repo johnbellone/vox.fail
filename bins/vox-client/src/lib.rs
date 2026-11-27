@@ -547,6 +547,22 @@ fn report(w: Res<world::WorldClient>, mut said: Local<String>, mut done: Local<b
     }
 }
 
+/// Most editor commands queued between two frames.
+#[cfg(any(target_arch = "wasm32", test))]
+const MAX_QUEUED: usize = 256;
+
+/// Most bytes of editor commands queued between two frames: a page cannot pile up a megabyte of
+/// work (or a few huge commands) in one frame.
+#[cfg(any(target_arch = "wasm32", test))]
+const MAX_QUEUED_BYTES: usize = 1 << 20;
+
+/// Whether a command of `size` bytes may join the queue that holds `count` commands of
+/// `bytes` bytes in all.
+#[cfg(any(target_arch = "wasm32", test))]
+fn queue_admits(count: usize, bytes: usize, size: usize) -> bool {
+    count < MAX_QUEUED && bytes.saturating_add(size) <= MAX_QUEUED_BYTES
+}
+
 #[cfg(target_arch = "wasm32")]
 mod web {
     //! The browser: fetch the game's files before starting, and others as they're wanted.
@@ -555,6 +571,7 @@ mod web {
     use std::collections::VecDeque;
 
     use bevy::prelude::ResMut;
+    use super::queue_admits;
     use vox_world::editor::{EditorInbox, EditorOutbox, bridge::{self, Command, Event}};
     use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
@@ -595,6 +612,8 @@ mod web {
     thread_local! {
         /// commands from the page, parsed, waiting for the app's next frame
         static COMMANDS: RefCell<Vec<Command>> = const { RefCell::new(Vec::new()) };
+        /// the bytes of the commands in COMMANDS (their JSON), for the byte cap
+        static QUEUED_BYTES: Cell<usize> = const { Cell::new(0) };
         /// whether this page started the app in edit mode (its commands are refused otherwise)
         static EDITING: Cell<bool> = const { Cell::new(false) };
         /// events the page has not heard yet because `window.vox_editor` did not exist
@@ -602,9 +621,6 @@ mod web {
         /// events are being handed to the page now (a handler that calls back must not reorder)
         static HANDING: Cell<bool> = const { Cell::new(false) };
     }
-
-    /// Most commands queued between two frames; more are refused, so a page can't pile up work.
-    const MAX_QUEUED: usize = 1024;
 
     /// Most events kept for a page that has not installed `vox_editor` yet; the oldest go first.
     const MAX_UNHEARD: usize = 1024;
@@ -657,12 +673,15 @@ mod web {
             Ok(c) => c,
             Err(text) => return refuse("Invalid", text),
         };
+        let size = json.len();
         let queued = COMMANDS.with(|q| {
             let mut q = q.borrow_mut();
-            if q.len() >= MAX_QUEUED {
+            let bytes = QUEUED_BYTES.with(Cell::get);
+            if !queue_admits(q.len(), bytes, size) {
                 false
             } else {
                 q.push(command);
+                QUEUED_BYTES.with(|b| b.set(bytes + size));
                 true
             }
         });
@@ -674,6 +693,7 @@ mod web {
     /// Moves the page's queued commands into the editor's inbox.
     pub fn take_commands(mut inbox: ResMut<EditorInbox>) {
         COMMANDS.with(|q| inbox.0.append(&mut q.borrow_mut()));
+        QUEUED_BYTES.with(|b| b.set(0));
     }
 
     /// Sends the editor's events to the page, in order. An event is held only while the page has
@@ -740,6 +760,16 @@ mod web {
 mod tests {
     use super::*;
     use vox_core::auth::{self, Character, Claims};
+
+    #[test]
+    fn the_editor_queue_is_capped_by_count_and_bytes() {
+        assert!(queue_admits(0, 0, 100));
+        assert!(!queue_admits(MAX_QUEUED, 0, 1));
+        assert!(queue_admits(MAX_QUEUED - 1, 0, 1));
+        assert!(queue_admits(0, MAX_QUEUED_BYTES - 10, 10));
+        assert!(!queue_admits(0, MAX_QUEUED_BYTES - 10, 11));
+        assert!(!queue_admits(0, usize::MAX, 1));
+    }
 
     #[test]
     fn a_token_says_who_you_are() {

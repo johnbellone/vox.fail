@@ -90,11 +90,20 @@ export function EditorPage() {
           setEntities(cleared());
           setSelected(null);
           setRefusal(undefined);
+          setNotice(undefined);
           setEdits(new Map());
           setSpot(undefined);
           setPanelOpen(undefined);
           setPalette(e.palette);
           setBlock(undefined);
+          // a new world opens on the Select tool: the page and the client both go back to it, so the
+          // rail's highlight and the client's tool agree
+          setTool("select");
+          try {
+            sendCommand({ type: "tool", tool: "select" });
+          } catch (err) {
+            setNotice(messageOf(err));
+          }
           break;
         case "entities":
           setEntities((prev) => applyChanges(prev, e.changes));

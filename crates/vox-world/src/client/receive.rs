@@ -147,6 +147,10 @@ pub fn receive(
                         if let Some(st) = editing.as_mut() {
                             st.ready();
                         }
+                        // a new world has nothing selected yet: tell the page so its selection is cleared
+                        if let Some(out) = editor.as_mut() {
+                            out.0.push(crate::editor::bridge::Event::Selected { entity: None });
+                        }
                         w.ready = true;
                         w.status = format!("In {}", w.world);
                         crate::note!("[world] in {}: {} blocks", w.world, w.view.confirmed.count());

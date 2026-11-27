@@ -243,13 +243,15 @@ pub fn controls(
     let right = Vec3::new(basis.cos(), 0.0, -basis.sin());
     let mut dir = fwd * stick.y + right * stick.x;
     // a click (or holding the button) on the ground walks there
-    if diablo && mouse.pressed(MouseButton::Left) && !shift && !click_taken {
-        if let Some((o, d)) = w.pick {
-            if let Some(h) = ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 160.0) {
-                let p = IVec3::from(h.cell).as_vec3() + Vec3::new(0.5, 1.0, 0.5);
-                w.goal = Some(p);
-            }
-        }
+    if diablo
+        && mouse.pressed(MouseButton::Left)
+        && !shift
+        && !click_taken
+        && let Some((o, d)) = w.pick
+        && let Some(h) = ray::raycast_with(|c| w.solid_at(c), o.to_array(), d.to_array(), 160.0)
+    {
+        let p = IVec3::from(h.cell).as_vec3() + Vec3::new(0.5, 1.0, 0.5);
+        w.goal = Some(p);
     }
     if dir.length() > 0.1 {
         w.goal = None;

@@ -65,6 +65,9 @@ enum Slot {
     Again(u32),
     /// the same `ref` is still in flight: nothing to send, its answer is coming
     InFlight,
+    /// every tracked edit is waiting for its retry, so none can be forgotten for this one: it is
+    /// refused as Unavailable and the page tries again
+    Full,
 }
 
 /// What the editor holds: the tool, the block to paint with, the selection, a camera request
@@ -97,7 +100,9 @@ pub struct EditorState {
 
 impl EditorState {
     /// A new world (after a Welcome): what the page heard and what it waits on is about the
-    /// last world, so forget it. The entities arrive again and are all reported as new.
+    /// last world, so forget it. The entities arrive again and are all reported as new. Edits
+    /// still in flight are dropped without a refusal: the page drops its pending refs on `ready`,
+    /// so there is nobody left to tell.
     pub(crate) fn reset(&mut self) {
         self.sent.clear();
         self.tracked.clear();
@@ -105,6 +110,9 @@ impl EditorState {
         self.snapshot_due = false;
         // a block chosen in one world is not carried into another
         self.block = None;
+        // the selection and a pending fly-to name entities of the last world
+        self.selected = None;
+        self.fly_to = None;
     }
 
     /// The world says it has sent everything it has: tell the page the whole list next.
@@ -130,10 +138,14 @@ impl EditorState {
             t.unavailable = false;
             return Slot::Again(t.id);
         }
-        let id = self.fresh_id();
         if self.tracked.len() >= MAX_TRACKED {
-            self.tracked.pop_front();
+            // an unavailable edit keeps its number for its retry, so it is never the one forgotten
+            let Some(i) = self.tracked.iter().position(|t| !t.unavailable) else {
+                return Slot::Full;
+            };
+            self.tracked.remove(i);
         }
+        let id = self.fresh_id();
         self.tracked.push_back(Tracked { page, id, unavailable: false });
         Slot::Fresh(id)
     }
@@ -311,6 +323,15 @@ pub(crate) fn send_edit(w: &WorldClient, state: &mut EditorState, outbox: &mut E
     let id = match state.slot(page) {
         Slot::Fresh(id) | Slot::Again(id) => id,
         Slot::InFlight => return,
+        Slot::Full => {
+            outbox.0.push(Event::Refused {
+                id: 0,
+                r#ref: page,
+                why: format!("{:?}", EntityWhy::Unavailable),
+                text: EntityWhy::Unavailable.to_string(),
+            });
+            return;
+        }
     };
     if let Some(msg) = to_server(command, id) {
         w.send_entity(&msg);
@@ -424,6 +445,40 @@ mod tests {
         }
         assert_eq!(st.tracked.len(), MAX_TRACKED);
         assert_eq!(st.tracked.front().map(|t| t.page), Some(10));
+    }
+
+    #[test]
+    fn editor_tracking_never_forgets_an_unavailable_edit() {
+        let mut st = EditorState::default();
+        let Slot::Fresh(keep) = st.slot(Some(0)) else { panic!() };
+        st.refused(keep, EntityWhy::Unavailable);
+        for r in 1..(MAX_TRACKED as u32) {
+            st.slot(Some(r));
+        }
+        // full: the oldest, unavailable edit is skipped, the next one goes
+        assert!(matches!(st.slot(Some(1000)), Slot::Fresh(_)));
+        assert!(st.tracked.iter().any(|t| t.page == 0 && t.unavailable));
+        assert_eq!(st.slot(Some(0)), Slot::Again(keep));
+    }
+
+    #[test]
+    fn editor_full_of_unavailable_edits_refuses_the_new_one() {
+        let mut st = EditorState::default();
+        for r in 0..(MAX_TRACKED as u32) {
+            let Slot::Fresh(id) = st.slot(Some(r)) else { panic!() };
+            st.refused(id, EntityWhy::Unavailable);
+        }
+        assert_eq!(st.slot(Some(5000)), Slot::Full);
+        // nothing was forgotten to make room
+        assert_eq!(st.tracked.len(), MAX_TRACKED);
+        assert_eq!(st.tracked.front().map(|t| t.page), Some(0));
+    }
+
+    #[test]
+    fn editor_reset_clears_the_selection_and_fly_to() {
+        let mut st = EditorState { selected: Some(4), fly_to: Some(4), ..Default::default() };
+        st.reset();
+        assert_eq!((st.selected, st.fly_to), (None, None));
     }
 
     #[test]

@@ -2,21 +2,21 @@
 // advanced editor. Each is one `set` or `remove` on the entity it edits, with the seq the form
 // opened at (so a change made since is refused as Changed, as the portal inspector does), or one
 // `create` when the world has none yet. The position is typed, or copied from the marked spot.
-// Also the pieces the settings form shares: the notice for one open edit, a retry or reload, and
-// the three-field number row.
+// The edit-following hooks and the notice for a refused edit live in ./follow (shared with the
+// portal inspector and the settings form). Also the three-field number row, which the settings
+// form shares.
 
 import { Alert, Button, Group, Stack, Text, TextInput } from "@mantine/core";
-import { useEffect, useRef, useState } from "react";
-import type { Command, Component } from "../../game/editor";
+import { useState } from "react";
+import type { Component } from "../../game/editor";
+import { EditNotice, type Submit, useAdoptSaved, useEditFollow } from "./follow";
 import {
   createEntity,
   type Edits,
   objectiveFormOf,
   objectiveOf,
   type ObjectiveForm,
-  refusalLine,
   removeEntity,
-  retryCommand,
   type RowOf,
   type Spot,
   setEntity,
@@ -25,96 +25,6 @@ import {
   type SpawnForm,
   textOf,
 } from "./state";
-
-type Submit = (make: (ref: number) => Command) => number;
-
-/** One panel's edit, followed by its ref: the open edit, its refusal, and whether it is sending.
- *  A done edit lets go (the panel is free again); a refusal stays with its text. */
-export function useEditFollow(edits: Edits, submit: Submit, forget: (ref: number) => void) {
-  const [pending, setPending] = useState<number>();
-  const [problem, setProblem] = useState<string>();
-  // counts the edits this panel saw go through (the client's `done`), so the panel can take the
-  // seq the world now has (see useAdoptSaved)
-  const [doneTick, setDoneTick] = useState(0);
-  useEffect(() => {
-    if (pending !== undefined && !edits.has(pending)) {
-      setPending(undefined);
-      setDoneTick((t) => t + 1);
-    }
-  }, [edits, pending]);
-
-  const start = (make: (ref: number) => Command) => {
-    if (pending !== undefined) forget(pending);
-    setProblem(undefined);
-    setPending(submit(make));
-  };
-  // lets go of the open edit and any problem, after a reload or before a new form
-  const clear = () => {
-    if (pending !== undefined) forget(pending);
-    setPending(undefined);
-    setProblem(undefined);
-  };
-  const mine = pending === undefined ? undefined : edits.get(pending);
-  return { pending, problem, setProblem, busy: mine?.status === "sent", doneTick, start, clear };
-}
-
-/** After this panel's own edit goes through, the form expects the seq the row now has, so a second
- *  Apply is not refused as Changed. Waits for the row to show a seq other than the one the form
- *  holds (the `done` may arrive before the row does), then calls `adopt` with the row. A change by
- *  someone else, with no edit of ours settled, is not taken. */
-export function useAdoptSaved<R extends { seq: number }>(
-  row: R | undefined,
-  seq: number,
-  doneTick: number,
-  adopt: (row: R) => void,
-) {
-  const seenDone = useRef(0);
-  const waiting = useRef(false);
-  useEffect(() => {
-    if (doneTick > seenDone.current) {
-      seenDone.current = doneTick;
-      waiting.current = true;
-    }
-    if (!waiting.current || !row || row.seq === seq) return;
-    waiting.current = false;
-    adopt(row);
-  }, [row, seq, doneTick]);
-}
-
-/** The refusal of a panel's open edit: its line, a Reload after a Changed refusal, and a retry
- *  after one the client calls Unavailable (the same ref, so nothing is charged twice). */
-export function EditNotice({
-  edits,
-  pending,
-  retry,
-  reload,
-}: {
-  edits: Edits;
-  pending: number | undefined;
-  retry: (ref: number) => void;
-  reload: () => void;
-}) {
-  const mine = pending === undefined ? undefined : edits.get(pending);
-  if (pending === undefined || mine?.status !== "refused") return null;
-  return (
-    <Alert color="ember" role="alert">
-      <Stack gap="xs">
-        <Text fz="sm">{refusalLine(mine)}</Text>
-        {mine.why === "Changed" ? (
-          <Button size="xs" variant="default" onClick={reload} w="fit-content">
-            Reload
-          </Button>
-        ) : (
-          retryCommand(edits, pending) !== undefined && (
-            <Button size="xs" variant="default" onClick={() => retry(pending)} w="fit-content">
-              Try again
-            </Button>
-          )
-        )}
-      </Stack>
-    </Alert>
-  );
-}
 
 /** Three number fields in a row under one label. */
 export function TripleFields({

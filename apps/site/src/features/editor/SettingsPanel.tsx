@@ -21,7 +21,8 @@ import {
 } from "@mantine/core";
 import { useState } from "react";
 import type { Command, Component } from "../../game/editor";
-import { EditNotice, TripleFields, useAdoptSaved, useEditFollow } from "./SpawnObjective";
+import { EditNotice, useAdoptSaved, useEditFollow } from "./follow";
+import { TripleFields } from "./SpawnObjective";
 import {
   atlasOf,
   CUSTOM_WEATHER,

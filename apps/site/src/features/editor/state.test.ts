@@ -162,8 +162,11 @@ describe("rights on a portal", () => {
 
   test("a player's name is locked for a Basic builder, the rest is theirs to move", () => {
     expect(rightsFor(false, true)).toEqual({ editable: true, nameEditable: false });
-    expect(rightsFor(false, false)).toEqual({ editable: true, nameEditable: true });
     expect(rightsFor(true, false)).toEqual({ editable: true, nameEditable: true });
+  });
+
+  test("a level's portal is read-only to a Basic builder (the server refuses it), not to Advanced", () => {
+    expect(rightsFor(false, false)).toEqual({ editable: false, nameEditable: false });
   });
 });
 
@@ -199,6 +202,17 @@ describe("numbers and portal forms", () => {
     expect(portalOf({ ...base, name: "", dest: world }, { level: "yard", key: null }, true).ok).toBe(false);
     expect(portalOf({ ...base, name: "a", at: ["1", "Infinity", "0"], dest: world }, { level: "yard", key: null }, true).ok).toBe(false);
     expect(portalOf({ ...base, name: "a", yaw: "45", dest: world }, { level: "yard", key: null }, true).ok).toBe(false);
+  });
+
+  test("a portal's own turn, when it is not a quarter turn, is kept by Apply; a non-finite one is still refused", () => {
+    const base = newPortalForm({ at: [0, 0, 0], axis: "Z", size: [4, 6] });
+    const world = { ...base.dest, kind: "World" as const, world: "void" };
+    const here = { level: "yard", key: null, yaw: 45 };
+    const kept = portalOf({ ...base, name: "a", yaw: "45", dest: world }, here, true);
+    expect(kept.ok && kept.value.yaw).toBe(45);
+    expect(portalOf({ ...base, name: "a", yaw: "Infinity", dest: world }, here, true).ok).toBe(false);
+    expect(portalOf({ ...base, name: "a", yaw: "90", dest: world }, here, true).ok).toBe(true);
+    expect(portalOf({ ...base, name: "a", yaw: "60", dest: world }, here, true).ok).toBe(false);
   });
 
   test("a create and a set are commands the bridge accepts, with their ref and expect", () => {
