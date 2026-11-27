@@ -6,7 +6,7 @@
 //! Rows hold postcard data (`vox_core::wire`), the same encoding the wire and the zones use.
 //! Loading checks every row again, so a bad row is skipped rather than trusted.
 
-// the edit calls (`put`, `remove`, `seq_of`) come with the wire handling that uses them
+// `seq_of` has no caller until the entity edits (`ToServer::Put`, `Remove`) are handled
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,7 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, Transaction, params};
 use vox_core::{
     ChunkKey, wire,
-    entity::{Component, EntityId},
+    entity::{Component, EntityId, Portal},
+    wire::EntityChange,
 };
 
 /// The entities of one world, with what is not yet written.
@@ -140,6 +141,46 @@ impl Entities {
         self.map.is_empty()
     }
 
+    /// The portals that carry a directory key, for the directory's list (`wanted`, one
+    /// component per key): the entity holding each wanted key (the first, if there are two),
+    /// and the entities to remove (a key nobody wants, or a repeat of one).
+    pub(crate) fn keyed_portals(&self, wanted: &BTreeMap<i64, Component>) -> (BTreeMap<i64, EntityId>, Vec<EntityId>) {
+        let mut have = BTreeMap::new();
+        let mut stale = Vec::new();
+        for (&id, (_, c)) in &self.map {
+            let Component::Portal(Portal { key: Some(k), .. }) = c else { continue };
+            if wanted.contains_key(k) && !have.contains_key(k) {
+                have.insert(*k, id);
+            } else {
+                stale.push(id);
+            }
+        }
+        (have, stale)
+    }
+
+    /// Every entity as a change carrying its last edit number, nearest `from` first: the
+    /// settings, then the rest by zone (the zone of `from` first) and distance.
+    pub(crate) fn all_from(&self, from: [f32; 3]) -> Vec<EntityChange> {
+        let (hx, hz) = zone_at(from);
+        let mut keyed: Vec<((u64, f32), EntityChange)> = self
+            .map
+            .iter()
+            .map(|(&id, (seq, c))| {
+                let rank = match position(c) {
+                    None => (0, 0.0),
+                    Some(p) => {
+                        let (zx, zz) = zone_of(c);
+                        let zones = (zx as i64 - hx as i64).unsigned_abs() + (zz as i64 - hz as i64).unsigned_abs();
+                        (zones + 1, (0..3).map(|i| (p[i] - from[i]).powi(2)).sum::<f32>())
+                    }
+                };
+                (rank, EntityChange { seq: *seq, entity: id, component: Some(c.clone()) })
+            })
+            .collect();
+        keyed.sort_by(|((za, da), _), ((zb, db), _)| za.cmp(zb).then(da.total_cmp(db)));
+        keyed.into_iter().map(|(_, c)| c).collect()
+    }
+
     /// Whether anything is waiting to be written.
     pub(crate) fn changed(&self) -> bool {
         !self.dirty.is_empty() || !self.log.is_empty() || self.seeded_now
@@ -195,18 +236,62 @@ impl Entities {
     }
 }
 
+/// Where an entity is, in blocks (feet). A settings entity has no place.
+pub(crate) fn position(c: &Component) -> Option<[f32; 3]> {
+    match c {
+        Component::Portal(p) => Some(p.at),
+        Component::Spawn(s) => Some(s.at),
+        Component::Objective(o) => Some(o.at),
+        Component::Settings(_) => None,
+    }
+}
+
 /// The zone an entity lies in, by its position (a settings entity has none: zone 0, 0).
 fn zone_of(c: &Component) -> (i32, i32) {
-    let at = match c {
-        Component::Portal(p) => p.at,
-        Component::Spawn(s) => s.at,
-        Component::Objective(o) => o.at,
-        Component::Settings(_) => return (0, 0),
-    };
-    // a position is in blocks: the cell it is in, then the chunk and zone holding that cell
+    position(c).map_or((0, 0), zone_at)
+}
+
+/// The zone holding a position in blocks: the cell it is in, then the chunk and zone holding that cell.
+fn zone_at(at: [f32; 3]) -> (i32, i32) {
     let cell = [at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32];
     let zone = vox_format::zone_of(ChunkKey::of(cell));
     (zone.x, zone.z)
+}
+
+/// A doorway the directory lists for a world (in the level format, with the directory's `key`):
+/// the key and the portal entity holding it. None when there is no key or the doorway is not a
+/// valid one. The level format's own reading is used, so a doorway is judged as a level's is.
+pub(crate) fn from_directory(v: &serde_json::Value) -> Option<(i64, Component)> {
+    let key = v.get("key")?.as_i64()?;
+    let text = serde_json::json!({ "world": { "portals": [v] } }).to_string();
+    let portal = vox_core::level::entities(&text).ok()?.into_iter().find_map(|c| match c {
+        Component::Portal(p) => Some(p),
+        _ => None,
+    })?;
+    Some((key, Component::Portal(Portal { key: Some(key), ..portal })))
+}
+
+/// Changes split into `Entities` messages: at most `wire::ENTITIES_PER_MESSAGE` to a message,
+/// and none that would encode over `wire::MAX_MESSAGE`. A change's encoded size adds up exactly
+/// inside a message; the header room covers the tag and the count.
+pub(crate) fn batches(changes: Vec<EntityChange>) -> Vec<Vec<EntityChange>> {
+    const HEADER: usize = 8;
+    let mut out = Vec::new();
+    let mut cur: Vec<EntityChange> = Vec::new();
+    let mut bytes = 0usize;
+    for c in changes {
+        let n = wire::encode(&c).len();
+        if !cur.is_empty() && (cur.len() >= wire::ENTITIES_PER_MESSAGE || bytes + n + HEADER > wire::MAX_MESSAGE) {
+            out.push(std::mem::take(&mut cur));
+            bytes = 0;
+        }
+        bytes += n;
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 #[cfg(test)]

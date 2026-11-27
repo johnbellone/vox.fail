@@ -907,7 +907,7 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
             let w = d.0.worlds.iter().find(|w| w.id == dest)?;
             let arrive: Value = serde_json::from_str(&spawn).ok()?;
             Some(json!({
-                "name": format!("{} ({pid})", w.name), "at": at, "axis": axis, "size": [4, 6],
+                "key": pid, "name": format!("{} ({pid})", w.name), "at": at, "axis": axis, "size": [4, 6],
                 "level": level, "url": w.url, "arrive": arrive, "yaw": 0,
             }))
         })

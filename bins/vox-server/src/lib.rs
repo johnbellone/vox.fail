@@ -15,7 +15,7 @@
 //! is there (signed-in players: where they stand, how many blocks they placed), which is how
 //! players earn authority and raids are won, and fetches its rules every half minute: the
 //! plots players claimed (only their builders may change blocks inside one) and the portals
-//! they opened (added to the settings new arrivals get).
+//! they opened (kept as portal entities, which new arrivals get with the rest).
 
 mod connection;
 mod entities;
@@ -54,15 +54,13 @@ use tokio::sync::{mpsc, oneshot};
 use vox_core::{
     Bounds, Chunk, ChunkKey, Why, World,
     weather::{Climate, Weather},
-    wire::{self, Applied, PROTOCOL, ToClient, ToServer},
+    wire::{self, Applied, MAX_MESSAGE, PROTOCOL, ToClient, ToServer},
     world::Bucket,
 };
 
 /// Messages waiting per player before they count as falling behind. A world is at most
 /// 1024 chunks, all sent on joining.
 const QUEUE: usize = 2048;
-/// Largest message a player may send.
-const MAX_MESSAGE: usize = 64 * 1024;
 /// A pose blob is a skeleton's worth of joints; half of MAX_MESSAGE is generous.
 const MAX_POSE_BLOB: usize = 32 * 1024;
 /// Poses per second one connection may send (a client sends about 20).
@@ -367,9 +365,8 @@ struct WorldState {
     weather: Option<Weather>,
     weather_at: Instant,
     keyframe_at: Instant,
-    /// claimed plots and player-opened portals, from the directory
+    /// claimed plots, from the directory
     plots: Vec<Plot>,
-    portals: Vec<serde_json::Value>,
     /// which raid party each signed-in account is in (index into the directory's list); an
     /// account listed in two parties keeps the first
     party_of: HashMap<u64, u32>,

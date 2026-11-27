@@ -3,8 +3,10 @@
 
 #[allow(unused_imports)]
 use super::*;
-use crate::entities::Entities;
-use vox_core::entity::{Component, Settings, Spawn};
+use crate::entities::{self, Entities};
+use vox_core::entity::{Component, Dest, Settings, Spawn};
+use vox_core::portal::Door;
+use vox_core::wire::EntityChange;
 
 /// How far from a doorway's plane (blocks) a player may be and still go through it: their last
 /// checked pose can be a step or two behind the client's.
@@ -126,7 +128,6 @@ impl WorldState {
             weather_at: Instant::now(),
             keyframe_at: Instant::now(),
             plots: Vec::new(),
-            portals: Vec::new(),
             party_of: HashMap::new(),
             snaps: None,
             snap_prev: None,
@@ -202,7 +203,8 @@ impl WorldState {
                 }
                 Event::Rules(plots, portals, parties) => {
                     self.plots = plots;
-                    self.portals = portals;
+                    let changes = self.reconcile_portals(&portals);
+                    self.broadcast_entities(changes);
                     // rebuilt whole, so a party the directory dropped stops applying. Parties come
                     // from the directory's rules, fetched every `rules_every` (default 30 s), so a
                     // new party can take up to that long to be able to talk.
@@ -322,9 +324,50 @@ impl WorldState {
         }
     }
 
-    /// The world as a newcomer gets it: welcome, chunks, ready, weather, who's here. False if
-    /// they couldn't keep up.
-    pub(super) fn send_world(&self, tx: &mpsc::Sender<Message>, you: u32, name: &str, names: bool) -> bool {
+    /// Makes the directory's portals the keyed portal entities: a changed one is replaced, a new
+    /// one added, one the directory dropped removed. Each change takes a new edit number and is
+    /// logged like an edit; the changes come back for everyone to be told.
+    pub(super) fn reconcile_portals(&mut self, portals: &[serde_json::Value]) -> Vec<EntityChange> {
+        let mut wanted: std::collections::BTreeMap<i64, Component> = std::collections::BTreeMap::new();
+        for v in portals {
+            // a portal without a valid key (or doorway) is left out
+            if let Some((key, c)) = entities::from_directory(v) {
+                wanted.entry(key).or_insert(c);
+            }
+        }
+        let (have, stale) = self.entities.keyed_portals(&wanted);
+        let at = now_unix();
+        let mut changes = Vec::new();
+        for id in stale {
+            self.seq += 1;
+            if self.entities.remove(self.seq, at, "directory".into(), id).is_some() {
+                changes.push(EntityChange { seq: self.seq, entity: id, component: None });
+            }
+        }
+        for (key, c) in wanted {
+            let held = have.get(&key).copied();
+            if held.and_then(|id| self.entities.map.get(&id)).is_some_and(|(_, old)| *old == c) {
+                continue;
+            }
+            self.seq += 1;
+            // None only when the id counter is spent: this portal is then not placed
+            if let Some(id) = self.entities.put(self.seq, at, "directory".into(), held, c.clone()) {
+                changes.push(EntityChange { seq: self.seq, entity: id, component: Some(c) });
+            }
+        }
+        changes
+    }
+
+    /// Sends entity changes to everyone here (players and watchers), in `Entities` messages.
+    pub(super) fn broadcast_entities(&mut self, changes: Vec<EntityChange>) {
+        for batch in entities::batches(changes) {
+            self.broadcast(&ToClient::Entities(batch), None);
+        }
+    }
+
+    /// The world as a newcomer gets it: welcome, chunks, ready, weather, who's here, then every
+    /// entity, nearest `from` first. False if they couldn't keep up.
+    pub(super) fn send_world(&self, tx: &mpsc::Sender<Message>, you: u32, name: &str, names: bool, from: [f32; 3]) -> bool {
         let mut ok = Self::send_to(
             tx,
             &ToClient::Welcome {
@@ -350,6 +393,9 @@ impl WorldState {
             let name = if names { p.name.clone() } else { String::new() };
             ok &= Self::send_to(tx, &ToClient::Joined { player: p.id, name, avatar: p.avatar.clone() });
         }
+        for batch in entities::batches(self.entities.all_from(from)) {
+            ok &= Self::send_to(tx, &ToClient::Entities(batch));
+        }
         ok
     }
 
@@ -365,7 +411,8 @@ impl WorldState {
             return bye("too many watching; try again soon");
         }
         // no player has this number: the watcher's own poses never come back to it
-        if self.send_world(&tx, u32::MAX, "", false) {
+        let from = self.spawn;
+        if self.send_world(&tx, u32::MAX, "", false, from) {
             self.watchers.insert(conn, tx);
         }
     }
@@ -383,7 +430,7 @@ impl WorldState {
         }
         let id = conn as u32;
         let name = if name.is_empty() { format!("player {id}") } else { name };
-        let ok = self.send_world(&tx, id, &name, true);
+        let ok = self.send_world(&tx, id, &name, true, arrive.unwrap_or(self.spawn));
         if !ok {
             return;
         }
@@ -473,18 +520,23 @@ impl WorldState {
         }
     }
 
-    /// The settings a new arrival gets: the world's own, with the portals players opened.
+    /// The settings a new arrival gets: the world's Settings entity (its portals and objective
+    /// are entities of their own, sent with the rest).
     pub(super) fn settings_now(&self) -> String {
-        let mut s: serde_json::Value = serde_json::from_str(&self.settings).unwrap_or_else(|_| serde_json::json!({}));
-        let Some(obj) = s.as_object_mut() else { return self.settings.clone() };
-        if !self.portals.is_empty() {
-            let list = obj.entry("portals").or_insert_with(|| serde_json::json!([]));
-            if let Some(a) = list.as_array_mut() {
-                a.extend(self.portals.iter().cloned());
-            }
+        let json = self
+            .entities
+            .map
+            .values()
+            .find_map(|(_, c)| match c {
+                Component::Settings(s) => Some(s.json.as_str()),
+                _ => None,
+            })
+            .unwrap_or("{}");
+        let mut s: serde_json::Value = serde_json::from_str(json).unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(obj) = s.as_object_mut() {
+            // how far nearby voice carries here, so clients fade voices over the same distance
+            obj.insert("voice_radius".into(), serde_json::json!(self.cfg.voice_radius));
         }
-        // how far nearby voice carries here, so clients fade voices over the same distance
-        obj.insert("voice_radius".into(), serde_json::json!(self.cfg.voice_radius));
         s.to_string()
     }
 
@@ -522,8 +574,17 @@ impl WorldState {
                     return self.over_edge(conn, edge);
                 }
                 let (at, account, tx) = (p.at, p.account, p.tx.clone());
-                let settings: serde_json::Value = serde_json::from_str(&self.settings_now()).unwrap_or_default();
-                let door = vox_core::portal::parse(&settings).into_iter().find(|d| d.name == portal && d.url.is_some());
+                // the doorway is a portal entity by name. A doorway within this world (no url)
+                // is not a trip; a world or pair doorway is resolved by the directory (phase 2),
+                // so it is not a trip here either.
+                let door = self.entities.map.values().find_map(|(_, c)| match c {
+                    Component::Portal(p) if p.name == portal => match &p.to {
+                        Dest::Url { url, arrive } => Some(Door::from_portal(p, Some(url.clone()), *arrive)),
+                        Dest::Dungeon { name } => Some(Door::from_portal(p, Some(format!("dungeon:{name}")), p.at)),
+                        Dest::Here { .. } | Dest::World { .. } | Dest::Pair { .. } => None,
+                    },
+                    _ => None,
+                });
                 let Some((door, at)) = door.zip(at) else { return };
                 // they must be in the doorway (or as good as: a pose or two behind), unless this
                 // world takes positions on trust

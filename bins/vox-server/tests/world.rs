@@ -52,11 +52,11 @@ async fn recv(ws: &mut Ws) -> ToClient {
     }
 }
 
-/// The next message that isn't a pose or the weather.
+/// The next message that isn't a pose, the weather or the entities a newcomer is sent.
 async fn recv_event(ws: &mut Ws) -> ToClient {
     loop {
         let m = recv(ws).await;
-        if !matches!(m, ToClient::Pose { .. } | ToClient::Weather(_)) {
+        if !matches!(m, ToClient::Pose { .. } | ToClient::Weather(_) | ToClient::Entities(_)) {
             return m;
         }
     }
@@ -94,7 +94,7 @@ async fn join_with(url: &str, name: &str, token: Option<String>) -> Joined {
     while let Ok(Some(Ok(Message::Binary(b)))) = tokio::time::timeout(Duration::from_millis(150), ws.next()).await {
         match wire::decode(&b).unwrap() {
             ToClient::Joined { name, .. } => others.push(name),
-            ToClient::Pose { .. } | ToClient::Weather(_) => {}
+            ToClient::Pose { .. } | ToClient::Weather(_) | ToClient::Entities(_) => {}
             m => panic!("{m:?}"),
         }
     }
@@ -478,7 +478,7 @@ async fn plots_portals_and_reports_with_a_directory() {
                 }
                 axum::Json(serde_json::json!({
                     "plots": [{ "id": 1, "x0": 2, "z0": -2, "x1": 6, "z1": 2, "builders": [7] }],
-                    "portals": [{ "name": "The Yard (1)", "at": [0, 0, -6], "axis": "z", "size": [4, 6], "level": "yard",
+                    "portals": [{ "key": 1, "name": "The Yard (1)", "at": [0, 0, -6], "axis": "z", "size": [4, 6], "level": "yard",
                                   "url": "/w/7781/ws", "arrive": [0.5, 0, 0.5], "yaw": 0 }],
                 }))
             }),
@@ -520,16 +520,29 @@ async fn plots_portals_and_reports_with_a_directory() {
                     break;
                 }
             }
+            // the world's entities follow Ready: collected until they stop coming
+            let mut entities = Vec::new();
+            while let Ok(Some(Ok(Message::Binary(b)))) = tokio::time::timeout(Duration::from_millis(150), ws.next()).await {
+                if let ToClient::Entities(batch) = wire::decode(&b).unwrap() {
+                    entities.extend(batch);
+                }
+            }
             send(&mut ws, &ToServer::Pose { at: spawn, blob: vec![] }).await;
-            (ws, settings)
+            (ws, settings, entities)
         }
     };
-    let (mut ann, settings) = enter(7, "Ann").await;
-    let (mut bob, _) = enter(8, "Bob").await;
-    // the portal Ann opened at the directory is in the settings new arrivals get
+    let (mut ann, settings, entities) = enter(7, "Ann").await;
+    let (mut bob, _, _) = enter(8, "Bob").await;
+    // the settings carry no portals: the portal Ann opened at the directory is an entity, keyed
+    // by the directory's id, and it leads where the directory said
     let s: serde_json::Value = serde_json::from_str(&settings).unwrap();
     assert_eq!(s["sky"], "void");
-    assert_eq!(s["portals"][0]["url"], "/w/7781/ws");
+    assert!(s.get("portals").is_none(), "{settings}");
+    let opened = entities.iter().find_map(|c| match &c.component {
+        Some(vox_core::entity::Component::Portal(p)) if p.key == Some(1) => Some(p.to.clone()),
+        _ => None,
+    });
+    assert_eq!(opened, Some(vox_core::entity::Dest::Url { url: "/w/7781/ws".into(), arrive: [0.5, 0.0, 0.5] }));
     // Ann builds in her plot; Bob can't, but can outside it
     send(&mut ann, &ToServer::Edit { id: 1, cell: [3, 0, 0], block: 2 }).await;
     send(&mut bob, &ToServer::Edit { id: 1, cell: [4, 0, 0], block: 2 }).await;
@@ -546,12 +559,18 @@ async fn plots_portals_and_reports_with_a_directory() {
     assert_eq!(refused, Some((1, Why::Claimed)));
     // the report: who's here, where, and the blocks each placed
     tokio::time::sleep(Duration::from_millis(900)).await;
-    let r = reports.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|r| r["players"].as_array().is_some_and(|p| !p.is_empty())).cloned().expect("a report");
-    assert_eq!(r["world"], "test");
-    assert_eq!(r["level"], "void");
-    let mut placed: Vec<(u64, u64)> = r["players"].as_array().unwrap().iter().map(|p| (p["account"].as_u64().unwrap(), p["edits"].as_u64().unwrap())).collect();
-    placed.sort();
-    assert_eq!(placed, vec![(7, 1), (8, 1)]);
+    // each report counts the edits since the one before it, so the reports are added up
+    let all = reports.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let first = all.iter().find(|r| r["players"].as_array().is_some_and(|p| !p.is_empty())).expect("a report");
+    assert_eq!(first["world"], "test");
+    assert_eq!(first["level"], "void");
+    let mut placed = std::collections::BTreeMap::<u64, u64>::new();
+    for r in &all {
+        for p in r["players"].as_array().into_iter().flatten() {
+            *placed.entry(p["account"].as_u64().unwrap()).or_default() += p["edits"].as_u64().unwrap();
+        }
+    }
+    assert_eq!(placed.into_iter().collect::<Vec<_>>(), vec![(7, 1), (8, 1)]);
 }
 
 #[tokio::test]
