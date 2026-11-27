@@ -222,8 +222,8 @@ version goes to 2; version 1 blobs read as "no entities". The hash covers both.
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Mantine owns the forms, lists, destination pickers and the recipe editor (a JSON text area
-checked against the recipe schema). Advanced controls are hidden, not just disabled, for
+Mantine owns the forms, lists, destination pickers and the recipe editor (a JSON text area;
+the page checks its shape and caps, and the server checks the recipe in full). Advanced controls are hidden, not just disabled, for
 someone who may not use them; the server checks anyway.
 
 ### The client in edit mode
@@ -274,9 +274,11 @@ React text; a test fails if `features/editor` uses `dangerouslySetInnerHTML` or 
 The editor keeps the author's own changes as pairs (before, after), up to 100. Undo sends the
 `before` as a `Put` (or a `Remove` for something made) with `expect` set to the `seq` of the
 author's own change; if someone else has changed that entity since, the server refuses it
-(`Changed`) and the step is dropped. Undoing a `Build` sends each block's old value only where
-the block still holds what the build put there; blocks others have changed since are left, and
-the editor says how many. World-wide undo is the owner's snapshot restore
+(`Changed`) and the step is dropped. Undoing a `Build` is done by the server
+(`ToServer::Unbuild`): it puts each block's old value back only where the block still holds
+what the build put there, 4,096 a tick like a build; blocks others have changed since are
+left, and the editor says how many. (Block edits are limited to 20 a second a player, so an
+undo sent block by block from the client would take minutes for a large build.) World-wide undo is the owner's snapshot restore
 (`--restore-at`, and later on the site, world-format phase 7).
 
 ## Props in the editor
@@ -307,7 +309,7 @@ The minimum of world-graph-and-art.md the inspector needs:
   `vox-art`). No language model tools, no library, no `vox-forge`.
 
 In advanced mode: **add** a node (a kind and a footprint, drawn as an outline), **edit** its
-recipe (the JSON form, checked against the schema `vox-art` generates), **preview** (the client
+recipe (the JSON form; the page checks its shape, the server the whole recipe), **preview** (the client
 expands it in wasm and draws it as a ghost), **build** (`ToServer::Build`: the server expands
 the same recipe and seed, and applies the blocks as ordinary ordered edits by that player, so
 they are in the edit log and snapshots). A build changes at most **32,768 blocks**; the server
@@ -429,3 +431,39 @@ Each ships on its own; dependencies in brackets.
   two of them new crates (`vox-art`, `vox-graph`), before the full editor exists. Phase 3 gives
   a usable editor (portals, settings, spawn, objective) without props or nodes, which limits
   the risk.
+
+## As built (2026-11-27)
+
+What implementation (beads `vox-tol.1` to `vox-tol.6`) settled that the sections above did not:
+
+- **Owners and keys come from the server.** A new prop's owner is stamped with the account
+  placing it, and an edit of an existing prop keeps the owner it has, whatever the client sent;
+  portal keys come only from the directory. The page holds ids as JavaScript numbers, which lose
+  integers past 2^53, so nothing it sends back may depend on one; for the same reason a node's
+  seed is at most 2^53 - 1 (`vox_core::entity::MAX_NODE_SEED`).
+- **Rights shown are never looser than rights enforced.** In Basic a level file's portal (no
+  key) is read-only, as the server rules; in Advanced a player's own (keyed) portal is read-only
+  on the page although the rules would let an editor move it: the page keeps other people's
+  portals out of reach on purpose.
+- **Atlas edges** are closed by leaving them out of the Settings entity's `atlas.edges`; the
+  server refuses travel over a closed edge and refuses a Settings Put that names an edge the
+  tile does not have, or `edges` that is not a list. A Settings with no `edges` leaves every edge
+  open.
+- **Props** must fit whole: every footprint cell inside the world, and a builder's inside their
+  own plot; a solid block may not be placed where a prop stands (`Why::Blocked`); a prop needs
+  one of the surfaces its definition accepts (floor, ceiling, wall, water, table; an endless
+  floor counts) or is refused (`NoSupport`), and a prop whose support goes (a block broken, a
+  build or undo, a table removed) is removed as an edit by whoever took the support away. The seed
+  catalogue (`data/props`, built by `vox-props` from the recipes in `source/props`: a barrel, a
+  stool and a crate, as the owner chose) has its palette in `data/props/palette.json`; an import
+  from `.vox` refuses a colour further than 48 squared (squared RGB distance) from the palette.
+  The client treats a prop whose hash is not in the catalogue as an orphan, as the server does.
+- **Graph nodes**: the client and the server turn a node entity into a `vox-graph` node with the
+  same code (`vox_graph::entity`), so a preview is what gets built; a preview over 32,768 blocks
+  is refused before sending, with its count. Nodes are added with **Add node**; there is no Node
+  tool on the rail.
+- **Undo** keeps only steps that chain from the state the entity is in, so an older step is
+  dropped once someone else's change has come between; a change sent without `expect` is not
+  undoable. A build is one step with no redo; an editor removed since may not undo their build.
+- **Local play**: `--editors-all` lets guests edit a world with no directory (each guest a local
+  account); it is refused with a directory, and must never be given to a production host.

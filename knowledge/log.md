@@ -1,4 +1,5 @@
 ## 2026-11-27
+* **Update** [2026-11-27T20:39:09Z]: Updated concept `decisions/world-editor.md`. — Implementation decisions (beads vox-tol.1-6): server-owned owners, seed cap, server-side Unbuild, atlas edges, prop rules, seed catalogue, editors-all.
 * **Creation** [2026-11-27T16:13:10Z]: Documented concept `decisions/world-editor.md` (Decision: A Live In-Browser World Editor Built on World Entities). — World editor design agreed and stress-tested (docs/design/world-editor.md, beads vox-tol).
 * **Update** [2026-11-27T14:07:57Z]: Updated concept `architecture/ground-relief-design.md`. — Phases 1-4 built: relief, wet ground, puddles, rings, ice; protocol 8
 * **Relate** [2026-11-27T14:07:57Z]: Linked `architecture/weather-simulation.md` to `architecture/ground-relief-design.md` (Ground water per column fills the puddles drawn in the generated relief.).

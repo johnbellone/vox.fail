@@ -45,12 +45,15 @@ Two products share one Cargo workspace:
 | `crates/vox-format/` | `vox-format` | The world format: zones (16 × 16 chunk columns, 256 m) as checked, zstd-compressed blobs named by their BLAKE3 hash (`zone`), regions (32 × 32 zones, 8 km, one atlas tile) as hashed lists of their zones' hashes (`region`), a blob store and snapshots (manifests of region hashes, shared blobs, kept a week; `store`), in a folder or an Oxen repository with a commit per snapshot and history older than the week squashed (`oxen`, runs the `oxen` command line). Decodes in wasm too (`ruzstd`); encoding is native. |
 | `crates/vox-link/` | `vox-link` | A WebSocket kept open on its own thread, reconnecting with backoff; a `Dial` says where and how (world servers, the relay). Desktop only. |
 | `crates/avatar-voice/` | `avatar-voice` | Block Avatar's voice analysis, pure Rust: lip sync (`lipsync`), pitch and formants (`voice`), laugh and sing detection (`detect`), WAV files (`wav`, one hardened reader). Its tests run on real recordings in `testdata/real`. |
+| `crates/vox-art/` | `vox-art` | Voxels in the project's style with no engine: scales, a sparse grid, the palette, a seeded RNG (`rng`), prop definitions and their checks (`prop`, `check`), the MagicaVoxel reader and palette import (`vox`, `import`), recipes (typed building operations, `recipe`), a GPU-free contact-sheet render (`render`), and world-scale builds as named block cells (`export`). Deterministic and wasm-safe. |
+| `crates/vox-graph/` | `vox-graph` | The world graph: nodes (kind, detail, footprint, recipe, seed), links, constraints, and `expand` (a node to blocks through `vox-art`, at most 32,768); `entity` turns a world's node entity and palette into those, for the server's Build and the editor's preview alike. Wasm-safe. |
 | `crates/vox-voice/` | `vox-voice` | The voice codecs for world voice chat and Block Avatar, pure Rust with no engine and no dependencies: IMA ADPCM (`adpcm`), a linear resampler (`resample`), a jitter buffer (`jitter`), and 20 ms packets behind a silence gate (`packet`). Shared by `vox-world`, `vox-server` (tests) and `block_avatar`; wasm-safe. |
 | `bins/vox-client/` | `vox-client` | The player client: a thin Bevy app (`lib.rs`) around `vox-world`. Builds natively and to wasm32. Also the FPS counter, the portal sweep and watch mode (the front page's live view). |
 | `bins/vox-server/` | `vox-server` | One world: a single thread owns the blocks, players and edit order; WebSocket on `/ws` for players and watchers; SQLite persistence, with `vox-format` snapshots beside it (`<db>.snapshots/`) and restore (`snapshot`); relays voice (nearby and raid party, decided by the server). |
 | `bins/vox-host/` | `vox-host` | Many worlds in one process on one port, each a `vox-server` world routed by path (`/w/<id>/ws`, plus an alias such as its old port); `GET /` lists them. With `--idle-stop <minutes>` worlds start on their first connection and stop when unused (`--keep <id>` always runs). With `--instances` it makes raid parties' copies of dungeons (`data/levels/dungeons/*.json`) when the directory asks (`POST /api/host/instance`, world secret), thrown away when empty or done. With `--atlas <name>=<w>x<h>[@seed]`, any tile `atlas-<name>-<i>-<j>` of a big map is a world, made (ground generated) on its first visit. Takes the same world flags (`vox_server::flags`). |
 | `bins/vox-directory/` | `vox-directory` | Accounts (Steam, Discord, name and password), characters, authority and world currencies, plots, portals, raids, friends and groups, structures and their entitlements (`structures`), token signing; serves the site and the game's files. |
 | `bins/vox-relay/` | `vox-relay` | Lists live shows and relays traffic for the avatar app's network shows. |
+| `bins/vox-props/` | `vox-props` | Builds the accepted props (`data/props`: catalogue, VOXP blobs, palette, thumbnails) from the prop recipes in `source/props/`. Native tool. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
 | `apps/site/` | (Bun) | The vox.fail pages: React 19, Mantine 9, built with Bun into `dist/`. `public/pkg/` is the wasm client (generated, ignored). See its README. |
 | `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands, sea, orbit), clip manifests. |
@@ -65,10 +68,13 @@ Two products share one Cargo workspace:
 | `knowledge/` | | okf project memory. Use the `okf_*` tools, not file tools. |
 | `source/vox/` | | MagicaVoxel sources for the characters and props. |
 
-Dependency direction: `vox-core` <- `vox-world` <- `vox-client` and `block_avatar`; `vox-server`
-and `vox-directory` depend on `vox-core` only. Keep it that way: rules go in `vox-core`,
-rendering in `vox-world`. Rust libraries live in `crates/`, Rust programs in `bins/`, Bun web
-apps in `apps/`.
+Dependency direction: `vox-art` depends on nothing of ours; `vox-format` and `vox-graph` use
+`vox-core` and `vox-art`; `vox-core` <- `vox-world` <- `vox-client` and `block_avatar`
+(`vox-world` also uses `vox-format`, `vox-art` and `vox-graph`); `vox-server` uses `vox-core`,
+`vox-format` and, for props and Build, `vox-art` and `vox-graph`; `vox-directory` depends on
+`vox-core` only. None of the shared crates but `vox-world` depends on Bevy.
+Keep it that way: rules go in `vox-core`, rendering in `vox-world`. Rust libraries live in
+`crates/`, Rust programs in `bins/`, Bun web apps in `apps/`.
 
 ## Commands
 

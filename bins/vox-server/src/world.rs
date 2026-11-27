@@ -1255,8 +1255,9 @@ impl WorldState {
     /// to the chunk for the next save). Other players' edits made meanwhile are in the same order.
     /// A chunk this batch changes by more than `BULK_CHUNK` blocks is sent whole; the rest go out
     /// as `Applied`. When the last block is in, the builder is answered with `EntityDone`, if
-    /// they are still here. A build keeps going when its builder leaves; a build not finished
-    /// when the world closes is not finished (its blocks are not saved).
+    /// they are still here. A build keeps going when its builder leaves; when the world closes
+    /// mid-build, the blocks already applied are saved like any edit and the rest are lost, so
+    /// the build is left part done.
     pub(super) fn build_step(&mut self) {
         let Some(mut job) = self.builds.pop_front() else { return };
         let mut made: Vec<(u64, [i32; 3], u16)> = Vec::new();
