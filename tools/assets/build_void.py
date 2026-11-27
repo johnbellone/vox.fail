@@ -11,6 +11,8 @@ Almost nothing stands in it, so what does looks lost and far away:
                      walk through and you're there)
     the Ember Door   a black doorway to the west, with an echo of the islands in it
     the Tide Door    a basalt doorway to the east, with an echo of the dark sea in it
+    the Low Door     a small stone doorway to the south, into a dungeon: your raid party's own
+                     copy of the Crypt (an instance; it needs a party and a directory)
     the Stair        steps rising to the north-east and stopping in mid-air
     the Monoliths    a row of tall slabs far to the north-west, fading into the fog
     the Doors        doorframes scattered far out in every direction
@@ -70,6 +72,10 @@ def main():
     doorway(38, 0, facing_x=True, w=8, h=14, block="basalt")
     for dz in (-6, 5):
         box("water", (38, 0, dz), (38, 0, dz))
+    # ---- the Low Door, south: small and stone, the way into the Crypt (a dungeon)
+    doorway(0, 40, w=4, h=7, block="stone")
+    box("lamp", (-3, 8, 40), (-3, 8, 40))
+    box("lamp", (2, 8, 40), (2, 8, 40))
     # ---- the Stair: rising north-east and stopping
     for k in range(18):
         box("pearl", (30 + k, 0, -30 - k), (32 + k, k, -28 - k))
@@ -100,7 +106,7 @@ def main():
         "name": "The Void",
         "about": "The first world: an ethereal, flat, luminous space. A pale floor that goes on for ever in "
                  "bright fog, three moons faint in the light, and almost nothing else: the Circle of pillars "
-                 "where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, the Tide Door to the east, a stair to nowhere, monoliths and doorways "
+                 "where you arrive, the First Gate to the north (an echo of the yard in it), the Ember Door to the west, the Tide Door to the east, the Low Door to the south (into the Crypt, for raid parties), a stair to nowhere, monoliths and doorways "
                  "far off in the fog. Made by tools/assets/build_void.py.",
         "world": {
             "sky": "void",
@@ -125,6 +131,9 @@ def main():
                  "level": "islands", "url": ":7782", "arrive": [-13.5, 0, 0], "yaw": 270},
                 {"name": "sea", "at": [38.5, 0, 0], "axis": "x", "size": [8, 14],
                  "level": "sea", "url": ":7783", "arrive": [-7.5, 0, 0], "yaw": 90},
+                # into a dungeon: the directory gives your raid party its own copy
+                {"name": "crypt", "at": [0, 0, 40.5], "axis": "z", "size": [4, 7],
+                 "level": "dungeons/crypt", "url": "dungeon:crypt", "arrive": [0, 0, 10], "yaw": 0},
             ],
             "hotbar": ["pearl", "lumen", "glass", "concrete", "water", "crystal", "planks", "stone", "bricks"],
         },
