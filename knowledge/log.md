@@ -1,4 +1,6 @@
 ## 2026-11-27
+* **Relate** [2026-11-27T16:11:44Z]: Linked `architecture/deployment.md` to `decisions/cloudflare-managed-tunnel.md` (How vox.fail's zone, rules, tunnel and DNS are set up: one cf script, tunnel managed in Cloudflare.).
+* **Creation** [2026-11-27T16:11:44Z]: Documented concept `decisions/cloudflare-managed-tunnel.md` (Decision: vox.fail's Cloudflare Side Is Scripted, With a Tunnel Managed in Cloudflare). — First-time Cloudflare setup for vox.fail, scripted with cf.
 * **Update** [2026-11-27T16:02:00Z]: Updated concept `decisions/edge-worker-offline-page.md`. — Deployed with the cf CLI (cloudflare.config.ts); placeholder DNS record until the tunnel is routed.
 * **Relate** [2026-11-27T15:15:21Z]: Linked `architecture/deployment.md` to `decisions/edge-worker-offline-page.md` (What visitors see when the server is down: a Worker in front of the tunnel serves an offline page.).
 * **Creation** [2026-11-27T15:15:18Z]: Documented concept `decisions/edge-worker-offline-page.md` (Decision: A Cloudflare Worker Shows an Offline Page When the Server Is Down). — Offline fallback for vox.fail while it runs on a dev server.
