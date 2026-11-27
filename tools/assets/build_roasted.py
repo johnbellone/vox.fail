@@ -376,7 +376,7 @@ def garbage():
     clips = [
         ("Bag toss", 1.3, toss, lambda t: face("eyes_open", "brows_angry", "mouth_grit" if t < 0.5 else "mouth_open"), lambda t: {"trashbag"} if t < 0.75 else set()),
         ("Haul the can", 2.0, haul, lambda t: face("eyes_squint", "brows_worried", "mouth_grit"), lambda t: {"can"}),
-        ("Sweep", 2.1, sweep, lambda t: face("eyes_open", "brows_normal", "mouth_flat"), lambda t: {"broom"}),
+        ("Sweep", 2.1, sweep, lambda t: face("eyes_open" if (t % 0.7) < 0.6 else "eyes_shut", "brows_raised", "mouth_o"), lambda t: {"broom"}),  # whistling while he works
         ("Ride the truck", 2.1, ride, lambda t: face("eyes_open", "brows_raised", "mouth_grin")),
         ("Thumbs up", 1.4, thumbs, lambda t: face("eyes_open", "brows_raised", "mouth_grin"), lambda t: {"hand_thumb"} if 0.25 < t < 1.25 else set()),
     ]

@@ -144,5 +144,8 @@
     "b6b6c0": "hair",
     "1a1a1e": "cloth",
     "121216": "cloth"
+  },
+  "models/blue.glb": {
+    "5c687c": "hair"
   }
 }

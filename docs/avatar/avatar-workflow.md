@@ -43,6 +43,7 @@ constraints).
 | `python3 tools/review/ingame.py <id>` | The in-game sheet, `docs/avatar/<id>-ingame.png`: the avatar app's own renderer (snapshot mode), full body on the diner set, standing and in each own pose. Needs a built `block_avatar` (`--exe target/debug/block_avatar` for a debug one), a display and Vulkan: `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json xvfb-run -a -s "-screen 0 1600x1000x24" python3 tools/review/ingame.py <id>` on a machine without them. |
 | `python3 tools/review/avatar_pr.py info <id>` | Its clips (with the face parts and props each shows), props and catalogue entries, as JSON. |
 | `python3 tools/review/avatar_pr.py check <id> [--body pr.md]` | Whether it's complete (below); with `--body`, whether a pull request description follows the avatar format. Exit 1 with a list if not. |
+| `python3 tools/review/avatar_pr.py audit [--md]` | Every character at once: name, `about`, portrait, voxel source, head fit, surfaces, shared and own clips, face parts, props. Exit 1 with a list (or a table with `--md`) if anything is off. |
 | `python3 tools/review/avatar_pr.py body <id> --sha <commit> [--issue <n>]` | A pull request description in the avatar format, from the model. |
 
 The in-game sheet uses two snapshot flags of the avatar app: `--snapshot-do <command>` (a control
