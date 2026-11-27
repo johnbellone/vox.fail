@@ -1,158 +1,155 @@
-# Deploying Vox at vox.fail (Cloudflare)
+# Deploying Vox
 
-vox.fail is on Cloudflare. One machine runs the directory and the worlds on localhost, and a
-Cloudflare Tunnel (`cloudflared`) carries traffic to them: no open ports, no certificate to
-manage, and the machine's address stays private.
+vox.fail runs entirely on Cloudflare (design: [cloudflare-hosting.md](../docs/design/cloudflare-hosting.md)).
+To host Vox on your own machine instead, see [Hosting Vox yourself](#hosting-vox-yourself).
 
-| What | Listens on | Public address |
-| --- | --- | --- |
-| vox-directory (pages, sign-in, characters, the browser client) | 127.0.0.1:7700 | https://vox.fail/ |
-| The Void (vox-server) | 127.0.0.1:7780 | wss://vox.fail/w/7780/ws |
-| The yard | 127.0.0.1:7781 | wss://vox.fail/w/7781/ws |
-| The islands | 127.0.0.1:7782 | wss://vox.fail/w/7782/ws |
-| The dark sea | 127.0.0.1:7783 | wss://vox.fail/w/7783/ws |
-| Orbit | 127.0.0.1:7784 | wss://vox.fail/w/7784/ws |
+## vox.fail on Cloudflare
 
-On Kubernetes instead: the image in `docker/` and the Helm chart in `helm/` (see
-[helm/README.md](helm/README.md)).
+```
+browser ──► Worker vox-edge (vox.fail/*, apps/edge)
+             ├─ pages, /pkg, /assets, /data ──► the Worker's files
+             └─ /api, /auth, /w ──► Durable Object "vox" ──► one container (basic)
+                                                              ├─ vox-directory :7700
+                                                              ├─ vox-host :7790 (every world)
+                                                              └─ litestream ⇄ R2 bucket vox-data
+```
 
-Portals in the levels name other worlds by port (`":7781"`); from a world at
-`wss://vox.fail/w/7780/ws` that becomes `wss://vox.fail/w/7781/ws`, so the levels work
-unchanged locally and here. The tunnel can't rewrite paths, so world servers answer at
-`/w/<port>/ws` as well as `/ws`.
+- **The Worker** serves the site itself, so browsing never wakes the servers.
+- **The container** starts on the first sign-in or world visit and sleeps after 15 minutes
+  with no requests and no players.
+- **Each start** restores the databases from R2 (`deploy/docker/start.sh`).
+- **While it runs**, Litestream streams every change back to R2, with a week of history.
+- **If it can't start**, the site shows the offline page (`/_offline/`).
+- **Portals** in the levels name worlds by port (`":7781"`), so from `wss://vox.fail/w/7780/ws`
+  that's `wss://vox.fail/w/7781/ws`. vox-host answers each world at its old port's path too, so
+  the levels work unchanged.
 
-## On the server
+### Setting it up (once)
 
-1. Build: `cargo build --release -p vox-directory -p vox-server -p vox-client` and
-   `tools/dev/build_web.sh` (the browser client, into `apps/site/public/pkg`), then the pages:
-   `bun install && (cd apps/site && bun run build)` (Bun is needed to build, not to run).
-2. Copy to `/opt/vox`: `bin/` (the three binaries), `apps/site/dist/` as `web/`, `assets/`, `data/`. Make a `vox`
-   user and `/var/lib/vox` owned by it.
-3. Worlds: `/etc/vox/void.env` holds `PORT=7780` and `SEED=data/levels/void.json`;
-   `yard.env` `PORT=7781`, `SEED=data/levels/yard.json`; `islands.env` `PORT=7782`,
-   `SEED=data/levels/islands.json`; `sea.env` `PORT=7783`, `SEED=data/levels/sea.json`;
-   `orbit.env` `PORT=7784`, `SEED=data/levels/orbit.json`.
-4. Secrets: copy `directory.env` to `/etc/vox/directory.env` (root, mode 600) and fill it in
-   (Discord client ID and secret; optionally a Steam Web API key; a world secret from
-   `openssl rand -hex 32`). Put the same `VOX_WORLD_SECRET=` line in `/etc/vox/worlds.env`
-   (mode 600) for the world servers: with it they report who's playing (authority, raids)
-   and take the plots and portals players make. A world's `--name` (`void`, `yard`,
-   `islands`, `sea`, `orbit`) is its id in the directory's `--world "void=The Void=/w/7780/ws"`.
-5. Install `vox-directory.service` and `vox-world@.service` in `/etc/systemd/system`, then
-   `systemctl enable --now vox-directory`, then
-   `systemctl enable --now vox-world@void vox-world@yard vox-world@islands vox-world@sea vox-world@orbit`. The directory
-   goes first: it makes the signing key (`/var/lib/vox/directory.key`, and `.pub` for the
-   worlds).
-6. The tunnel: install `cloudflared`, then
-   `cloudflared tunnel login`, `cloudflared tunnel create vox` (copy the credentials file it
-   names to `/etc/cloudflared/vox.json`), `cloudflared tunnel route dns vox vox.fail` (remove
-   any A/AAAA/CNAME record for vox.fail first), copy `cloudflared/config.yml` to
-   `/etc/cloudflared/config.yml`, and `cloudflared service install`.
-   (Or make the tunnel in the dashboard, Zero Trust → Networks → Tunnels, with the same four
-   public hostnames: `vox.fail` path `^/w/7780/` → `http://127.0.0.1:7780`, and so on, the
-   directory last; then `cloudflared service install <token>`.)
+1. **The Workers Paid plan** ($5 a month). Containers need it: dash.cloudflare.com → Workers &
+   Pages → Plans.
+2. **Cloudflare:** run `deploy/cloudflare-setup.sh` with the `cf` command line signed in
+   (`cf auth login`). It's safe to run again. It sets:
+   - the zone settings and rules (below);
+   - the DNS records;
+   - the R2 bucket `vox-data` and its token;
+   - the Worker's secrets:
+     - `VOX_DIRECTORY_KEY`, the signing key: never change it once set, or everyone is signed out;
+     - `VOX_WORLD_SECRET`;
+     - Litestream's two R2 keys.
+3. **The sign-in sites:** run the script again with their secrets in the environment:
+   `VOX_DISCORD_CLIENT_ID=… VOX_DISCORD_CLIENT_SECRET=… VOX_STEAM_KEY=… deploy/cloudflare-setup.sh`.
+   - **Discord:** discord.com/developers/applications → New Application → OAuth2, with the
+     redirect `https://vox.fail/auth/discord/return`. Only the `identify` scope is asked for.
+   - **Steam:** nothing to register. A Steam Web API key (steamcommunity.com/dev/apikey) lets
+     new accounts take their Steam name.
+4. **GitHub:** the `production` environment holds `CLOUDFLARE_API_TOKEN` and
+   `CLOUDFLARE_ACCOUNT_ID`, and only `main` and `v*` tags may use it. The token, "vox-edge CI",
+   has Workers Scripts, Workers Containers and Cloudchamber Write on the account, and Workers
+   Routes Write and Zone Read on vox.fail.
 
-## Automatic deploys
+### Releasing
 
-Pushing a version tag ships it: `git tag v0.4.0 && git push origin v0.4.0`. GitHub Actions
-(`.github/workflows/release.yml`) builds the container image's `/opt/vox` (servers, browser
-client, pages, assets, data) and attaches it to the release as `vox-linux-x86_64.tar.gz` with
-its SHA-256. The server pulls it: `vox-update.timer` runs `vox-update.sh` every five minutes,
-which downloads the latest release, checks it, unpacks it into `/opt/vox-releases/<tag>`,
-points the `/opt/vox` symlink at it, restarts the vox services that were running (the
-directory first), and purges Cloudflare's cache. Nothing outside can reach the machine, and
-GitHub holds no key to it. The build takes a while (the browser client is the slow part), so
-a tag is live about half an hour after you push it.
+Push a version tag: `git tag v0.5.0 && git push origin v0.5.0`. `.github/workflows/release.yml`
+then:
 
-If the directory doesn't answer within a minute, the previous release goes back and the timer
-won't try that tag again: fix it and push a new tag. Players are disconnected for the few
-seconds a restart takes; the worlds save first.
+1. builds the image once (`deploy/docker/Dockerfile`, which includes the browser client);
+2. takes the site, assets and data out of it for the Worker;
+3. pushes the image to Cloudflare's registry;
+4. deploys the Worker, its Durable Object and the container with `wrangler deploy`.
 
-Set up once, as root:
+The browser client takes a while to build, so a release goes live in about half an hour. A
+running container keeps its image until it next sleeps, so nobody playing is cut off; the next
+start uses the new one. Pull requests and `main` only run the Worker's checks (`edge.yml`).
 
-1. `apt install curl jq` (and `gh`, to check build provenance).
-2. Turn the copy in `/opt/vox` into the first release:
-   `systemctl stop vox-directory vox-host 'vox-world@*'`,
-   `mkdir -p /opt/vox-releases && mv /opt/vox /opt/vox-releases/v0-manual && ln -s /opt/vox-releases/v0-manual /opt/vox`,
-   then start them again. The units don't change.
-3. `install -m 755 deploy/vox-update.sh /usr/local/sbin/vox-update.sh`, and copy `deploy.env`
-   to `/etc/vox/deploy.env` (root, mode 600). Fill in `CF_ZONE` and `CF_TOKEN` (an API token
-   with only Zone → Cache Purge on vox.fail) to purge the cache, and `GITHUB_TOKEN` (read-only
-   contents) if the repository is private.
-4. Install `vox-update.service` and `vox-update.timer` in `/etc/systemd/system`, then
-   `systemctl enable --now vox-update.timer`. Watch it with `journalctl -u vox-update`.
+To go back: `bunx wrangler rollback` in `apps/edge` (the Worker and its image reference), or tag
+the older commit again.
 
-By hand: `vox-update.sh --rollback` goes back one release, `--tag v0.3.0` installs that one;
-both hold it (the timer stops upgrading) until `vox-update.sh --resume`. The three newest
-releases are kept.
+### Data, backups and restores
 
-Snapshots written by this release are zone format 2, which holds each zone's entities as well as
-its blocks. Older binaries can't read zone format 2, so rolling back the binary alone leaves the
-newer snapshots unreadable to it. To roll back, first restore with the newer binary to a snapshot
-from before the upgrade (`vox-server --db <world>.db --restore <id>`, world stopped): it keeps the
-world's current entities, since that snapshot predates them. Then roll the binary back. The restore
-itself is a snapshot, so the newer binary can still undo it.
+- **What's stored:** the databases in R2, under `vox-data/vox/<name>.db/`: `directory.db`
+  (accounts, characters, wallets and ledger, plots, structures) and one per world.
+- **History:** Litestream keeps a daily snapshot and every change for a week.
+- **Point-in-time restore:** with the container asleep, run
+  `litestream restore -timestamp <time> -o directory.db s3://vox-data/vox/directory.db?endpoint=https://<account>.r2.cloudflarestorage.com`
+  with an R2 token in `LITESTREAM_ACCESS_KEY_ID` and `LITESTREAM_SECRET_ACCESS_KEY`. Copy the
+  result into a fresh replica only with care: the next start restores the latest copy from R2.
+- **Trying it locally:** `tools/dev/litestream_probe.sh` and `tools/dev/container_probe.sh` run
+  the container's start against a test bucket.
+- **Rolling back past the world editor:** world snapshots from that release on are zone format 2,
+  which holds each zone's entities (portals, props, nodes, settings) as well as its blocks, and
+  older binaries can't read them. Before going back to an older image, restore each world with the
+  newer binary to a snapshot from before the upgrade (`vox-server --db <world>.db --restore <id>`,
+  world stopped): it keeps the world's current entities, since that snapshot predates them. The
+  restore is itself a snapshot, so the newer binary can still undo it. This needs a shell where the
+  databases are (self-hosting; on Cloudflare, not yet: see below). The directory and the worlds
+  are in one image, so they always update together.
+- **Editing:** a world's owner and the editors they name edit it live at `/edit?world=<id>`
+  (`docs/help/editor.md`). `--editors-all`, which lets guests edit a world with no directory, is
+  for local play only (`tools/dev/play-local.sh`): it is refused alongside a directory and must
+  never go into `deploy/docker/host.args`.
 
-Deploy the directory before the worlds: a world on this code ignores player portals without `to` or `pair` from an older directory, and would drop them.
+World owners (who may issue a world's currency) and grants of authority are made with the
+directory's `admin` commands against `directory.db`:
+`/opt/vox/bin/vox-directory --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key <world flags> admin own-world void "Their Name"`,
+or `admin grant "Name" 50`. The world flags are the `--world` lines in
+`deploy/docker/directory.args`. **Not yet possible on Cloudflare:** there's no shell into the
+container (`wrangler containers ssh` needs SSH set up in `wrangler.jsonc`, which it isn't), and
+editing a copy outside would be overwritten by the next restore from R2.
 
-## All worlds in one process (vox-host)
+### Zone settings (`deploy/cloudflare-setup.sh` sets these)
 
-Instead of a `vox-world@` unit per world, `vox-host` runs them all on one port
-(`vox-host.service`): each world at `/w/<id>/ws`, and at its old port as an alias
-(`/w/7781/ws` is the yard), so levels and clients don't change. It reads and writes the same
-`/var/lib/vox/<id>.db` files, so switching is:
-
-1. `systemctl disable --now vox-world@void vox-world@yard vox-world@islands vox-world@sea vox-world@orbit`
-2. Install `vox-host.service` in `/etc/systemd/system`, then `systemctl enable --now vox-host`.
-3. In the tunnel, replace the per-port rules with one: `vox.fail` path `^/w/` →
-   `http://127.0.0.1:7790`, before the directory's rule.
-
-Adding a world is then a `--world <id>` in the unit, not a new unit and tunnel rule. With
-`--idle-stop 10`, a world starts when the first player (or watcher) comes and is saved and
-stopped after ten minutes with nobody there; `--keep void` keeps the Void always running. A
-world's status page (`/w/<id>/`) says `"running": false` while it's stopped, without starting it.
-With `--instances` (and the directory's `--instances-at http://127.0.0.1:7790`) it also makes raid
-parties' copies of the dungeons in `data/levels/dungeons`. The directory asks for them at
-`/api/host/instance` with the world secret; keep the tunnel rule at `^/w/` so that stays private. Design:
-`docs/design/world-network.md`.
-
-## In the Cloudflare dashboard (vox.fail)
-
-- SSL/TLS: Always Use HTTPS on.
-- Network: WebSockets on (the default).
-- Speed → Optimization: Rocket Loader off. It rewrites the pages' scripts, which the pages'
-  content policy then blocks. Scrape Shield → Email Address Obfuscation off, for the same
-  reason.
-- Security: leave Bot Fight Mode off, or skip it for `/w/` with a WAF skip rule. The desktop
-  client isn't a browser and can't answer a challenge.
-- Caching → Cache Rules: one rule, "URI Path starts with `/pkg/` or `/assets/` or `/data/`"
-  → Eligible for cache, edge TTL "use cache-control header if present". Cloudflare doesn't
-  cache `.wasm`, `.glb` or `.json` by default, and the browser client is about 11 MB
-  compressed. The directory marks these five minutes; the API, sign-in and pages are never
-  kept. After a release, run `deploy/purge-cache.sh` (zone ID and an API token with Cache
-  Purge).
-- Rules → Redirect Rules: `www.vox.fail/*` → `https://vox.fail/${1}`, 301 (and a proxied
-  DNS record for www, say `AAAA www 100::`, so the rule sees the requests).
-
-## The sign-in sites
-
-- Discord: discord.com/developers/applications → New Application → OAuth2. Add the redirect
-  `https://vox.fail/auth/discord/return`. The client ID and secret go in
-  `/etc/vox/directory.env`. Only the `identify` scope is asked for: Discord tells us your id
-  and name, nothing else.
-- Steam: nothing to register. Steam sends people back to `https://vox.fail/auth/steam/return`
-  and the directory checks the answer with Steam. A Steam Web API key
-  (steamcommunity.com/dev/apikey) lets new accounts take their Steam name.
-
-## Desktop client and backups
+- **Always Use HTTPS:** on.
+- **WebSockets:** on.
+- **Rocket Loader and Email Address Obfuscation:** off. Both rewrite the pages, which their
+  content policy then blocks.
+- **A cache rule** for `/pkg/`, `/assets/` and `/data/`: eligible for caching, respecting the
+  five minutes the Worker sets.
+- **A 301 redirect** from `www.vox.fail` to `vox.fail`. `www` has a proxied `AAAA 100::` record
+  only so the rule sees requests.
+- **`vox.fail` itself** has a proxied `AAAA 100::` record: the Worker answers everything.
+- **Bot Fight Mode:** leave it off, or skip it for `/w/`. The desktop client isn't a browser and
+  can't answer a challenge.
 
 The desktop client goes to the Void at vox.fail by default: `vox-client --token <launch code>`.
-Offer downloads on the start page with `--download "Windows=https://…"` on the directory.
-GitHub Releases is a good home for them; files under `apps/site/public/downloads/` (copied into the build) are served too.
+Downloads offered on the start page go in `apps/site/public/downloads/`, or on GitHub Releases.
 
-Back up `/var/lib/vox`: the directory's accounts, key, wallets and ledger, and every world's
-blocks.
+## Hosting Vox yourself
 
-World owners (who may issue a world's currency) are set by the operators:
-`sudo -u vox /opt/vox/bin/vox-directory --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key --world "void=The Void=/w/7780/ws" admin own-world void "Their Name"`
-(the same `--world` list as the service). `admin grant "Name" 50` gives authority.
+The same servers run on any Linux machine (Debian 12 / Ubuntu 22.04 or newer). Alternatives:
+the container image in `docker/`, or the Helm chart in `helm/` for Kubernetes (see
+[helm/README.md](helm/README.md)).
+
+1. **Build:** `cargo build --release -p vox-directory -p vox-host -p vox-client` and
+   `tools/dev/build_web.sh` (the browser client), then the pages:
+   `bun install && (cd apps/site && bun run build)`.
+2. **Install:** copy to `/opt/vox`: `bin/` (the binaries), `apps/site/dist/` as `web/`,
+   `assets/` and `data/`. Make a `vox` user and `/var/lib/vox` owned by it.
+3. **Secrets:** copy `directory.env` to `/etc/vox/directory.env` (root, mode 600) and fill it in:
+   the Discord client ID and secret, optionally a Steam Web API key, and a world secret from
+   `openssl rand -hex 32`. Put the same `VOX_WORLD_SECRET=` line in `/etc/vox/worlds.env`
+   (mode 600).
+4. **Services:** install `vox-directory.service` and `vox-host.service` in `/etc/systemd/system`,
+   then `systemctl enable --now vox-directory vox-host`.
+   - The directory goes first: it makes the signing key (`/var/lib/vox/directory.key`, and
+     `.pub` for the worlds).
+   - vox-host runs every world on 127.0.0.1:7790, at `/w/<id>/ws` and at its old port's path.
+   - With `--idle-stop 10`, a world starts with its first player and stops ten minutes after the
+     last; `--keep void` keeps the Void running.
+   - With `--instances` (and the directory's `--instances-at http://127.0.0.1:7790`), it makes
+     raid parties' copies of the dungeons.
+   - `vox-world@.service` runs one world per unit instead. Its `/etc/vox/<id>.env` holds `PORT`
+     and `SEED`.
+5. **Expose it** through a Cloudflare Tunnel, with no open ports. `cloudflared/config.yml` is a
+   locally managed tunnel's routes, for one world per port:
+   - `cloudflared tunnel create vox`, then `cloudflared tunnel route dns vox <your host>`;
+   - install the file as `/etc/cloudflared/config.yml`, then `cloudflared service install`.
+   - With vox-host, route `^/w/` to `http://127.0.0.1:7790` instead.
+   - Keep `/api/world/` and `/api/host/` refused: they're for the servers on localhost.
+
+   After a release, `deploy/purge-cache.sh` clears Cloudflare's cached files.
+6. **Back up `/var/lib/vox`:** the directory's accounts, key, wallets and ledger, and every
+   world's blocks.
+
+World owners and authority: `sudo -u vox /opt/vox/bin/vox-directory --db /var/lib/vox/directory.db --key /var/lib/vox/directory.key --world "void=The Void=/w/7780/ws" admin own-world void "Their Name"`
+(the same `--world` list as the service), or `admin grant "Name" 50`.

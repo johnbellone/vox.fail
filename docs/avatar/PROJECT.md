@@ -83,7 +83,7 @@ There are about 45 user-facing features in eight areas. Almost all of them can b
 
 | Feature | What it does | Trigger | Code |
 | --- | --- | --- | --- |
-| 38 characters | Blue (the main character), the lead, 25 cast, 4 animals, peanut, 6 roasted peanuts | **Tab**, `model:` | `main.rs`, `startup.rs` |
+| 40 characters | Blue (the main character), the lead, 25 cast, 5 animals, peanut, 6 roasted peanuts, the Brain | **Tab**, `model:` | `main.rs`, `startup.rs` |
 | Backgrounds | Green, magenta, studio, transparent | **B**, `bg` | `main.rs` |
 | Framing | Head and shoulders, waist up, full body; plus raid-wide and punch-in shots | **V**, `frame` | `camera.rs` (`update_camera`) |
 | Retro sprite mode | Palette-snapped pixel art with outline | **Y**, `retro:N` | `main.rs`, `assets/shaders/` |
@@ -464,7 +464,7 @@ The tests write into the project folder (gags.txt, questions); clean these befor
 The app was run under Xvfb with a software Vulkan driver (lavapipe), at about 5 fps:
 
 - **Control page (Playwright):** all six tabs render with no console errors. The hotkey box captures Ctrl+Alt+K. The live preview loads from `/preview.jpg`.
-- **First run:** the setup steps appear with no settings file, list 38 characters and the checks, and hide permanently after Done.
+- **First run:** the setup steps appear with no settings file, list 39 characters and the checks, and hide permanently after Done.
 - **Viewer page:** after a typed-name sign-in, all 37 portraits load.
 - **Effects:** a hat drop, a 600-bit cheer (head squash, glance, splats) and a hop (crouch, stretch, land) were screenshotted frame by frame.
 - **Shorts:** a test raid produced a 16.9 s MP4. Its first frames are the title card, every frame has the caption, it ends on the end card, and the comic strip has its caption bar.

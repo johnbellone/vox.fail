@@ -56,14 +56,17 @@ Two products share one Cargo workspace:
 | `bins/vox-props/` | `vox-props` | Builds the accepted props (`data/props`: catalogue, VOXP blobs, palette, thumbnails) from the prop recipes in `source/props/`. Native tool. |
 | `bins/block-avatar/` | `block_avatar` | The avatar app (and its Windows installer). It re-exports blocks, weather and the world client from `vox-world`; its own `bevel`, `lighting` and `particles` are different systems, not copies. |
 | `apps/site/` | (Bun) | The vox.fail pages: React 19, Mantine 9, built with Bun into `dist/`. `public/pkg/` is the wasm client (generated, ignored). See its README. |
+| `apps/edge/` | (Bun) | vox.fail's Cloudflare Worker: serves the site, runs the servers' container behind a Durable Object (`src/container.ts`), and shows an offline page when they can't start. Configured in `wrangler.jsonc`; deployed by `.github/workflows/release.yml`. See its README. |
 | `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands, sea, orbit), clip manifests. |
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
-| `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail, and automatic deploys from version tags (`vox-update.sh`, `.github/workflows/release.yml`; see `deploy/README.md`); the container image (`docker/Dockerfile`) and a Helm chart for Kubernetes (`helm/vox`, see `helm/README.md`). |
+| `deploy/` | | vox.fail on Cloudflare: `cloudflare-setup.sh` (zone, DNS, R2, secrets), and the container's start (`docker/start.sh`, `vox-supervise`, `litestream.yml`, the args files). Self-hosting: systemd units, a Cloudflare Tunnel config, the container image (`docker/Dockerfile`) and a Helm chart (`helm/vox`). See `deploy/README.md`. |
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
 | `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen), `screenshots.sh` (the README's pictures, drawn by the real client into `docs/screenshots/`; run by hand when the look changes). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
+| `tools/review/` | | Avatar review: `render_sheet.mjs` (the close-up sheet, three.js), `ingame.py` (the in-game sheet, the app's snapshot mode), `avatar_pr.py` (check an avatar, write or check its pull request). See `docs/avatar/avatar-workflow.md`. |
 | `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
 | `.pi/agents/` | | Project subagents: `vox-writer` (haiku) and `vox-reviewer` (sonnet). See [Models and subagents](#models-and-subagents). |
+| `.pi/prompts/`, `.agents/skills/` | | Pi commands (`/new-avatar`, `/review-avatar`) and skills (`new-avatar`, `okf-memory`). |
 | `.beads/` | | The beads task database (`bd`). Never edit by hand. |
 | `knowledge/` | | okf project memory. Use the `okf_*` tools, not file tools. |
 | `source/vox/` | | MagicaVoxel sources for the characters and props. |
@@ -136,9 +139,11 @@ ignores `*.db`).
   tiles.
 - **Worlds -> directory:** each world reports who is present once a minute (authority, raids,
   plots) over localhost with `VOX_WORLD_SECRET`. Those endpoints (`/api/world/*`) must not be
-  exposed publicly; the tunnel config refuses them.
-- **Production:** one machine runs the directory and worlds on localhost behind a Cloudflare
-  Tunnel at vox.fail. Details and the order to start things: `deploy/README.md`.
+  exposed publicly; the edge Worker refuses them (as does the self-hosting tunnel config).
+- **Production:** vox.fail runs on Cloudflare. The edge Worker (`apps/edge`) serves the site and
+  passes `/api/`, `/auth/` and `/w/` to one container (the directory and vox-host) behind a
+  Durable Object. The container sleeps when idle, and Litestream keeps its SQLite databases in
+  R2. Details: `deploy/README.md`, `docs/design/cloudflare-hosting.md`.
 
 ## Conventions
 
@@ -245,6 +250,14 @@ bd list                               # everything, as a tree
   current one.
 - `bd metrics off` keeps usage reporting off (already set in this clone).
 
+## Avatars
+
+A new avatar (an animal or creature on the shared block rig) follows the `new-avatar` skill
+(`.agents/skills/new-avatar/SKILL.md`; `/new-avatar` in Pi) and is reviewed in the avatar pull
+request format, which the avatar review bot checks. Requests come in as "New avatar" issues; the
+avatar request bot builds them once a maintainer adds `avatar-go`. Everything is in
+[docs/avatar/avatar-workflow.md](docs/avatar/avatar-workflow.md).
+
 ## Design documents
 
 Proposals live in `docs/design/`. Read the relevant one before large changes:
@@ -275,6 +288,9 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [controls-and-hud.md](docs/design/controls-and-hud.md): block-game controls on an action
   layer, gamepad out of the box with brand-matched button hints, HUD (hotbar, health), menus
   with controller navigation, server-side inventory and health.
+- [cloudflare-hosting.md](docs/design/cloudflare-hosting.md): vox.fail on Cloudflare Containers: one
+  container (directory and vox-host) behind the edge Worker as a Durable Object, sleeping when
+  idle; SQLite kept, streamed to R2 by Litestream; the Worker serves the site; the server path retired.
 
 ## Known gaps (not yet done)
 

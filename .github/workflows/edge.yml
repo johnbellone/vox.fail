@@ -1,0 +1,50 @@
+name: Edge worker
+
+# Checks vox.fail's Cloudflare Worker (apps/edge): its tests, types and build. The Worker now
+# serves the whole site, browser client included, which only a release builds, so it is deployed
+# by the release workflow, not from here (docs/design/cloudflare-hosting.md).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/edge/**"
+      - "apps/site/**"
+      - "docs/screenshots/**"
+      - "bun.lock"
+      - ".github/workflows/edge.yml"
+  pull_request:
+    paths:
+      - "apps/edge/**"
+      - "apps/site/**"
+      - ".github/workflows/edge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  WRANGLER_SEND_METRICS: "false"
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - run: bun install --frozen-lockfile
+      - name: Build the site (the Worker's files; no browser client here)
+        working-directory: apps/site
+        run: bun run build
+      - name: Test, typecheck, build
+        working-directory: apps/edge
+        run: |
+          bun test
+          bun run typecheck
+          bun run build

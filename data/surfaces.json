@@ -1,4 +1,7 @@
 {
+  "models/capybara.glb": {
+    "9c6c40": "hair"
+  },
   "models/scene_all.glb": {
     "b4805e": "stubble",
     "704626": "hair",
@@ -141,5 +144,8 @@
     "b6b6c0": "hair",
     "1a1a1e": "cloth",
     "121216": "cloth"
+  },
+  "models/blue.glb": {
+    "5c687c": "hair"
   }
 }

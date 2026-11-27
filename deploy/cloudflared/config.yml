@@ -1,4 +1,7 @@
-# Cloudflare Tunnel for vox.fail: cloudflared on the server dials out to Cloudflare, so the
+# For hosting Vox yourself (deploy/README.md): a locally managed Cloudflare Tunnel, one world
+# server per port. vox.fail itself runs on Cloudflare Containers and has no tunnel.
+#
+# Cloudflare Tunnel for a Vox server: cloudflared on the server dials out to Cloudflare, so the
 # machine needs no open ports and no certificate. Requests come in by path:
 #
 #   vox.fail/w/7780/...  the Void (vox-server on 127.0.0.1:7780)

@@ -8,9 +8,11 @@ import { api, messageOf, post, worldUrl } from "../../api/client";
 import type { Me, Token } from "../../api/types";
 import { Problem } from "../../components/Problem";
 import { Wordmark } from "../../components/Wordmark";
-import { loadClient } from "../../game/wasm";
+import { loadClient, webgpuProblem } from "../../game/wasm";
 
 const STAGES = 5;
+// how long the client may take from starting to showing the world before we say it didn't
+const START_LIMIT_MS = 60_000;
 
 export function PlayPage() {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -26,7 +28,11 @@ export function PlayPage() {
       setStatus(text);
     };
     window.vox_status = step;
+    let shown = false;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
     window.vox_ready = () => {
+      shown = true;
+      clearTimeout(watchdog);
       setStage(STAGES);
       setReady(true);
       setKeys(true);
@@ -45,6 +51,9 @@ export function PlayPage() {
       const world = t.worlds.find((w) => w.name === want) ?? t.worlds[0];
       if (!world) throw new Error("there are no worlds to go to yet");
       document.title = `${world.name} · Vox`;
+      // before megabytes of client: can this browser draw it at all?
+      const why = await webgpuProblem();
+      if (why) throw new Error(why);
       step("Loading the client…");
       const start = await loadClient();
       step(`Going to ${world.name}…`);
@@ -56,9 +65,13 @@ export function PlayPage() {
         model: t.character.model,
         wear: t.character.wear,
       });
+      watchdog = setTimeout(() => {
+        if (!shown) setError("The game didn't start in this browser. Reload to try again, or play in Chrome or Edge.");
+      }, START_LIMIT_MS);
     })().catch((err) => setError(messageOf(err)));
 
     return () => {
+      clearTimeout(watchdog);
       delete window.vox_status;
       delete window.vox_ready;
       delete window.vox_error;

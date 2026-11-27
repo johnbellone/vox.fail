@@ -20,6 +20,13 @@
   "eye_y": 0.25,
   "mouth_y": 0.07
  },
+ "capybara.glb": {
+  "top": 0.5,
+  "width": 0.7,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.03
+ },
  "cat.glb": {
   "top": 0.5,
   "width": 1.0,
@@ -264,5 +271,12 @@
   "front": 0.306,
   "eye_y": 0.25,
   "mouth_y": 0.03
+ },
+ "brain.glb": {
+  "top": 0.65,
+  "width": 0.8,
+  "front": 0.306,
+  "eye_y": 0.25,
+  "mouth_y": 0.07
  }
 }

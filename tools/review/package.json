@@ -1,0 +1,10 @@
+{
+  "name": "vox-avatar-review",
+  "private": true,
+  "description": "Review renders of avatars: tools/review/render_sheet.mjs (see docs/avatar/avatar-workflow.md)",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.63.0",
+    "three": "0.170.0"
+  }
+}
