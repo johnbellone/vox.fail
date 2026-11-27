@@ -265,14 +265,6 @@
    "about": ""
   },
   {
-   "id": "capybara",
-   "name": "Capybara",
-   "group": "Animals",
-   "model": "models/capybara.glb",
-   "portrait": "portraits/capybara.png",
-   "about": "A calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off."
-  },
-  {
    "id": "cat",
    "name": "Cat",
    "group": "Animals",
@@ -311,6 +303,14 @@
    "model": "models/rhino.glb",
    "portrait": "portraits/rhino.png",
    "about": ""
+  },
+  {
+   "id": "capybara",
+   "name": "Yuzu",
+   "group": "Animals",
+   "model": "models/capybara.glb",
+   "portrait": "portraits/capybara.png",
+   "about": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off."
   }
  ]
 }

@@ -900,7 +900,7 @@ in `docs/avatar/capybara-ingame.png`: `block_avatar --snapshot out.png --model m
 | `rhino.glb` | Rhino in a navy suit, white shirt, red tie and flag pin; horn on the snout tip | Charge, Horn toss, Stomp, Snort |
 | `donkey.glb` | Donkey in a blue blazer, open-collar shirt and jeans; tall ears, dark mane | Hee-haw, Back kick, Stubborn, Munch |
 | `peanut.glb` | Original peanut character: raw two-lobed shell, stick limbs, orange ball cap | Tip cap, Backflip, Wobble, Startled |
-| `capybara.glb` | Original capybara: warm brown barrel body, big blunt muzzle with a dark nose pad, small round ears, no tail; its own props are a yuzu, a towel and a slice of watermelon, shown only in the clips that use them | Chill, Hot spring (towel), Yuzu balance (yuzu), Melon snack (watermelon), Nod off (control page) |
+| `capybara.glb` | Yuzu, an original capybara: warm brown barrel body, big blunt muzzle with a dark nose pad, small round ears, no tail; its own props are a yuzu, a towel and a slice of watermelon, shown only in the clips that use them | Chill, Hot spring (towel), Yuzu balance (yuzu), Melon snack (watermelon), Nod off (control page) |
 
 ### Roasted Peanut series (`assets/models/roasted_*.glb`)
 

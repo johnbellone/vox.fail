@@ -15,11 +15,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 cast = {c["id"]: c for c in json.loads((ROOT / "data/cast_manifest.json").read_text())["characters"]}
 GROUPS = {"blue": "Main", "cat": "Animals", "dog": "Animals", "donkey": "Animals", "rhino": "Animals", "peanut": "Animals", "capybara": "Animals"}
-NAMES = {"blue": "Blue", "scene_all": "Lead", "peanut": "Peanut", "roasted_miami": "Miami tourist"}
+NAMES = {"blue": "Blue", "scene_all": "Lead", "peanut": "Peanut", "roasted_miami": "Miami tourist", "capybara": "Yuzu"}
 
 # Vox's main character comes first, and is who a new player starts as
 MAIN = "blue"
-ABOUT = {"capybara": "A calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off.",
+ABOUT = {"capybara": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off.",
          "blue": "Vox's main character: an American pit bull terrier with a blue nose, a blue-grey coat, white blaze, chest and paws, rose ears and an orange collar."}
 
 chars = []
