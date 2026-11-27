@@ -1,6 +1,6 @@
 # Design: ground relief and puddles
 
-Status: **proposed** · 2026-11-27 · nothing here is built yet
+Status: **phases 1-2 built** (2026-11-27): the relief function, block and world settings, and dry relief in the block shader; puddles (phases 3-4) not yet
 
 Related: [world-scaling.md](world-scaling.md) (generated terrain, fixed-point rules),
 [world-network.md](world-network.md) (the atlas: tiles that must agree at their edges),
@@ -40,14 +40,17 @@ silhouette turns out to matter.
 ## Relief: part of world generation
 
 **The function.** `vox_core::relief::depth(seed, x, z) -> u8` gives how far below the block's
-top the ground is at a point, in 1/256 of a block. It is integer-only like `terrain::noise`,
+top the ground is at a point (in sixteenths of a block), 0 to 255 of the deepest dip. It is integer-only like `terrain::noise`,
 but hashed in `u32` (not `u64`), so it can be mirrored exactly in WGSL. Two octaves:
 
-- swales of 3 to 8 blocks: the low spots where water gathers;
+- swales on a 4-block lattice: the low spots where water gathers;
 - a finer roughness of about one block that breaks up the edges of the swales.
 
 It depends only on world coordinates, so it runs on across blocks, chunks, zones and atlas tiles
-with no seams. Atlas tiles use atlas coordinates, as `terrain::height` does.
+with no seams. Atlas tiles use atlas coordinates, as `terrain::height` does: a world's
+`origin` is rounded down to whole swales, so the shader can move its lattice by whole steps.
+The shader uses the same hashes bit for bit and blends in floating point, within about 1/255
+of the integer values.
 
 **How much.** Each block in `data/blocks.json` gets `"relief"` (0-1, the share of the largest
 dip) and `"soak"` (0-1, how much rain the ground drinks):

@@ -128,7 +128,7 @@ pub fn app(start: Start, assets: String) -> App {
         (load_me, walk, world::receive, world::attach, world::controls, world::remesh, world::hud).chain(),
     )
     .add_systems(Update, (world::camera, world::weather).after(world::controls))
-    .add_systems(Update, (outdoors::update, outdoors::weather_look).chain().after(world::camera))
+    .add_systems(Update, (outdoors::update, outdoors::weather_look, outdoors::relief_to_blocks).chain().after(world::camera))
     .add_systems(Update, portals::update.after(world::camera).after(world::receive))
     .add_systems(Update, (dress, pose::load_remotes, report, (update_fps, fade).run_if(playing)))
     .add_systems(

@@ -194,7 +194,7 @@ impl Plugin for WorldGlue {
         )
         .add_systems(Update, world::camera.after(update_camera).after(net::receive))
         .add_systems(Update, world::weather.after(world::receive))
-        .add_systems(Update, (outdoors::update, outdoors::weather_look, world_out).chain().after(world::camera).after(lighting::update))
+        .add_systems(Update, (outdoors::update, outdoors::weather_look, outdoors::relief_to_blocks, world_out).chain().after(world::camera).after(lighting::update))
         .add_systems(Update, portals::update.after(world::camera).after(world::receive))
         .init_resource::<portals::Portals>()
         .add_systems(

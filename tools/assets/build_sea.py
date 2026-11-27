@@ -224,6 +224,8 @@ def main():
         "world": {
             "sky": "sea",
             "time": 0.0,
+            # natural ground dips a few centimetres (docs/design/ground-relief.md)
+            "relief": {"amount": 1.0},
             "weather": {"humidity": 1.04, "temperature": 6.0, "wind_speed": 17.0, "wind_from": 250.0,
                         "gusts": 0.9, "heating": 0.0, "wetness": 1.0, "ground": -2.5},
             # how the sea looks: its colour (multiplied with the water tile), how high the

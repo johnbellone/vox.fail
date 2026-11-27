@@ -69,6 +69,8 @@ impl Tile {
             "sky": "earth",
             "time": 12.0,
             "atlas": { "name": self.atlas, "tile": self.at, "size": self.size, "edges": self.edges() },
+            // the atlas's seed and this tile's place on the map, so dips run on across edges
+            "relief": { "seed": self.seed, "origin": [self.at[0].saturating_mul(TILE), self.at[1].saturating_mul(TILE)], "version": crate::relief::VERSION },
             "hotbar": ["grass", "dirt", "stone", "planks", "log", "sand", "glass", "cobblestone", "bricks"],
         })
     }

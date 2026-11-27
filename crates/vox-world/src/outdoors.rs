@@ -239,6 +239,8 @@ pub struct Outdoors {
     clouds_set: bool,
     /// the world's water: its tint, its swell (m; 0: none), how opaque it is
     pub water: WaterLook,
+    /// the dips in its natural ground, if it has them (`docs/design/ground-relief.md`)
+    pub relief: Option<vox_core::relief::Relief>,
 }
 
 impl Default for Outdoors {
@@ -264,6 +266,7 @@ impl Default for Outdoors {
             rain: None,
             clouds_set: false,
             water: WaterLook::default(),
+            relief: None,
         }
     }
 }
@@ -911,6 +914,7 @@ pub fn update(
             out.clouds = (c as f32).clamp(0.0, 1.0);
         }
         out.water = water_look(s.get("water"));
+        out.relief = vox_core::relief::Relief::from_settings(&s, &w.world);
         // the water's look is pushed with the waves (below): do it now
         out.last_bake = f32::NEG_INFINITY;
         // a half-made fog texture is for the old world's air
@@ -1361,6 +1365,24 @@ pub fn weather_look(
             });
         }
         _ => {}
+    }
+}
+
+/// The world's ground relief, handed to the block material when it changes (a new world, or
+/// the blocks' material made after the settings came).
+pub fn relief_to_blocks(out: Res<Outdoors>, blocks: Option<Res<crate::blocks::Blocks>>, mut mats: ResMut<Assets<crate::blocks::BlockMaterial>>) {
+    let Some(blocks) = blocks else { return };
+    let (dip, at) = match out.relief {
+        Some(r) => (
+            vox_core::relief::MAX_DIP * r.amount,
+            UVec4::new(r.seed, r.origin[0] as u32, r.origin[1] as u32, vox_core::relief::VERSION),
+        ),
+        None => (0.0, UVec4::ZERO),
+    };
+    let stale = mats.get(&blocks.world_solid).is_some_and(|m| m.extension.relief.x != dip || m.extension.relief_at != at);
+    if stale && let Some(mut m) = mats.get_mut(&blocks.world_solid) {
+        m.extension.relief.x = dip;
+        m.extension.relief_at = at;
     }
 }
 

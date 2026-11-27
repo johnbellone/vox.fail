@@ -594,6 +594,8 @@ def main():
                  "the Shattered Keep north, The Dark north-east and Magma Falls south-west, joined by basalt bridges "
                  "lit with fire; the Pale Door on the plaza leads back to the void. Made by tools/assets/build_islands.py.",
         "world": {"sky": "islands", "time": 0.0,
+                  # natural ground dips a few centimetres (docs/design/ground-relief.md)
+                  "relief": {"amount": 1.0},
                   "weather": {"humidity": 1.02, "temperature": 8.0, "wind_speed": 2.0, "gusts": 0.5, "heating": 0.0,
                               "wetness": 0.9, "ground": -16.0},
                   # back to the void through the Pale Door (see src/portals.rs)

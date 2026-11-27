@@ -4,6 +4,7 @@
  "world": {
   "sky": "earth",
   "time": 16.5,
+  "relief": {"amount": 1.0},
   "clouds": 0.45,
   "portals": [
    {
