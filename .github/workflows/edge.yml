@@ -4,10 +4,10 @@ name: Edge worker
 # request on to the server and shows the offline page when the server can't be reached. Runs when
 # the Worker or the offline page changes on main, after the tests pass.
 #
-# The deploy job uses the "production" environment: give it required reviewers (Settings →
-# Environments) so a deploy waits for an approval, and put the secrets there, not on the
-# repository. CLOUDFLARE_API_TOKEN: Account → Workers Scripts: Edit, and Zone (vox.fail) →
-# Workers Routes: Edit, nothing else. CLOUDFLARE_ACCOUNT_ID: the account's ID.
+# The deploy job uses the "production" environment, which only main may deploy through and which
+# holds the secrets: CLOUDFLARE_API_TOKEN ("vox-edge CI": Workers Scripts Edit on the account;
+# Workers Routes Edit and Zone Read on vox.fail) and CLOUDFLARE_ACCOUNT_ID. (Required reviewers
+# would add an approval step, but GitHub's plan for this private repository doesn't offer them.)
 
 on:
   push:

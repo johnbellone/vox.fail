@@ -14,7 +14,7 @@ vox.fail runs on a dev server for now, which is sometimes off. `apps/edge` is a 
 - While the server is up, every request (WebSockets included) is passed through unchanged.
 - When Cloudflare answers 530 (no tunnel), 502, 504 or a 52x, pages get a static offline page (the home page's pitch from `apps/site/src/features/home/Pitch.tsx`, the README's screenshots, "offline right now"), served with status 503 and never cached; `/api/` gets `503` JSON with an offline message. The directory's own 503 ("busy") passes through.
 - The offline page's files are Worker static assets under `/_offline/`, a path the directory never uses; `runWorkerFirst` keeps the Worker in charge.
-- Configured with the `cf` command line (`cloudflare.config.ts`, plus `wrangler.config.ts` for the assets folder; `cf` runs on Node, not Bun). Deployed by `.github/workflows/edge.yml` on main through the `production` GitHub environment (required reviewer; `CLOUDFLARE_API_TOKEN` scoped to Workers Scripts and Workers Routes edit).
+- Configured with the `cf` command line (`cloudflare.config.ts`, plus `wrangler.config.ts` for the assets folder; `cf` runs on Node, not Bun). Deployed by `.github/workflows/edge.yml` on main through the `production` GitHub environment, limited to `main` (required reviewers aren't available on the repository's plan). `CLOUDFLARE_API_TOKEN` is the account token "vox-edge CI (GitHub production)": Workers Scripts Edit on the account, Workers Routes Edit and Zone Read on vox.fail.
 - First deployed by hand on 2026-11-27. The zone had no DNS records, so a proxied placeholder `AAAA vox.fail 100::` makes the name reach the Worker; it must be deleted before `cloudflared tunnel route dns vox vox.fail`.
 
 ## Why
@@ -23,6 +23,6 @@ The servers can't run on Cloudflare itself (Containers have no persistent disk; 
 
 ## Trade-offs
 
-A token that can edit Workers on the zone could redirect all of vox.fail's traffic, so it lives only in the protected environment, behind an approval. Every request counts against the Workers plan (100,000 a day free). `cf` and `cloudflare.config.ts` were a 1.0 release candidate when adopted.
+A token that can edit Workers on the zone could redirect all of vox.fail's traffic, so it lives only in the `production` environment, which only `main` can deploy through; revoke it in the dashboard if it leaks. Every request counts against the Workers plan (100,000 a day free). `cf` and `cloudflare.config.ts` were a 1.0 release candidate when adopted.
 
 See [[decisions/pull-based-auto-deploy]] and [[architecture/deployment]].

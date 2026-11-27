@@ -95,10 +95,10 @@ answers `503` with an offline message, so the site never shows Cloudflare's erro
 the tunnel is routed to vox.fail, a proxied placeholder record (`AAAA vox.fail 100::`) keeps the
 name resolving to the Worker; delete it before `cloudflared tunnel route dns vox vox.fail` in step 6
 above. It's
-deployed from `.github/workflows/edge.yml` through the `production` environment. Once, on GitHub:
-Settings → Environments → `production`, add yourself as a required reviewer, and add the secrets
-`CLOUDFLARE_API_TOKEN` (Account → Workers Scripts: Edit; Zone vox.fail → Workers Routes: Edit)
-and `CLOUDFLARE_ACCOUNT_ID`. See [apps/edge/README.md](../apps/edge/README.md).
+deployed from `.github/workflows/edge.yml` through the `production` environment (only `main`
+deploys; it holds `CLOUDFLARE_API_TOKEN`, a token named "vox-edge CI" with Workers Scripts Edit on
+the account and Workers Routes Edit and Zone Read on vox.fail, and `CLOUDFLARE_ACCOUNT_ID`).
+See [apps/edge/README.md](../apps/edge/README.md).
 
 ## All worlds in one process (vox-host)
 

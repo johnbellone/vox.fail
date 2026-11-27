@@ -30,5 +30,5 @@ traffic while vox.fail has a proxied DNS record: until the tunnel is routed ther
 Delete it before `cloudflared tunnel route dns vox vox.fail`.
 
 Deploys run from `.github/workflows/edge.yml` on main, through the `production` environment
-(set its required reviewers and secrets as that file says). Requests through a Worker count
+(only `main` may use it; it holds the Cloudflare token and account ID). Requests through a Worker count
 against the Workers plan (100,000 a day on the free plan; a world's WebSocket is one request).
