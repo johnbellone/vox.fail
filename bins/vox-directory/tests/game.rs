@@ -334,18 +334,32 @@ async fn tickets_for_portals() {
 
 #[tokio::test]
 async fn dungeons_for_parties() {
-    // a stand-in host: it makes any instance of the crypt, and remembers what it was asked
-    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
-    let log = asked.clone();
+    // a stand-in host: it makes any dungeon but the tomb, holds what it made, and can be told
+    // to let one go (as the real one does when an instance has been empty a while)
+    let held = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::<String>::new()));
+    let made = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+    let (h2, m2) = (held.clone(), made.clone());
     let host = axum::Router::new().route(
         "/api/host/instance",
         axum::routing::post(move |h: axum::http::HeaderMap, axum::Json(v): axum::Json<Value>| {
-            let log = log.clone();
+            let (held, made) = (h2.clone(), m2.clone());
             async move {
+                use axum::http::StatusCode;
                 assert_eq!(h.get("authorization").unwrap(), &format!("Bearer {SECRET}"));
-                let found = v["template"] != "tomb";
-                log.lock().unwrap().push(v);
-                if found { (axum::http::StatusCode::OK, "{}") } else { (axum::http::StatusCode::NOT_FOUND, "no such dungeon") }
+                let id = v["id"].as_str().unwrap().to_string();
+                let mut held = held.lock().unwrap();
+                if held.contains(&id) {
+                    return (StatusCode::OK, "{}");
+                }
+                if v["make"] == false {
+                    return (StatusCode::GONE, "not here");
+                }
+                if v["template"] == "tomb" {
+                    return (StatusCode::NOT_FOUND, "no such dungeon");
+                }
+                held.insert(id);
+                *made.lock().unwrap() += 1;
+                (StatusCode::OK, "{}")
             }
         }),
     );
@@ -375,10 +389,11 @@ async fn dungeons_for_parties() {
     assert_eq!(v["url"], format!("/w/{id}/ws"));
     let t = auth::verify_ticket(v["ticket"].as_str().unwrap(), &key, &id, now()).unwrap();
     assert_eq!(t.claims.account, ann.id);
-    assert_eq!(asked.lock().unwrap()[0]["id"], id.as_str());
-    // Bob, in her party, goes to the same one; Cy, not in it, can't
+    assert_eq!(*made.lock().unwrap(), 1);
+    // Bob, in her party, goes to the same one (nothing more made); Cy, not in it, can't
     let (_, v) = travel(&base, SECRET, trip(&bob, "dungeon:crypt")).await;
     assert_eq!(v["world"], id.as_str());
+    assert_eq!(*made.lock().unwrap(), 1);
     assert_eq!(travel(&base, SECRET, trip(&cy, "dungeon:crypt")).await.0, 403);
     // the instance may ask for tickets out again (and report) like a world
     let (st, v) = travel(&base, SECRET, json!({ "world": id, "account": ann.id, "to": ":7780", "arrive": [0.0, 0.0, 0.0] })).await;
@@ -386,9 +401,48 @@ async fn dungeons_for_parties() {
     // a dungeon that isn't there, a bad name
     assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:tomb")).await.0, 404);
     assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:../x")).await.0, 400);
-    // three new instances an hour, then no more (the one they have still opens)
+
+    // they all left and the host let it go: going back in makes it afresh, under the same name,
+    // and that counts as one of the hour's three
+    held.lock().unwrap().clear();
+    let (st, v) = travel(&base, SECRET, trip(&bob, "dungeon:crypt")).await;
+    assert_eq!((st, v["world"].as_str()), (200, Some(id.as_str())));
+    assert_eq!(*made.lock().unwrap(), 2);
     assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:cave")).await.0, 200);
-    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:mine")).await.0, 200);
-    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:hall")).await.0, 429);
-    assert_eq!(travel(&base, SECRET, trip(&bob, "dungeon:crypt")).await.1["world"], id.as_str());
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:mine")).await.0, 429);
+    // the ones it has still open
+    assert_eq!(travel(&base, SECRET, trip(&ann, "dungeon:crypt")).await.1["world"], id.as_str());
+
+    // a raid on the Crypt: won when the instance says its objective was reached
+    let (st, v) = ann.post("/api/feats/raid", json!({"party": party["id"], "world": "dungeon:crypt"})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(ann.post("/api/feats/raid", json!({"party": party["id"], "world": "dungeon:../x"})).await.0, 400);
+    let before = bob.authority().await;
+    let reached = |world: &str, players: Value| {
+        let base = base.clone();
+        let body = json!({ "world": world, "players": players });
+        async move {
+            let r = Client::new().post(format!("{base}/api/world/objective")).bearer_auth(SECRET).json(&body).send().await.unwrap();
+            (r.status().as_u16(), r.json::<Value>().await.unwrap_or(Value::Null))
+        }
+    };
+    // only worlds say so, and only instances have objectives
+    let r = Client::new().post(format!("{base}/api/world/objective")).bearer_auth("guess").json(&json!({"world": id, "players": []})).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    assert_eq!(reached("void", json!([ann.id])).await.0, 400);
+    // Cy was never in the party: only Ann and Bob win it
+    let (st, v) = reached(&id, json!([ann.id, bob.id, cy.id])).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["raid"], true);
+    let mut won: Vec<u64> = v["won_by"].as_array().unwrap().iter().map(|x| x.as_u64().unwrap()).collect();
+    won.sort();
+    let mut want = vec![ann.id, bob.id];
+    want.sort();
+    assert_eq!(won, want);
+    assert_eq!(bob.authority().await, before + game::RAID_REWARD);
+    let inv = bob.get("/api/inventory").await;
+    assert!(inv.to_string().contains("Raided the Crypt"), "{inv}");
+    // once won it's done: reaching it again pays nothing more
+    assert_eq!(reached(&id, json!([ann.id, bob.id])).await.1["raid"], false);
+    assert_eq!(bob.authority().await, before + game::RAID_REWARD);
 }

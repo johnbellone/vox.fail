@@ -91,6 +91,8 @@ pub enum ToClient {
     /// saying hello with `ticket` if there is one (it's for that world only, once, for a
     /// minute), and arrive at `arrive` (blocks, feet), which is where the world there puts you.
     Travel { url: String, ticket: Option<String>, arrive: [f32; 3] },
+    /// Something everyone here should know (a dungeon's objective reached), shown for a moment.
+    Notice { text: String },
 }
 
 impl ToClient {
@@ -136,6 +138,7 @@ mod tests {
             ToClient::Bye { why: "full".into() },
             ToClient::Correct { at: [1.0, 2.0, 3.0] },
             ToClient::Travel { url: ":7781".into(), ticket: Some("t1.a.b".into()), arrive: [0.0, 0.0, 11.5] },
+            ToClient::Notice { text: "The altar: reached".into() },
         ];
         for m in msgs {
             let back: ToClient = decode(&encode(&m)).unwrap();

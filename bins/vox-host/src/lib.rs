@@ -329,10 +329,18 @@ struct Make {
     template: String,
     /// how long it may last
     minutes: u32,
+    /// make it if it isn't there (false: only say whether it is; 410 if not)
+    #[serde(default = "yes")]
+    make: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// The directory asks for an instance. Already there: fine. Otherwise it's made from the
-/// template and started.
+/// template and started, unless the directory only asked whether it's there (`make: false`:
+/// 410 Gone, so it can count a fresh copy against the party's limit before asking again).
 async fn make_instance(State(host): State<Host>, h: HeaderMap, Json(m): Json<Make>) -> Response {
     let Some(inst) = &host.instances else { return StatusCode::NOT_FOUND.into_response() };
     let given = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
@@ -348,6 +356,9 @@ async fn make_instance(State(host): State<Host>, h: HeaderMap, Json(m): Json<Mak
         } else {
             (StatusCode::CONFLICT, "that's a world, not an instance").into_response()
         };
+    }
+    if !m.make {
+        return (StatusCode::GONE, "not here").into_response();
     }
     let seed = match std::fs::read_to_string(inst.templates.join(format!("{}.json", m.template))) {
         Ok(s) => s,

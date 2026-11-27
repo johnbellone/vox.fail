@@ -1,6 +1,6 @@
 # Design: a network of worlds, and instances
 
-Status: **proposed** · 2026-11-26 · phases 1 to 3 built, and the first part of 4 (instances, not yet raid objectives); the rest not yet
+Status: **proposed** · 2026-11-26 · phases 1 to 4 built (templates are level files, not yet snapshots); the atlas and several hosts not yet
 
 Related: [world-scaling.md](world-scaling.md) (one world up to 60 km: regions, generated terrain,
 streaming), [world-format.md](world-format.md) (region blobs, content-addressed snapshots),
@@ -173,7 +173,8 @@ Built so far: templates are level files (`data/levels/dungeons/<name>.json`, giv
 `<template>-<12 hex>` (`~` isn't allowed in a path segment here). The host throws an instance
 away after five minutes empty or at its end; the directory's next ticket for the party asks the
 host again, which makes a fresh copy if the old one is gone, so leaving for five minutes is a
-reset (still counted against nothing: open question below).
+reset; a fresh copy counts against the party's hourly limit like a new one (the directory asks
+the host whether it still has the copy, `make: false`, before counting and making it).
 
 **Making one.** When a party member goes through, the directory:
 
@@ -200,6 +201,12 @@ instance reports its **objective** done: an `Objective` entity in the template (
 entities: a place to reach, a block to break, later a creature to defeat) that the world server
 watches. The existing rules stay: the cost (10 authority), the reward (15), the trophy, and
 `RAID_REWARDS_PER_DAY`. Raids on persistent worlds keep the current rule.
+
+Built so far: the objective is a place, named in the dungeon's settings
+(`"objective": {"name": "the altar", "at": [0, 0, -8], "radius": 3}`). The first player to stand
+there reaches it (once per instance); everyone in the instance is told (`ToClient::Notice`), and
+the world tells the directory who was there (`POST /api/world/objective`). A raid's target may
+be `dungeon:<name>`; reaching the objective wins it for the party's members who were there.
 
 ### 5. The atlas: very large maps
 

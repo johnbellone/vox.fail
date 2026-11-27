@@ -107,6 +107,9 @@ impl WorldState {
             snap_full: true,
             last_snapshot: Instant::now(),
             trips: None,
+            objective: Objective::from_settings(&set),
+            reached: false,
+            goals: None,
         };
         if fresh {
             s.flush()?;
@@ -361,6 +364,23 @@ impl WorldState {
         self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, account, placed: 0 });
     }
 
+    /// Someone stands at the objective: it's reached (once), everyone here is told, and the
+    /// directory hears who was here.
+    pub(super) fn reach(&mut self) {
+        self.reached = true;
+        let name = self.objective.as_ref().map_or_else(|| "the objective".into(), |o| o.name.clone());
+        let mut c = name.chars();
+        let name = c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect());
+        eprintln!("{name} reached");
+        self.broadcast(&ToClient::Notice { text: format!("{name}: reached") }, None);
+        let here: Vec<u64> = self.players.values().filter_map(|p| p.account).collect();
+        if let Some(goals) = &self.goals
+            && !here.is_empty()
+        {
+            let _ = goals.try_send(here);
+        }
+    }
+
     /// The settings a new arrival gets: the world's own, with the portals players opened.
     pub(super) fn settings_now(&self) -> String {
         if self.portals.is_empty() {
@@ -461,6 +481,9 @@ impl WorldState {
                         p.at = Some(at);
                         let m = ToClient::Pose { player: p.id, blob };
                         self.broadcast(&m, Some(conn));
+                        if !self.reached && self.objective.as_ref().is_some_and(|o| o.holds(at)) {
+                            self.reach();
+                        }
                     }
                     Err(back) => {
                         // not shown to anyone; they're told to go back

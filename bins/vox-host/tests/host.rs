@@ -175,6 +175,11 @@ async fn instances_of_dungeons() {
     assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("crypt-b2", "crypt")).await.0, 200);
     assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), make("crypt-c3", "crypt")).await.0, 503);
 
+    // asked only whether it's there: yes for one it has, Gone for one it hasn't (and none made)
+    let ask = |id: &str| serde_json::json!({ "id": id, "template": "crypt", "minutes": 60, "make": false });
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), ask("crypt-a1")).await.0, 200);
+    assert_eq!(http_post(&addr, "/api/host/instance", Some("s3cret"), ask("crypt-zz")).await.0, 410);
+    assert!(!host.ids().contains(&"crypt-zz".to_string()));
     // in, under its own name
     assert_eq!(welcomed_by(&format!("ws://{addr}/w/crypt-a1/ws")).await, "crypt-a1");
     // empty for a while: thrown away, and never started again
