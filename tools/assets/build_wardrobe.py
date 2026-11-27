@@ -1,4 +1,4 @@
-"""Builds the dress-up wardrobe: hats and face pieces chat can put on the character.
+"""Builds the dress-up wardrobe: hats, face pieces and things to hold that chat can put on the character.
 
     python tools/assets/build_wardrobe.py
 
@@ -207,7 +207,18 @@ def clown_nose():
     return v
 
 
-HATS = [cowboy, crown, party, top_hat, propeller, chef, viking, pirate, halo, cone, wizard, hard_hat, santa, grad_cap, beanie]
+def yuzu():
+    """a yuzu to balance on your head, as a capybara does"""
+    return B.ball(3.2, (246, 186, 38), cy=3.2).box(-1, 1, 6, 7, -1, 1, GREEN).box(0, 2, 7, 8, -1, 0, GREEN)
+
+
+def watermelon():
+    """a slice of watermelon to hold (origin at the rind, the grip)"""
+    return B.melon()
+
+
+HATS = [cowboy, crown, party, top_hat, propeller, chef, viking, pirate, halo, cone, wizard, hard_hat, santa, grad_cap, beanie, yuzu]
+HANDS = [watermelon]
 FACE = [shades, nerd_glasses, moustache, clown_nose]
 
 FACE_PARTS = set(B.FACE_PARTS) | {"paint", "horns", "vest"}
@@ -271,7 +282,7 @@ def main():
     out, src = ROOT / "assets/props/wardrobe", ROOT / "source/vox/props/wardrobe"
     out.mkdir(parents=True, exist_ok=True)
     src.mkdir(parents=True, exist_ok=True)
-    for fn in HATS + FACE:
+    for fn in HATS + FACE + HANDS:
         write_prop({"name": fn.__name__, "vox": fn(), "off": (0, 0, 0)}, out / f"{fn.__name__}.glb", src / f"{fn.__name__}.vox", pal_img)
     fit = {}
     for p in sorted((ROOT / "assets/models").glob("*.glb")):
@@ -280,7 +291,7 @@ def main():
         except StopIteration:
             pass
     (ROOT / "data/head_fit.json").write_text(json.dumps(fit, indent=1))
-    print(f"{len(HATS)} hats, {len(FACE)} face pieces; head fit for {len(fit)} characters")
+    print(f"{len(HATS)} hats, {len(FACE)} face pieces, {len(HANDS)} to hold; head fit for {len(fit)} characters")
     for k in ["scene_all.glb", "dog.glb", "peanut.glb", "president.glb", "roasted_riot.glb"]:
         print(" ", k, fit.get(k))
 

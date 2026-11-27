@@ -124,6 +124,7 @@ pub const ITEMS: &[Item] = &[
         "props/wardrobe/grad_cap.glb",
     ),
     it("beanie", "a beanie", Slot::Hat, "props/wardrobe/beanie.glb"),
+    it("yuzu", "a yuzu", Slot::Hat, "props/wardrobe/yuzu.glb"),
     it("shades", "shades", Slot::Face, "props/wardrobe/shades.glb"),
     it(
         "nerd",
@@ -153,6 +154,7 @@ pub const ITEMS: &[Item] = &[
     it("sign", "a sign", Slot::Hand, "props/cast/sign.glb"),
     it("bell", "a bell", Slot::Hand, "props/roasted/bell.glb"),
     it("broom", "a broom", Slot::Hand, "props/roasted/broom.glb"),
+    it("watermelon", "a slice of watermelon", Slot::Hand, "props/wardrobe/watermelon.glb"),
     it("gavel", "a gavel", Slot::Hand, "props/cast/gavel.glb"),
     it(
         "flashlight",

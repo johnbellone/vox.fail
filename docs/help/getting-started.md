@@ -7,7 +7,7 @@ You can play Vox in the browser or on the desktop.
 1. Open `https://vox.fail/`. The browser needs WebGPU (current Chrome, Edge, Safari and Firefox
    have it).
 2. Sign in with Steam or Discord (when the site offers them), or make a **New account** with a name and a password.
-3. Pick who you are (38 characters, Blue first) and what you wear: a hat, something on your
+3. Pick who you are (39 characters, Blue first) and what you wear: a hat, something on your
    face, something in your hand. You see it on a turntable.
 4. Click **Save character**, then **Enter the Void**.
 

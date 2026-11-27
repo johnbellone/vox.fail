@@ -91,6 +91,12 @@
    "file": "props/wardrobe/beanie.glb"
   },
   {
+   "id": "yuzu",
+   "label": "a yuzu",
+   "slot": "hat",
+   "file": "props/wardrobe/yuzu.glb"
+  },
+  {
    "id": "shades",
    "label": "shades",
    "slot": "face",
@@ -173,6 +179,12 @@
    "label": "a broom",
    "slot": "hand",
    "file": "props/roasted/broom.glb"
+  },
+  {
+   "id": "watermelon",
+   "label": "a slice of watermelon",
+   "slot": "hand",
+   "file": "props/wardrobe/watermelon.glb"
   },
   {
    "id": "gavel",

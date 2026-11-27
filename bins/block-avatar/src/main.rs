@@ -393,7 +393,10 @@ fn main() {
         app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             Duration::from_secs_f64(1.0 / sim::HZ),
         ));
-        app.insert_resource(snapshot::Snapshot::new(out.into(), set, fx));
+        let mut snap = snapshot::Snapshot::new(out.into(), set, fx);
+        snap.act = args.snapshot_do.clone();
+        snap.at = args.snapshot_at.unwrap_or(0.5);
+        app.insert_resource(snap);
     }
     app.run();
 }

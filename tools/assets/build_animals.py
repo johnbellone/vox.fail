@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the animal avatars (Blue the pit bull, peanut, dog, cat, rhino, donkey) on the shared block rig.
+"""Build the animal avatars (Blue the pit bull, peanut, dog, cat, rhino, donkey, capybara) on the shared block rig.
 
 Starts from the lead's prop-free rig (assets/models/variants/character_rigged.glb) so every character
 keeps the same node tree, the 100 body clips, the 24 face clips and the swappable face parts. Each
@@ -471,6 +471,73 @@ def peanut():
                 note="Original peanut character: two-lobed dimpled shell, stick limbs, cream hands, orange ball cap, sneakers.")
 
 
+GRIP = (0.0, -0.25, 0.0)  # a held thing's place, in LowerArm space (as build_roasted.py)
+
+
+def ball(r, c, cy=0.0):
+    """voxels within `r` of a centre half a voxel off the grid (round from every side)"""
+    v = Vox()
+    R = int(r) + 1
+    for x in range(-R, R):
+        for y in range(-R, R + 1):
+            for z in range(-R, R):
+                if (x + 0.5) ** 2 + (y + 0.5 - cy) ** 2 + (z + 0.5) ** 2 <= r * r:
+                    v.v[(x, y, z)] = c
+    return v
+
+
+def melon():
+    """a wedge of watermelon, rind at the bottom (the grip), point up"""
+    rind, pith, flesh = (52, 132, 60), (214, 236, 190), (230, 62, 74)
+    v = Vox().box(-6, 6, -1, 0, -1, 1, rind).box(-6, 6, 0, 1, -1, 1, pith)
+    for y, w in ((1, 5), (2, 5), (3, 4), (4, 3), (5, 2), (6, 1)):
+        v.box(-w, w, y, y + 1, -1, 1, flesh)
+    for x, y in ((-3, 2), (2, 2), (-1, 4), (0, 1)):
+        v.box(x, x + 1, y, y + 1, 0, 1, BLACK)                               # seeds
+    return v
+
+
+def capybara():
+    """An original capybara: a barrel of warm brown fur, a big blunt square muzzle, small round ears
+    and eyes set high, no tail to speak of. Famously calm. Its props (a yuzu on its head, a towel for
+    the hot spring, a slice of watermelon) appear only in the clips that use them."""
+    fur, shade, belly, muzzle, nose, paw = (156, 108, 64), (124, 84, 48), (184, 140, 96), (136, 92, 54), (48, 34, 28), (88, 60, 38)
+
+    def torso(t):
+        t.box(-6, 6, 1, 9, -4, 5, fur).bevel(-6, 6, 1, 9, -4, 5)           # round barrel belly
+        t.paint(lambda x, y, z: z >= 3 and abs(x + 0.5) <= 3 and y <= 8, belly)
+        t.paint(lambda x, y, z: z <= -3 and y >= 7, shade)                  # darker along the back
+        t.paint(lambda x, y, z: (x * 7 + y * 3 + z * 5) % 11 == 0 and z <= 2, shade)   # a little shag
+
+    def arm(side, ua, la):
+        la.paint(lambda x, y, z: y <= -4, paw)
+
+    def leg(side, ul, ll):
+        ll.paint(lambda x, y, z: y <= -5, paw)
+
+    p = standard_body(fur, torso, arm, leg, paw)
+    h = Vox().box(-7, 7, -2, 10, -6, 6, fur)
+    h.bevel(-7, 7, -2, 10, -6, 6, "top")
+    h.box(-5, 5, -2, 4, 6, 10, muzzle).bevel(-5, 5, -2, 4, 6, 10, "top")     # big blunt square muzzle, below the eyes
+    h.box(-3, 3, 2, 4, 9, 10, nose)                                          # broad dark nose pad on its front
+    for x0 in (-7, 5):                                                       # small round ears, set high and back
+        h.box(x0, x0 + 2, 10, 12, -4, -1, shade).box(x0, x0 + 2, 12, 13, -3, -2, shade)
+    h.paint(lambda x, y, z: z <= -5 and y >= 6, shade)
+    p["Head"] = h
+    props = [
+        # a yuzu balanced on top of the head (the head is 10 voxels tall above its joint)
+        dict(name="yuzu", parent="Head", at=(0.0, 0.5, -0.02), rot=(0, 0, 0), off=(0.5, 0, 0.5),
+             vox=ball(3.2, (246, 186, 38), cy=3.2).box(-1, 1, 6, 7, -1, 1, (82, 150, 60)).box(0, 2, 7, 8, -1, 0, (82, 150, 60))),
+        # a folded towel for the hot spring
+        dict(name="towel", parent="Head", at=(0.0, 0.5, -0.02), rot=(0, 0, 6), off=(0.5, 0, 0.5),
+             vox=Vox().box(-4, 4, 0, 2, -3, 3, WHITE).box(-4, 4, 0, 2, -1, 0, (90, 150, 210)).box(-4, -3, 0, 2, -3, 3, (236, 236, 230))),
+        # a slice of watermelon, held by the rind
+        dict(name="melon", parent="LowerArm_R", at=GRIP, rot=(90, 0, 0), off=(0.5, 0, 0.5), vox=melon()),
+    ]
+    return dict(name="capybara", label="Capybara", parts=p, props=props, mouth=(0, -0.04, 0.20), tail_at=None, tail_sway=None,
+                note="Original capybara: warm brown barrel body, big blunt dark muzzle, small round ears; sometimes a yuzu on its head.")
+
+
 # ----------------------------------------------------------------------------------------------
 # Own clips
 # ----------------------------------------------------------------------------------------------
@@ -589,6 +656,53 @@ def clips_for(name):
             k = env(t, 0.0, 1.6, 0.3)
             return {"UpperArm_R": (-60 * k, 0, -6 + 18 * k), "LowerArm_R": (-14 - 85 * k, 25 * k, 0), "Head": (6 * k + osc(t, 0.25, 3) * k, 10 * k, 0), "Tail": osc(t, 0.8, 10)}
         C.append(("Munch", 1.6, munch, lambda t: face("eyes_shut", "brows_raised", "mouth_grit" if (t % 0.25) < 0.125 and 0.3 < t < 1.3 else "mouth_grin")))
+    elif name == "capybara":
+        def sit(k):
+            """sitting back on its haunches, legs forward"""
+            return {"UpperLeg_L": (-85 * k, 0, 6 * k), "UpperLeg_R": (-85 * k, 0, -6 * k), "LowerLeg_L": (80 * k, 0, 0), "LowerLeg_R": (80 * k, 0, 0),
+                    "_hip": (0, -0.26 * k, -0.04 * k)}
+
+        def chill(t):
+            k = env(t, 0.0, 3.0, 0.5)
+            breathe = osc(t, 1.5, 2) * k
+            pz = sit(k)
+            pz.update({"Hips": (-6 * k + breathe, 0, 0), "UpperArm_L": (-30 * k, 0, 6 + 4 * k), "UpperArm_R": (-30 * k, 0, -6 - 4 * k),
+                       "LowerArm_L": (-14 - 30 * k, 0, 0), "LowerArm_R": (-14 - 30 * k, 0, 0), "Head": (4 * k - breathe, 0, 5 * k)})
+            return pz
+        C.append(("Chill", 3.0, chill, lambda t: face("eyes_squint" if 0.4 < t < 2.7 else "eyes_open", "brows_normal", "mouth_smirk" if 0.4 < t < 2.7 else "mouth_flat")))
+
+        def spring(t):
+            k = env(t, 0.0, 3.2, 0.6)
+            bob = osc(t, 1.6, 0.012) * k
+            return {"_hip": (0, -0.34 * k + bob, 0), "UpperLeg_L": (-70 * k, 0, 10 * k), "UpperLeg_R": (-70 * k, 0, -10 * k), "LowerLeg_L": (70 * k, 0, 0),
+                    "LowerLeg_R": (70 * k, 0, 0), "UpperArm_L": (-10 * k, 0, 6 + 55 * k), "UpperArm_R": (-10 * k, 0, -6 - 55 * k), "LowerArm_L": (-14 - 10 * k, 0, 0),
+                    "LowerArm_R": (-14 - 10 * k, 0, 0), "Hips": (-10 * k, 0, 0), "Head": (-8 * k, 0, osc(t, 3.2, 4) * k)}
+        C.append(("Hot spring", 3.2, spring, lambda t: face("eyes_shut" if 0.5 < t < 2.9 else "eyes_squint", "brows_raised", "mouth_smirk"), lambda t: {"towel"}))
+
+        def yuzu(t):
+            k = env(t, 0.0, 2.4, 0.3)
+            wob = osc(t, 0.6, 3) * env(t, 0.4, 1.6, 0.2)
+            return {"Head": (-2 * k, 0, wob), "Hips": (0, 0, -wob * 0.6), "UpperArm_L": (-10 * k, 0, 6 + 35 * k + wob), "UpperArm_R": (-10 * k, 0, -6 - 35 * k + wob),
+                    "LowerArm_L": (-14 - 10 * k, 0, 0), "LowerArm_R": (-14 - 10 * k, 0, 0)}
+        C.append(("Yuzu balance", 2.4, yuzu, lambda t: face("eyes_up" if t < 1.6 else "eyes_squint", "brows_raised" if t < 1.6 else "brows_normal",
+                                                             "mouth_o" if t < 1.6 else "mouth_smirk"), lambda t: {"yuzu"}))
+
+        def snack(t):
+            k = env(t, 0.0, 2.2, 0.35)
+            chew = osc(t, 0.3, 4) * env(t, 0.6, 1.9, 0.1)
+            return {"UpperArm_R": (-62 * k, 0, -6 + 26 * k), "LowerArm_R": (-14 - 58 * k, 0, 0), "Head": (6 * k + chew, -10 * k, 0), "Hips": (-3 * k, 0, 0)}
+        C.append(("Melon snack", 2.2, snack, lambda t: face("eyes_open" if t < 0.6 else "eyes_shut", "brows_raised",
+                                                              ("mouth_open" if (t % 0.3) < 0.15 else "mouth_grit") if 0.6 < t < 1.9 else "mouth_grin"), lambda t: {"melon"}))
+
+        def nod(t):
+            droop = min(1.0, max(0.0, (t - 0.2) / 1.4))
+            droop = droop * droop * (3 - 2 * droop)
+            jerk = env(t, 1.6, 1.85, 0.05)
+            d = droop * (1.0 - min(1.0, max(0.0, (t - 1.6) / 0.15)))
+            return {"Head": (32 * d - 10 * jerk, 0, 6 * d), "Hips": (6 * d, 0, 0), "UpperArm_L": (0, 0, 6 - 4 * d), "UpperArm_R": (0, 0, -6 + 4 * d),
+                    "_hip": (0, 0.02 * jerk - 0.02 * d, 0)}
+        C.append(("Nod off", 2.4, nod, lambda t: face("eyes_squint" if t < 0.9 else ("eyes_shut" if t < 1.6 else "eyes_wide"), "brows_normal" if t < 1.6 else "brows_raised",
+                                                      "mouth_flat" if t < 1.6 else ("mouth_o" if t < 2.0 else "mouth_flat"))))
     elif name == "peanut":
         def tip(t):
             k = env(t, 0.05, 1.15, 0.25)
@@ -850,9 +964,9 @@ def main():
     j0, bin0 = load_glb(TEMPLATE)
     iv = j0["bufferViews"][j0["images"][0]["bufferView"]]
     pal_img = Image.open(io.BytesIO(bin0[iv.get("byteOffset", 0):iv.get("byteOffset", 0) + iv["byteLength"]]))
-    want = sys.argv[1:] or ["blue", "dog", "cat", "rhino", "donkey"]
+    want = sys.argv[1:] or ["blue", "dog", "cat", "rhino", "donkey", "capybara"]
     report = []
-    for fn in (blue, dog, cat, rhino, donkey):   # the peanut is built by build_roasted.py
+    for fn in (blue, dog, cat, rhino, donkey, capybara):   # the peanut is built by build_roasted.py
         spec = fn()
         if spec["name"] not in want:
             continue

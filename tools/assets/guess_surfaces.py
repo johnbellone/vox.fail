@@ -10,7 +10,7 @@ The rules, all on the model's rest pose:
 - hair: colours on the back of the head, in its upper half, that aren't skin
 - beard: colours on the lower front of the face, darker than the skin and not skin
 - cloth: the biggest colour on the torso and on the upper legs, when it isn't skin
-- animals (cat, dog, donkey, rhino): the back of the head is fur ("hair"), the torso cloth
+- animals (cat, dog, donkey, rhino, capybara): the back of the head is fur ("hair"), the torso cloth
 - helmeted and peanut characters are skipped
 """
 import io
@@ -26,7 +26,7 @@ import build_animals as B  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "surfaces.json"
-ANIMALS = {"cat", "dog", "donkey", "rhino"}
+ANIMALS = {"cat", "dog", "donkey", "rhino", "capybara"}
 # helmets and visors would read as hair; the peanuts' shells aren't hair or cloth
 SKIP = {"peanut", "rally_sign", "officer", "riot_a", "riot_b", "roasted_army", "roasted_cook", "roasted_garbage", "roasted_medic", "roasted_miami", "roasted_riot"}
 
