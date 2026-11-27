@@ -22,6 +22,17 @@ install and uninstall), and uploads the files as workflow artifacts. Each build 
 The version is `nightly` for nightly builds, `pr` for a pull request, `dev` for a manual run
 (unless you set another), and `x.y.z` for a release.
 
+## Where the files go
+
+- Windows: the installer puts the game in `%LOCALAPPDATA%\Programs\Vox`. It installs for your user
+  only and needs no administrator rights. Your own files are in `%APPDATA%\Vox`, and the uninstaller
+  keeps that folder.
+- macOS: the app is `Vox.app`, and the program's files are in `Vox.app/Contents/Resources`.
+- Linux AppImage: the program's files are in `/usr/share/vox` inside the AppImage.
+- Your own files (`controls.json` and `levels/`) are kept apart from the program, in a Vox folder for
+  you: `%APPDATA%\Vox` on Windows, `~/Library/Application Support/Vox` on macOS, and
+  `$XDG_DATA_HOME/vox` (`~/.local/share/vox`) on Linux.
+
 ## Nightly
 
 [nightly.yml](../../.github/workflows/nightly.yml) runs every day at 05:17 UTC, and on demand
@@ -49,7 +60,7 @@ Nightly builds are unsigned test builds. The release notes say so.
 3. [release.yml](../../.github/workflows/release.yml) runs on every `v*` tag. It builds the five
    files, then creates the GitHub release for the tag. The title is `Vox <version>` and the
    notes are generated from the commits. A version with a `-` in it is marked as a prerelease.
-   The version must have the form `x.y.z` or `x.y.z-pre`; other tags do not make a release.
+   The version must have the form `x.y.z` or `x.y.z-pre`; other tags do not make a client release.
 4. Re-running the workflow for the same tag replaces the files on the release.
 
 [windows.yml](../../.github/workflows/windows.yml) runs on the same tags and adds the Block
@@ -64,8 +75,9 @@ Run workflow), with a version of your choice.
 
 ## Signing
 
-The builds are unsigned unless the repository has these secrets. Each signing step runs only
-when its secrets are set, so a missing secret skips that step and does not fail the build.
+The builds are not signed with a developer certificate unless the repository has these secrets. A
+signing step runs when its certificate is set, and it needs the matching password. Without the macOS
+certificate, the macOS app is ad-hoc signed.
 
 | Secret | What it holds |
 | --- | --- |

@@ -22,18 +22,26 @@ Each release has these files, where `<version>` is the version number:
 - macOS: `Vox-<version>-macos-universal.dmg`.
 - Linux: `Vox-<version>-linux-x86_64.AppImage` or `Vox-<version>-linux-x86_64.tar.gz`.
 
-The `nightly` release is a test build of the latest commit. It may break. See
+The `nightly` release is an unsigned test build of the main branch, rebuilt each day when it changes. It may break. See
 [releases](../vox/releases.md) for how the builds are made.
 
 The files are not always signed, so your system may warn you the first time you open them:
 
 - Windows: SmartScreen may stop it. Choose **More info**, then **Run anyway**.
-- macOS: right-click Vox and choose **Open**, then confirm.
+- macOS: open the disk image and drag Vox into Applications. Then right-click Vox and choose **Open**,
+  then confirm. On newer macOS, if that does not work, open System Settings > Privacy & Security and
+  choose **Open Anyway**.
 
 The client has no box for a sign-in code yet. Start it from a terminal, or from a shortcut, with
-`--token <code>`: on Linux, `./Vox-<version>-linux-x86_64.AppImage --token <code>`; on macOS,
-`Vox.app/Contents/MacOS/vox-client --token <code>`; on Windows, `vox-client.exe --token <code>` in
-the folder it is installed in.
+`--token <code>`:
+
+- Linux AppImage: first make it runnable with `chmod +x Vox-<version>-linux-x86_64.AppImage`, then run
+  `./Vox-<version>-linux-x86_64.AppImage --token <code>`. From the `.tar.gz`, unpack it, go into the
+  folder and run `./vox-client --token <code>`.
+- Windows: open `%LOCALAPPDATA%\Programs\Vox` (the installer's folder) and run
+  `vox-client.exe --token <code>` there.
+- macOS: after you drag Vox to Applications, run
+  `/Applications/Vox.app/Contents/MacOS/vox-client --token <code>`.
 
 Your key bindings (`controls.json`) and your own levels (in `levels/`) are kept apart from the
 program, in a Vox folder for you: `%APPDATA%\Vox` on Windows, `~/Library/Application Support/Vox` on
