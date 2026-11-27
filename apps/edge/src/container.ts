@@ -10,7 +10,7 @@
 // When it can't start the servers it answers 530, which the Worker turns into its offline answers.
 
 import { DurableObject } from "cloudflare:workers";
-import { DIRECTORY_PORT as DIRECTORY, HOST_PORT as HOST, portFor } from "./ports";
+import { DIRECTORY_PORT as DIRECTORY, HOST_PORT as HOST, portFor, toContainer } from "./ports";
 
 /** The Worker's secrets and settings the container needs (set by deploy/cloudflare-setup.sh). */
 export const CONTAINER_ENV = [
@@ -66,7 +66,7 @@ export class VoxServers extends DurableObject<ContainerEnv> {
       return new Response("the servers didn't start", { status: 530 });
     }
     try {
-      const res = await this.ctx.container!.getTcpPort(portFor(new URL(req.url).pathname)).fetch(req);
+      const res = await this.ctx.container!.getTcpPort(portFor(new URL(req.url).pathname)).fetch(toContainer(req));
       return upgrade ? this.relay(res) : res;
     } catch (e) {
       console.error("vox: the servers can't be reached:", e);
