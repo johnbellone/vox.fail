@@ -13,6 +13,14 @@ use vox_core::wire::EntityChange;
 /// How far from a doorway's plane (blocks) a player may be and still go through it: their last
 /// checked pose can be a step or two behind the client's.
 const THROUGH_SLACK: f32 = 3.0;
+/// How often a world starts a build (`ToServer::Build`): one per this long.
+const BUILD_EVERY: Duration = Duration::from_secs(10);
+/// Blocks a build applies each tick (ticks come every 100 ms), so other players' edits
+/// interleave with a big build.
+const BUILD_PER_TICK: usize = 4_096;
+/// A chunk that one tick's batch changes by more than this many blocks is sent whole (`Chunk`)
+/// rather than as a run of `Applied` entries.
+const BULK_CHUNK: usize = 256;
 
 impl WorldState {
     pub(super) fn open(mut cfg: Config) -> Result<WorldState, String> {
@@ -104,6 +112,7 @@ impl WorldState {
             _ => Climate::from_settings(set.get("weather"), ground),
         };
         let weather = weather_from(climate, &set, name_seed(&cfg.name));
+        let build_palette = build_palette(&cfg.palette);
         let mut s = WorldState {
             cfg,
             db,
@@ -142,6 +151,9 @@ impl WorldState {
             rules_now: None,
             applied: set,
             settings_unsaved: false,
+            build_palette,
+            builds: VecDeque::new(),
+            last_build: None,
         };
         // the entities are the source of truth: where the stored settings differ from them, the
         // world takes the entities' (a change made while it was closed)
@@ -184,6 +196,7 @@ impl WorldState {
                     if self.last_flush.elapsed() >= self.cfg.flush_every {
                         self.save();
                     }
+                    self.build_step();
                     // a refund that could not be queued is tried once more, here
                     for (account, key) in std::mem::take(&mut self.refunds_due) {
                         if !self.ask_refund(account, key) {
@@ -947,6 +960,7 @@ impl WorldState {
                 let touched = is_objective_or_settings(&component) || old.as_ref().is_some_and(is_objective_or_settings);
                 (EntityChange { seq, entity: eid, component: Some(component) }, zones, touched)
             }
+            Edit::Build { node } => return self.start_build(conn, id, node),
             Edit::Remove { entity, .. } => {
                 let Some(old) = self.entities.remove(seq, when, name, entity) else {
                     self.refuse_entity(conn, &tx, id, EntityWhy::Changed);
@@ -1012,6 +1026,133 @@ impl WorldState {
         (known, free)
     }
 
+    /// Starts a build the rules have passed (`judge`): the node's recipe is expanded and checked
+    /// (`expand_node`), and the build is queued for `build_step`. A refusal is answered to the
+    /// builder alone. The build is made by the builder as ordinary edits are, so it is logged
+    /// the same way. Returns whether it was started.
+    fn start_build(&mut self, conn: u64, id: u32, node: EntityId) -> bool {
+        let Some(p) = self.players.get(&conn) else { return false };
+        let (player, name, account, tx) = (p.id, p.name.clone(), p.account, p.tx.clone());
+        // the slot is taken before the recipe is expanded, so a refused build costs it too
+        self.last_build = Some(Instant::now());
+        let blocks = match self.expand_node(node, account) {
+            Ok(blocks) => blocks,
+            Err(why) => {
+                self.refuse_entity(conn, &tx, id, why);
+                return false;
+            }
+        };
+        self.builds.push_back(BuildJob {
+            conn,
+            id,
+            node,
+            player,
+            name,
+            blocks: VecDeque::from(blocks),
+            last_seq: self.seq,
+        });
+        true
+    }
+
+    /// The blocks a node's recipe builds, as (cell, block id), or why they can't be built: the
+    /// node must be there, the world must have a palette vox-art takes, the recipe must expand
+    /// (`Invalid`, or `TooBig` over the cap), and every cell must be inside the world and outside
+    /// other people's plots.
+    fn expand_node(&self, node: EntityId, account: Option<u64>) -> Result<Vec<([i32; 3], u16)>, EntityWhy> {
+        let Some((_, Component::Node(n))) = self.entities.map.get(&node) else { return Err(EntityWhy::Changed) };
+        let Some((palette, ids)) = &self.build_palette else { return Err(EntityWhy::Unavailable) };
+        let kind = serde_json::from_value::<vox_graph::Kind>(serde_json::Value::String(n.kind.clone())).map_err(|_| EntityWhy::Invalid)?;
+        let detail = [
+            vox_graph::Detail::Intent,
+            vox_graph::Detail::Layout,
+            vox_graph::Detail::Massing,
+            vox_graph::Detail::Structure,
+            vox_graph::Detail::Dressing,
+        ]
+        .get(usize::from(n.detail))
+        .copied()
+        .ok_or(EntityWhy::Invalid)?;
+        let mut graph = vox_graph::Node::new(node.0, kind, vox_graph::Footprint::new(n.at, n.size));
+        graph.detail = detail;
+        graph.parent = n.parent.map(|p| p.0);
+        graph.recipe = n.recipe.clone();
+        graph.seed = n.seed;
+        let cells = vox_graph::expand(&graph, palette).map_err(|error| match error {
+            vox_graph::ExpandError::TooBig => EntityWhy::TooBig,
+            vox_graph::ExpandError::Invalid(_) => EntityWhy::Invalid,
+        })?;
+        let mut blocks = Vec::with_capacity(cells.len());
+        for (at, name) in cells {
+            let block = *ids.get(&name).ok_or(EntityWhy::Invalid)?;
+            if !self.cfg.bounds.contains(at) {
+                return Err(EntityWhy::Outside);
+            }
+            if self.plots.iter().any(|pl| pl.holds(at) && !account.is_some_and(|a| pl.builders.contains(&a))) {
+                return Err(EntityWhy::NotYours);
+            }
+            blocks.push((at, block));
+        }
+        Ok(blocks)
+    }
+
+    /// Applies the next batch of the first queued build, once a tick: up to `BUILD_PER_TICK`
+    /// blocks, each an ordinary edit made by the builder (a new edit number, a log row, a change
+    /// to the chunk for the next save). Other players' edits made meanwhile are in the same order.
+    /// A chunk this batch changes by more than `BULK_CHUNK` blocks is sent whole; the rest go out
+    /// as `Applied`. When the last block is in, the builder is answered with `EntityDone`, if
+    /// they are still here. A build keeps going when its builder leaves; a build not finished
+    /// when the world closes is not finished (its blocks are not saved).
+    pub(super) fn build_step(&mut self) {
+        let Some(mut job) = self.builds.pop_front() else { return };
+        let mut made: Vec<(u64, [i32; 3], u16)> = Vec::new();
+        let mut per_chunk: HashMap<ChunkKey, usize> = HashMap::new();
+        while made.len() < BUILD_PER_TICK {
+            let Some((cell, block)) = job.blocks.pop_front() else { break };
+            // a block already there is no change, as an ordinary edit refuses it
+            let Ok(old) = self.world.edit(cell, block) else { continue };
+            self.seq += 1;
+            self.log.push((self.seq, now_unix(), job.name.clone(), cell, old, block));
+            let key = ChunkKey::of(cell);
+            self.dirty.insert(key);
+            self.snap_changed.insert(vox_format::zone_of(key));
+            *per_chunk.entry(key).or_default() += 1;
+            made.push((self.seq, cell, block));
+        }
+        if let Some(&(seq, _, _)) = made.last() {
+            job.last_seq = seq;
+        }
+        let bulk: HashSet<ChunkKey> = per_chunk.iter().filter(|(_, n)| **n > BULK_CHUNK).map(|(k, _)| *k).collect();
+        let applied: Vec<Applied> = made
+            .iter()
+            .filter(|(_, cell, _)| !bulk.contains(&ChunkKey::of(*cell)))
+            // Id 0 is never a client's edit number (the client counts from 1), so a builder's
+            // predicted edits, which the client drops by matching id, are not dropped by a build.
+            .map(|&(seq, cell, block)| Applied { seq, player: job.player, id: 0, cell, block })
+            .collect();
+        if !applied.is_empty() {
+            self.broadcast(&ToClient::Edits(applied), None);
+        }
+        let mut whole: Vec<ChunkKey> = bulk.into_iter().collect();
+        whole.sort();
+        for key in whole {
+            let m = match self.world.chunk(key) {
+                Some(c) => ToClient::Chunk { key, version: c.version, data: c.encode() },
+                None => continue,
+            };
+            self.broadcast(&m, None);
+        }
+        if job.blocks.is_empty() {
+            if let Some(tx) = self.players.get(&job.conn).map(|p| p.tx.clone()) {
+                let done = ToClient::EntityDone { id: job.id, entity: job.node, seq: job.last_seq };
+                if !Self::send_to(&tx, &done) {
+                    self.leave(job.conn);
+                }
+            }
+        } else {
+            self.builds.push_front(job);
+        }
+    }
+
     /// The rules for an edit, in order: staleness, then `vox_core::edit`'s checks (rights,
     /// destinations, place, caps), then the world's own: the old place is in reach too (so a
     /// far entity cannot be dragged), and at most one Objective and one Settings.
@@ -1062,6 +1203,23 @@ impl WorldState {
                 }
                 Ok(())
             }
+            Edit::Build { node } => {
+                // advanced rights only, as every advanced edit; the node must be in reach (as a
+                // Put of it would be), and a world starts one build per BUILD_EVERY
+                if role != Role::Editor {
+                    return Err(EntityWhy::NotYours);
+                }
+                match self.entities.map.get(node) {
+                    None => return Err(EntityWhy::Changed),
+                    Some((_, Component::Node(n))) if within_reach(at, n.at) => {}
+                    Some((_, Component::Node(_))) => return Err(EntityWhy::TooFar),
+                    Some(_) => return Err(EntityWhy::Invalid),
+                }
+                if self.last_build.is_some_and(|t| t.elapsed() < BUILD_EVERY) {
+                    return Err(EntityWhy::TooFast);
+                }
+                Ok(())
+            }
             Edit::Remove { entity, expect } => {
                 let old = self.held(*entity, *expect)?;
                 let (known_prop, footprint_free) = self.prop_rules(Some(*entity));
@@ -1096,10 +1254,7 @@ impl WorldState {
             ToServer::Remove { id, entity, expect } => {
                 self.entity_edit(conn, id, Edit::Remove { entity, expect });
             }
-            // building nodes (phase 5) is not yet handled: refused, so the sender isn't left waiting
-            ToServer::Build { id, .. } => {
-                Self::send_to(&p.tx, &ToClient::EntityRefused { id, why: EntityWhy::Unavailable });
-            }
+            ToServer::Build { id, node } => self.entity_edit(conn, id, Edit::Build { node }),
             ToServer::Through { portal, side } => {
                 if !p.bucket.take(now) {
                     return;
@@ -1250,6 +1405,17 @@ impl WorldState {
 /// The body of a directory `Make` call for a new portal: where, which way, how big, and where it
 /// leads (a world by id, or a pair's key). Other destinations never reach here: the rules refuse
 /// them for a builder first.
+/// The world's palette as a vox-art palette (one colour per block, since a build only names
+/// blocks) and each block's id: its place in the palette plus one, 0 being air. None when vox-art
+/// refuses the palette (a name too long or repeated, or more blocks than it takes).
+fn build_palette(names: &[String]) -> Option<(vox_art::Palette, HashMap<String, u16>)> {
+    let materials: Vec<serde_json::Value> = names.iter().map(|n| serde_json::json!({ "name": n, "colours": [[128, 128, 128, 255]] })).collect();
+    let json = serde_json::json!({ "version": 1, "materials": materials }).to_string();
+    let palette = vox_art::Palette::from_json(&json).ok()?;
+    let ids = names.iter().enumerate().filter_map(|(i, n)| u16::try_from(i + 1).ok().map(|id| (n.clone(), id))).collect();
+    Some((palette, ids))
+}
+
 fn make_body(p: &Portal) -> serde_json::Value {
     let mut body = serde_json::json!({ "at": p.at, "axis": axis_name(p.axis), "size": p.size, "yaw": p.yaw });
     match &p.to {

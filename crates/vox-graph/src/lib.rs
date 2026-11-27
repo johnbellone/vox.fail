@@ -17,7 +17,7 @@ pub mod link;
 pub mod node;
 
 pub use constraints::{Problem, check};
-pub use expand::expand;
+pub use expand::{ExpandError, expand};
 pub use graph::Graph;
 pub use link::{Link, Rel};
 pub use node::{Detail, Footprint, Kind, Node};

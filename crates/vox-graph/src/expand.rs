@@ -4,9 +4,17 @@
 //! target, so a preview in the browser and a build on the server place the same blocks.
 
 use vox_art::recipe::{Recipe, RecipeScale, eval};
-use vox_art::{Palette, export::level::level_cells};
+use vox_art::{Palette, export::level::{LevelError, level_cells}};
 
 use crate::node::{MAX_SIDE, Node};
+
+/// Why a node cannot be expanded: `TooBig` when the build is over the cap (the caller refuses it
+/// as too big), `Invalid` with a message for each problem otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpandError {
+    TooBig,
+    Invalid(Vec<String>),
+}
 
 /// Builds a node's recipe into `(block position, block name)` cells, sorted by position.
 ///
@@ -14,7 +22,7 @@ use crate::node::{MAX_SIDE, Node};
 /// expands to nothing. Otherwise the recipe must be world scale and its size must equal the
 /// footprint's, since the footprint is where the blocks go; both are refused with a message rather
 /// than built into the wrong place.
-pub fn expand(node: &Node, palette: &Palette) -> Result<Vec<([i32; 3], String)>, Vec<String>> {
+pub fn expand(node: &Node, palette: &Palette) -> Result<Vec<([i32; 3], String)>, ExpandError> {
     let bad_sides: Vec<String> = ["x", "y", "z"]
         .iter()
         .zip(node.footprint.size)
@@ -22,29 +30,34 @@ pub fn expand(node: &Node, palette: &Palette) -> Result<Vec<([i32; 3], String)>,
         .map(|(axis, side)| format!("footprint {axis} side must be 1 to {MAX_SIDE}, got {side}"))
         .collect();
     if !bad_sides.is_empty() {
-        return Err(bad_sides);
+        return Err(ExpandError::Invalid(bad_sides));
     }
     let Some(text) = &node.recipe else {
         return Ok(Vec::new());
     };
-    let mut recipe = Recipe::from_json(text).map_err(|error| vec![error])?;
+    let invalid = |message: String| ExpandError::Invalid(vec![message]);
+    let mut recipe = Recipe::from_json(text).map_err(invalid)?;
     if recipe.scale != RecipeScale::World {
-        return Err(vec![format!(
+        return Err(invalid(format!(
             "a node builds at world scale, its recipe says {:?}",
             recipe.scale
-        )]);
+        )));
     }
     if recipe.size != node.footprint.size {
-        return Err(vec![format!(
+        return Err(invalid(format!(
             "recipe size {:?} does not match the footprint size {:?}",
             recipe.size, node.footprint.size
-        )]);
+        )));
     }
     // The node's seed wins: the recipe's own seed is only a default for a recipe read on its own.
     recipe.seed = node.seed;
-    let built = eval(&recipe, palette)
-        .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>())?;
-    level_cells(&built, palette, node.footprint.at).map_err(|error| vec![error])
+    let built = eval(&recipe, palette).map_err(|errors| {
+        ExpandError::Invalid(errors.iter().map(ToString::to_string).collect())
+    })?;
+    level_cells(&built, palette, node.footprint.at).map_err(|error| match error {
+        LevelError::TooBig { .. } => ExpandError::TooBig,
+        other => invalid(other.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -81,6 +94,14 @@ mod tests {
         node.recipe = Some(recipe.to_string());
         node.seed = 9;
         node
+    }
+
+    /// The messages of a refused expansion; panics on any other outcome.
+    fn invalid(result: Result<Vec<([i32; 3], String)>, ExpandError>) -> Vec<String> {
+        match result {
+            Err(ExpandError::Invalid(errors)) => errors,
+            other => panic!("expected Invalid, got {other:?}"),
+        }
     }
 
     #[test]
@@ -126,20 +147,20 @@ mod tests {
     fn a_recipe_of_the_wrong_size_is_refused() {
         let mut node = house_node(HOUSE);
         node.footprint.size = [10, 12, 9];
-        let errors = expand(&node, &palette()).unwrap_err();
+        let errors = invalid(expand(&node, &palette()));
         assert!(errors[0].contains("does not match"));
     }
 
     #[test]
     fn a_recipe_of_the_wrong_scale_is_refused() {
         let recipe = HOUSE.replace(r#""scale": "world""#, r#""scale": "prop""#);
-        let errors = expand(&house_node(&recipe), &palette()).unwrap_err();
+        let errors = invalid(expand(&house_node(&recipe), &palette()));
         assert!(errors[0].contains("world scale"));
     }
 
     #[test]
     fn a_recipe_that_does_not_parse_is_refused() {
-        let errors = expand(&house_node("{not json"), &palette()).unwrap_err();
+        let errors = invalid(expand(&house_node("{not json"), &palette()));
         assert_eq!(errors.len(), 1);
     }
 
@@ -147,7 +168,7 @@ mod tests {
     fn a_footprint_side_of_zero_or_past_the_cap_is_refused() {
         let mut node = house_node(HOUSE);
         node.footprint.size = [0, 65, 4];
-        let errors = expand(&node, &palette()).unwrap_err();
+        let errors = invalid(expand(&node, &palette()));
         assert_eq!(errors.len(), 2);
         assert!(errors[0].contains("x side must be 1 to 64, got 0"));
         assert!(errors[1].contains("y side must be 1 to 64, got 65"));
@@ -156,7 +177,17 @@ mod tests {
     #[test]
     fn a_recipe_that_fails_its_checks_reports_each_problem() {
         let recipe = HOUSE.replace(r#""mat": "brick""#, r#""mat": "gold""#);
-        let errors = expand(&house_node(&recipe), &palette()).unwrap_err();
+        let errors = invalid(expand(&house_node(&recipe), &palette()));
         assert!(errors.iter().any(|e| e.contains("gold")));
+    }
+
+    #[test]
+    fn a_build_over_the_cap_is_too_big() {
+        // 40 cubed is 64,000 voxels, past the 32,768 cap.
+        let recipe = r#"{"version":1,"scale":"world","seed":1,"size":[40,40,40],
+            "ops":[{"box":{"from":[0,0,0],"to":[39,39,39],"mat":"brick","tone":0,"hollow":false}}]}"#;
+        let mut node = house_node(recipe);
+        node.footprint.size = [40, 40, 40];
+        assert_eq!(expand(&node, &palette()), Err(ExpandError::TooBig));
     }
 }

@@ -550,12 +550,14 @@ async fn editor_put_a_held_edit_is_dropped_when_the_player_leaves() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn editor_build_is_still_unavailable() {
+async fn editor_build_of_a_missing_node_is_changed() {
     let dir = directory(Arc::new(AtomicUsize::new(0))).await;
     let (_server, url) = serve(asking(&dir)).await;
     let mut a = join(&url, "Ann", Some(token(7, "Ann"))).await;
-    send(&mut a.ws, &ToServer::Build { id: 6, node: EntityId(1) }).await;
-    assert_eq!(next_refusal(&mut a.ws).await, (6, EntityWhy::Unavailable));
+    // no entity has this id, so there is no node to build (editor_build.rs builds real ones);
+    // an entity that is not a node would be Invalid instead
+    send(&mut a.ws, &ToServer::Build { id: 6, node: EntityId(999_999) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (6, EntityWhy::Changed));
 }
 
 #[tokio::test(flavor = "multi_thread")]

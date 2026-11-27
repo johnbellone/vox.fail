@@ -10,6 +10,31 @@ use crate::recipe::Built;
 /// Most filled voxels one build may export: the Build cap of the world editor spec.
 pub const MAX_BUILD_CELLS: usize = 32_768;
 
+/// Why a build cannot be exported as level cells. The callers match on the variant (the server
+/// answers `TooBig` as "too big", anything else as invalid); the text is for people.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LevelError {
+    /// The build has more filled voxels than [`MAX_BUILD_CELLS`].
+    TooBig { cells: usize },
+    /// A palette index names no material.
+    UnknownIndex { index: u8 },
+    /// The origin plus a voxel position runs past the `i32` range.
+    Overflow { origin: [i32; 3] },
+}
+
+impl std::fmt::Display for LevelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LevelError::TooBig { cells } => write!(
+                f,
+                "a build may have at most {MAX_BUILD_CELLS} cells, this one has {cells}"
+            ),
+            LevelError::UnknownIndex { index } => write!(f, "palette index {index} names no material"),
+            LevelError::Overflow { origin } => write!(f, "a build at {origin:?} runs past the i32 range"),
+        }
+    }
+}
+
 /// Every filled voxel of `built` as `(position, block name)`, sorted by position, with the
 /// origin added to each position.
 ///
@@ -23,18 +48,15 @@ pub fn level_cells(
     built: &Built,
     palette: &Palette,
     origin: [i32; 3],
-) -> Result<Vec<([i32; 3], String)>, String> {
+) -> Result<Vec<([i32; 3], String)>, LevelError> {
     let count = built.grid.len();
     if count > MAX_BUILD_CELLS {
-        return Err(format!(
-            "a build may have at most {MAX_BUILD_CELLS} cells, this one has {count}"
-        ));
+        return Err(LevelError::TooBig { cells: count });
     }
     let mut cells = Vec::with_capacity(count);
     for (pos, index) in built.grid.iter() {
         let at = place(origin, pos)?;
-        let name = material_name(palette, index)
-            .ok_or_else(|| format!("palette index {index} names no material"))?;
+        let name = material_name(palette, index).ok_or(LevelError::UnknownIndex { index })?;
         cells.push((at, name.to_string()));
     }
     cells.sort_by_key(|(at, _)| *at);
@@ -42,12 +64,12 @@ pub fn level_cells(
 }
 
 /// The origin plus a voxel position, checked against the `i32` range on every axis.
-fn place(origin: [i32; 3], pos: [u16; 3]) -> Result<[i32; 3], String> {
+fn place(origin: [i32; 3], pos: [u16; 3]) -> Result<[i32; 3], LevelError> {
     let mut at = [0; 3];
     for (out, (base, offset)) in at.iter_mut().zip(origin.iter().zip(pos)) {
         *out = base
             .checked_add(i32::from(offset))
-            .ok_or_else(|| format!("a build at {origin:?} runs past the i32 range"))?;
+            .ok_or(LevelError::Overflow { origin })?;
     }
     Ok(at)
 }
@@ -122,8 +144,9 @@ mod tests {
             "ops":[{"box":{"from":[0,0,0],"to":[63,63,8],"mat":"brick","tone":0}}]}"#,
         );
         let error = level_cells(&built, &palette, [0, 0, 0]).unwrap_err();
-        assert!(error.contains("32768"));
-        assert!(error.contains("36864"));
+        assert_eq!(error, LevelError::TooBig { cells: 36_864 });
+        assert!(error.to_string().contains("32768"));
+        assert!(error.to_string().contains("36864"));
     }
 
     #[test]
@@ -133,6 +156,7 @@ mod tests {
             "ops":[{"box":{"from":[0,0,0],"to":[1,0,0],"mat":"brick","tone":0}}]}"#,
         );
         let error = level_cells(&built, &palette, [i32::MAX, 0, 0]).unwrap_err();
-        assert!(error.contains("i32"));
+        assert_eq!(error, LevelError::Overflow { origin: [i32::MAX, 0, 0] });
+        assert!(error.to_string().contains("i32"));
     }
 }

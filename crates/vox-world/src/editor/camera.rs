@@ -42,6 +42,8 @@ pub fn fly_target(component: &Component) -> Option<[f32; 3]> {
         Component::Portal(p) => (p.at, p.yaw),
         Component::Spawn(s) => (s.at, s.yaw),
         Component::Objective(o) => (o.at, 0.0),
+        // a node has no facing either: its footprint's corner, as its position
+        Component::Node(n) => (n.at.map(|c| c as f32), 0.0),
         // a prop's position is in units of a tenth of a block; its facing is in 15 degree steps
         Component::Prop(p) => (p.at.map(|c| c as f32 / PROP_UNITS_PER_BLOCK as f32), p.yaw as f32 * 15.0),
         Component::Settings(_) => return None,

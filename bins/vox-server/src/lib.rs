@@ -30,7 +30,7 @@ pub use world::*;
 pub use snapshot::{Restore, SnapStore, list_snapshots, restore};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -222,6 +222,27 @@ pub(crate) enum Edit {
     Put { entity: Option<EntityId>, expect: Option<u64>, component: Component },
     /// remove entity `entity`
     Remove { entity: EntityId, expect: Option<u64> },
+    /// build the node `node`: its recipe's blocks are applied a tick at a time (`world.rs`)
+    Build { node: EntityId },
+}
+
+/// A build accepted and not yet finished: the blocks still to apply, in order, and who asked
+/// for it. The blocks are made by `player` (their name goes in the edit log), as ordinary edits
+/// are. A build keeps going when its builder leaves; the answer is then sent to nobody.
+#[derive(Debug)]
+pub(crate) struct BuildJob {
+    /// the builder's connection and request id, for the answer
+    pub conn: u64,
+    pub id: u32,
+    /// the node built (its entity id, for the answer)
+    pub node: EntityId,
+    /// the builder's player id and name, as their edits are made
+    pub player: u32,
+    pub name: String,
+    /// blocks left to apply: their cells and block ids, in order
+    pub blocks: VecDeque<([i32; 3], u16)>,
+    /// the edit number of the last block applied (or the number at the start, if none was)
+    pub last_seq: u64,
 }
 
 /// An edit held while the directory answers, with the request id to refuse it under, and the
@@ -505,6 +526,15 @@ struct WorldState {
     editor_cache: HashMap<u64, (Instant, bool)>,
     /// the settings the ground, climate and sun were last built from
     applied: serde_json::Value,
+    /// the world's palette as a vox-art palette (one colour each, in block id order) and each
+    /// name's block id, made once at open. None when the palette is not one vox-art takes, and
+    /// then builds are refused.
+    build_palette: Option<(vox_art::Palette, HashMap<String, u16>)>,
+    /// builds accepted and not finished, the first being applied
+    builds: VecDeque<BuildJob>,
+    /// when the last build was started (one per ten seconds per world; a build that is refused
+    /// after expansion still counts, so the expansion itself is limited too)
+    last_build: Option<Instant>,
     /// the settings moved on from what `meta('settings')` holds, so the next flush writes them
     /// (a flush with nothing else dirty would otherwise skip them)
     settings_unsaved: bool,

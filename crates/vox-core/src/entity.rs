@@ -1,7 +1,7 @@
 //! Entities: the things placed in a world beside its blocks (doorways, spawn points, an
 //! objective, the world's settings). Each is a [`Component`]. They are written with postcard
 //! in zones and sent on the wire, so the variant order is part of the format: never reorder
-//! or remove a variant; add new ones at the end (Node comes later).
+//! or remove a variant; add new ones at the end.
 //!
 //! This module checks the values themselves (finite numbers, ranges, caps on text and size,
 //! no control characters in text). Whether a destination may be used is a rule for the edit
@@ -165,6 +165,42 @@ pub fn prop_cell(at: [i32; 3]) -> [i32; 3] {
     at.map(|c| c.div_euclid(PROP_UNITS_PER_BLOCK))
 }
 
+/// Longest kind name, in characters.
+pub const MAX_KIND: usize = 32;
+/// Longest recipe, in bytes.
+pub const MAX_RECIPE: usize = 16 * 1024;
+/// Most detail levels a node may name: 0 (intent) to 4 (dressing).
+pub const MAX_DETAIL: u8 = 4;
+/// Longest side of a node's footprint, in blocks.
+pub const MAX_NODE_SIDE: u16 = 64;
+
+/// A node of the world graph placed in a world: what it is, how far it has been refined, where
+/// its footprint starts and how big it is, and the recipe that builds it. The server expands the
+/// recipe with vox-graph when an editor builds the node (`ToServer::Build`). vox-core cannot
+/// depend on vox-graph, so the kind is carried as its snake_case name and checked here only for
+/// its shape; vox-graph's own vocabulary decides whether it is a kind at all.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Node {
+    /// the kind's snake_case name (`house`, `tower`, ...), at most [`MAX_KIND`] characters
+    pub kind: String,
+    /// how far it has been refined, 0 (intent) to [`MAX_DETAIL`] (dressing)
+    pub detail: u8,
+    /// the footprint's minimum corner, in blocks
+    pub at: [i32; 3],
+    /// the footprint's size, in blocks: each side 1 to [`MAX_NODE_SIDE`]
+    pub size: [u16; 3],
+    /// the node this one sits inside, if any
+    pub parent: Option<EntityId>,
+    /// the recipe as JSON text, at most [`MAX_RECIPE`] bytes; None until it has one
+    pub recipe: Option<String>,
+    /// seeds the recipe, so a build is the same every time
+    pub seed: u64,
+}
+
+impl Node {
+    pub const VERSION: u16 = 1;
+}
+
 /// One entity's data. Never reorder or remove a variant; new ones go at the end.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Component {
@@ -173,6 +209,7 @@ pub enum Component {
     Objective(Objective),
     Settings(Settings),
     Prop(Prop),
+    Node(Node),
 }
 
 impl Component {
@@ -184,6 +221,7 @@ impl Component {
             Component::Objective(_) => "vox::Objective",
             Component::Settings(_) => "vox::Settings",
             Component::Prop(_) => "vox::Prop",
+            Component::Node(_) => "vox::Node",
         }
     }
 
@@ -195,6 +233,7 @@ impl Component {
             Component::Objective(_) => Objective::VERSION,
             Component::Settings(_) => Settings::VERSION,
             Component::Prop(_) => Prop::VERSION,
+            Component::Node(_) => Node::VERSION,
         }
     }
 
@@ -222,6 +261,14 @@ impl Component {
                 p.state = p.state.min(MAX_PROP_CODE);
                 if let Some(t) = &mut p.text {
                     *t = strip_control(t.as_str());
+                }
+            }
+            Component::Node(n) => {
+                n.kind = strip_control(&n.kind);
+                n.detail = n.detail.min(MAX_DETAIL);
+                n.size = n.size.map(|s| s.clamp(1, MAX_NODE_SIDE));
+                if let Some(r) = &mut n.recipe {
+                    *r = strip_layout_control(r);
                 }
             }
             Component::Spawn(_) | Component::Settings(_) => {}
@@ -287,6 +334,22 @@ impl Component {
                 match &p.text {
                     Some(t) => text(t, MAX_PROP_TEXT),
                     None => Ok(()),
+                }
+            }
+            Component::Node(n) => {
+                // the kind is a snake_case word; vox-graph decides which words are kinds
+                if n.kind.chars().count() > MAX_KIND {
+                    return Err(EntityWhy::TooBig);
+                }
+                let word = !n.kind.is_empty() && n.kind.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+                if !word || n.detail > MAX_DETAIL || !n.size.iter().all(|s| (1..=MAX_NODE_SIDE).contains(s)) {
+                    return Err(EntityWhy::Invalid);
+                }
+                match &n.recipe {
+                    Some(r) if r.len() > MAX_RECIPE => Err(EntityWhy::TooBig),
+                    // a recipe is JSON: a line break or a tab is fine, nothing else that is a control
+                    Some(r) if r.chars().any(|c| c.is_control() && c != '\n' && c != '\t') => Err(EntityWhy::Invalid),
+                    _ => Ok(()),
                 }
             }
         }
@@ -366,6 +429,11 @@ fn strip_control(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
 
+/// As [`strip_control`], but keeps the line breaks and tabs a recipe's JSON may have.
+fn strip_layout_control(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +450,10 @@ mod tests {
             to,
             key: None,
         }
+    }
+
+    fn node(kind: &str) -> Node {
+        Node { kind: kind.into(), detail: 3, at: [-40, 0, 12], size: [10, 12, 8], parent: None, recipe: None, seed: 9 }
     }
 
     fn settings(json: &str) -> Component {
@@ -414,11 +486,59 @@ mod tests {
             settings(r#"{"sky":"earth","time":16.5}"#),
             Component::Prop(prop([-11, 0, 25])),
             Component::Prop(Prop { channel: Some(9), text: Some("ahoy".into()), owner: Some(7), ..prop([0, 0, 0]) }),
+            Component::Node(node("house")),
+            Component::Node(Node { parent: Some(EntityId(4)), recipe: Some("{\n\t\"ops\": []\n}".into()), ..node("tower") }),
         ];
         for c in all {
             let back: Component = decode(&encode(&c)).expect("decodes");
             assert_eq!(back, c);
         }
+    }
+
+    #[test]
+    fn node_shape_and_caps_are_checked() {
+        assert_eq!(Component::Node(node("house")).validate(), Ok(()));
+        assert_eq!(Component::Node(node("")).validate(), Err(EntityWhy::Invalid));
+        assert_eq!(Component::Node(node("House")).validate(), Err(EntityWhy::Invalid));
+        assert_eq!(Component::Node(node("a b")).validate(), Err(EntityWhy::Invalid));
+        assert_eq!(Component::Node(node(&"a".repeat(MAX_KIND + 1))).validate(), Err(EntityWhy::TooBig));
+        let mut n = node("house");
+        n.detail = MAX_DETAIL + 1;
+        assert_eq!(Component::Node(n.clone()).validate(), Err(EntityWhy::Invalid));
+        n.detail = 0;
+        n.size = [0, 12, 8];
+        assert_eq!(Component::Node(n.clone()).validate(), Err(EntityWhy::Invalid));
+        n.size = [MAX_NODE_SIDE, 12, 8];
+        assert_eq!(Component::Node(n.clone()).validate(), Ok(()));
+        n.size = [MAX_NODE_SIDE + 1, 12, 8];
+        assert_eq!(Component::Node(n).validate(), Err(EntityWhy::Invalid));
+    }
+
+    #[test]
+    fn node_recipe_is_capped_and_free_of_control_characters() {
+        let mut n = node("house");
+        n.recipe = Some("{\n\t}".into());
+        assert_eq!(Component::Node(n.clone()).validate(), Ok(()));
+        n.recipe = Some("{\u{7}}".into());
+        assert_eq!(Component::Node(n.clone()).validate(), Err(EntityWhy::Invalid));
+        n.recipe = Some("x".repeat(MAX_RECIPE + 1));
+        assert_eq!(Component::Node(n).validate(), Err(EntityWhy::TooBig));
+    }
+
+    #[test]
+    fn tidy_clamps_a_node_and_strips_its_recipe() {
+        let mut n = node("ho\u{1b}use");
+        n.detail = 9;
+        n.size = [0, 200, 8];
+        n.recipe = Some("{\n\u{7}}".into());
+        let mut c = Component::Node(n);
+        c.tidy();
+        let Component::Node(n) = c else { panic!("still a node") };
+        assert_eq!(n.kind, "house");
+        assert_eq!(n.detail, MAX_DETAIL);
+        assert_eq!(n.size, [1, MAX_NODE_SIDE, 8]);
+        assert_eq!(n.recipe.as_deref(), Some("{\n}"));
+        assert_eq!(Component::Node(n).validate(), Ok(()));
     }
 
     #[test]
@@ -430,6 +550,9 @@ mod tests {
         let pr = Component::Prop(prop([0; 3]));
         assert_eq!(pr.name(), "vox::Prop");
         assert_eq!(pr.version(), 1);
+        let nd = Component::Node(node("house"));
+        assert_eq!(nd.name(), "vox::Node");
+        assert_eq!(nd.version(), 1);
     }
 
     #[test]

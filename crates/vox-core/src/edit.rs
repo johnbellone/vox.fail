@@ -285,6 +285,7 @@ pub fn check_put(ctx: &Ctx, old: Option<&Component>, new: &Component) -> Result<
         Component::Spawn(s) => Some(cell_of(s.at)),
         Component::Objective(o) => Some(cell_of(o.at)),
         Component::Prop(p) => Some(prop_cell(p.at)),
+        Component::Node(n) => Some(n.at),
         Component::Settings(_) => None,
     };
     if let Some(cell) = cell {
@@ -354,6 +355,7 @@ pub fn check_remove(ctx: &Ctx, old: &Component) -> Result<(), EntityWhy> {
         (Role::Editor, Component::Spawn(s)) => Some(cell_of(s.at)),
         (Role::Editor, Component::Objective(o)) => Some(cell_of(o.at)),
         (Role::Editor, Component::Prop(p)) => Some(prop_cell(p.at)),
+        (Role::Editor, Component::Node(n)) => Some(n.at),
     };
     if let Some(cell) = cell {
         check_cell(ctx, cell)?;
@@ -591,6 +593,37 @@ mod tests {
         let c = ctx(Role::Editor, Some(1), Some([0.5, 0.0, 0.5]), &plots, &ceiling);
         let s = Component::Spawn(Spawn { at: [0.5, 0.0, 0.5], yaw: 0.0 });
         assert_eq!(check_put(&c, None, &s), Err(EntityWhy::Blocked));
+    }
+
+    fn node_at(at: Cell) -> Component {
+        Component::Node(crate::entity::Node {
+            kind: "house".into(),
+            detail: 0,
+            at,
+            size: [4, 4, 4],
+            parent: None,
+            recipe: None,
+            seed: 0,
+        })
+    }
+
+    #[test]
+    fn builder_node_is_not_yours_and_editor_node_is_placed_in_reach() {
+        let plots = [plot(&[1])];
+        let builder = ctx(Role::Builder, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        assert_eq!(check_put(&builder, None, &node_at([5, 0, 5])), Err(EntityWhy::NotYours));
+        let editor = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        assert_eq!(check_put(&editor, None, &node_at([5, 0, 5])), Ok(()));
+        assert_eq!(check_put(&editor, None, &node_at([100, 0, 5])), Err(EntityWhy::TooFar));
+    }
+
+    #[test]
+    fn editor_may_remove_a_node_in_reach_and_builder_may_not() {
+        let plots = [plot(&[1])];
+        let builder = ctx(Role::Builder, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        assert_eq!(check_remove(&builder, &node_at([5, 0, 5])), Err(EntityWhy::NotYours));
+        let editor = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
+        assert_eq!(check_remove(&editor, &node_at([5, 0, 5])), Ok(()));
     }
 
     #[test]
