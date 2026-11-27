@@ -108,7 +108,7 @@ cargo run --release
 The first build takes a while (it compiles Bevy); after that it starts in seconds. On Linux,
 install the audio and input headers first: `sudo apt install libasound2-dev libudev-dev`.
 
-All 39 characters are in `assets/models/`. Press **Tab** to cycle them, or start with one:
+All 40 characters are in `assets/models/`. Press **Tab** to cycle them, or start with one:
 `cargo run --release -- --model president.glb`.
 
 ## Controls
@@ -901,6 +901,7 @@ in `docs/avatar/capybara-ingame.png`: `block_avatar --snapshot out.png --model m
 | `donkey.glb` | Donkey in a blue blazer, open-collar shirt and jeans; tall ears, dark mane | Hee-haw, Back kick, Stubborn, Munch |
 | `peanut.glb` | Original peanut character: raw two-lobed shell, stick limbs, orange ball cap | Tip cap, Backflip, Wobble, Startled |
 | `capybara.glb` | Yuzu, an original capybara: warm brown barrel body, big blunt muzzle with a dark nose pad, small round ears, no tail; its own props are a yuzu, a towel and a slice of watermelon, shown only in the clips that use them | Chill, Hot spring (towel), Yuzu balance (yuzu), Melon snack (watermelon), Nod off (control page) |
+| `brain.glb` | The Brain, from the comic *From the Brain of Michael Collins*: Michael's pink brain with round glasses in a jar (glass walls, green fluid, bolted lid) on a professor in a tweed jacket with elbow patches and a red bow tie; its props are a lecture pointer, a d20 and a painted miniature, shown only in the clips that use them | Well, actually (pointer), Roll for initiative (d20), Lore dump (miniature), Big think, Fact check (control page) |
 
 ### Roasted Peanut series (`assets/models/roasted_*.glb`)
 
@@ -910,12 +911,12 @@ Each has five poses with hand props that appear only in the poses that use them.
 
 | File | Outfit | Poses | Props |
 |---|---|---|---|
-| `roasted_army.glb` | Olive helmet with chin strap, webbing, pouches, radio pack, rifle slung on the back, boots | Salute, March, Scout, Radio call, Plant the flag | binoculars, handset, flag |
-| `roasted_medic.glb` | Teal scrubs, white vest with a green first-aid cross, stethoscope, headband, blue gloves | Rush in, CPR, Listen, Bandage, Chart | medkit, clipboard, bandage |
-| `roasted_miami.glb` | 1980s Miami detective: pastel jacket with pushed-up sleeves, pink tee, white pants, loafers, aviators | Badge flash, Too cool, Radio in, Freeze!, Donut break | badge, walkie, donut |
-| `roasted_cook.glb` | Fry cook: red uniform, white apron with name tag, paper fold hat | Burger flip, Basket shake, Order up!, Salt it, Wipe brow | spatula, patty, basket, salt, bell |
-| `roasted_garbage.glb` | Lime hi-vis vest with reflective bands, navy work clothes, orange cap, yellow gloves | Bag toss, Haul the can, Sweep, Ride the truck, Thumbs up | trashbag, can, broom |
-| `roasted_riot.glb` | Black helmet with clear visor and neck guard, chest and back plates, shoulder and knee pads | Shield up, Advance, Hold the line, Kneel and cover, Radio check | shield (clear), baton, radio |
+| `roasted_army.glb` (Army peanut) | Olive helmet with chin strap, webbing, pouches, radio pack, rifle slung on the back, boots | Salute, March, Scout, Radio call, Plant the flag | binoculars, handset, flag |
+| `roasted_medic.glb` (Medic peanut) | Teal scrubs, white vest with a green first-aid cross, stethoscope, headband, blue gloves | Rush in, CPR, Listen, Bandage, Chart | medkit, clipboard, bandage |
+| `roasted_miami.glb` (Miami Travis) | 1980s Miami detective: pastel jacket with pushed-up sleeves, pink tee, white pants, loafers, aviators | Badge flash, Too cool, Radio in, Freeze!, Donut break | badge, walkie, donut |
+| `roasted_cook.glb` (Fry cook peanut) | Fry cook: red uniform, white apron with name tag, paper fold hat | Burger flip, Basket shake, Order up!, Salt it, Wipe brow | spatula, patty, basket, salt, bell |
+| `roasted_garbage.glb` (Garbage collector peanut) | Lime hi-vis vest with reflective bands, navy work clothes, orange cap, yellow gloves | Bag toss, Haul the can, Sweep, Ride the truck, Thumbs up | trashbag, can, broom |
+| `roasted_riot.glb` (Riot peanut) | Black helmet with clear visor and neck guard, chest and back plates, shoulder and knee pads | Shield up, Advance, Hold the line, Kneel and cover, Radio check | shield (clear), baton, radio |
 
 The medic uses a green cross on purpose: the red cross on white is a protected emblem.
 

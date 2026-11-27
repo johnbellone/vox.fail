@@ -5,6 +5,7 @@
     python3 tools/review/avatar_pr.py check capybara             # files, data and model complete? (exit 1 if not)
     python3 tools/review/avatar_pr.py check capybara --body pr.md   # ... and the PR description in the avatar format
     python3 tools/review/avatar_pr.py body capybara --sha <commit> [--issue 15] > pr.md
+    python3 tools/review/avatar_pr.py audit [--md]               # every character: names, files, clips, faces, props
 
 The avatar format (docs/avatar/avatar-workflow.md): the portrait, the in-game sheet and the
 close-up sheet at the top (images pinned to a commit), the avatar and its own poses as a table
@@ -119,8 +120,8 @@ def check(cid, body=None):
         bad.append("its data/characters.json entry has no 'about'")
     if not i["head_fit"]:
         bad.append("no entry in data/head_fit.json (hats won't sit on it)")
-    if not i["surfaces"]:
-        bad.append("no entry in data/surfaces.json")
+    if not i["surfaces"] and cid not in _surface_skip():
+        bad.append("no entry in data/surfaces.json (or the id in guess_surfaces.py's SKIP, with a reason)")
     manual = (ROOT / "docs/avatar/manual.md").read_text()
     if f"`{cid}.glb`" not in manual:
         bad.append(f"docs/avatar/manual.md doesn't list `{cid}.glb`")
@@ -195,8 +196,119 @@ From the asset scripts, not by hand: `tools/assets/build_animals.py` (the model 
 """
 
 
+# ---- every character
+
+# the 24 shared face clips ("Face: Blink" ...) that the expressions and reactions play by name
+def _clip_names(cid):
+    j, _ = load_glb(ROOT / "assets/models" / f"{cid}.glb")
+    return [a["name"] for a in j.get("animations", [])]
+
+
+def _surface_skip():
+    """The ids tools/assets/guess_surfaces.py skips on purpose."""
+    import ast, re
+    m = re.search(r"^SKIP = (\{.*?\})", (ROOT / "tools/assets/guess_surfaces.py").read_text(), re.M | re.S)
+    return ast.literal_eval(m.group(1)) if m else set()
+
+
+def audit():
+    """Every character in data/characters.json, checked against its own family: (rows, problems).
+
+    Families: the lead and the characters built on the full block rig (the 100 shared body clips,
+    the 24 shared face clips, then their own) and the cast (built from data/cast_manifest.json: the
+    100 body clips, then their own). Everyone needs the 23 face parts, a name, a portrait, a voxel
+    source, a head fit and their own clips; every prop must be shown by some clip, and every own
+    clip should change the face."""
+    chars = json.loads((ROOT / "data/characters.json").read_text())
+    chars = chars["characters"] if isinstance(chars, dict) else chars
+    lead = _clip_names("scene_all")
+    body, faces = lead[:100], [c for c in lead if c.startswith("Face: ")]
+    cast = {c["id"]: c for c in json.loads((ROOT / "data/cast_manifest.json").read_text())["characters"]}
+    fit = json.loads((ROOT / "data/head_fit.json").read_text())
+    surfaces = json.loads((ROOT / "data/surfaces.json").read_text())
+    names = [c["name"] for c in chars]
+    rows, problems = [], []
+    for c in chars:
+        cid, bad = c["id"], []
+        j, binb = load_glb(ROOT / "assets/models" / f"{cid}.glb")
+        nodes = [nd.get("name", "") for nd in j["nodes"]]
+        anims = j.get("animations", [])
+        clips = [a["name"] for a in anims]
+        own = [a for a in anims if a["name"] not in lead] if cid != "scene_all" else []
+        props = [n[5:] for n in nodes if n.startswith("prop_")]
+        face_parts = [n for n in nodes if n.split("_")[0] in FACE_PARTS]
+        shown, faceless = set(), []
+        for a in anims:
+            changes = set()
+            for ch in a["channels"]:
+                if ch["target"]["path"] != "scale":
+                    continue
+                node = nodes[ch["target"]["node"]]
+                on = bool((accessor(j, binb, a["samplers"][ch["sampler"]]["output"]) > 0.5).any())
+                if node.startswith("prop_") and on:
+                    shown.add(node[5:])
+                elif node.split("_")[0] in FACE_PARTS and on and node not in ("eyes_open", "brows_normal", "mouth_flat"):
+                    changes.add(node)
+            # the cast's clips come pre-built (no builder in this repo) and some keep a straight face
+            # on purpose (No comment); the rule is for avatars built by build_animals/build_roasted
+            if a in own and not changes and cid not in cast:
+                faceless.append(a["name"])
+        # names and words
+        if not c.get("name") or c["name"] == cid:
+            bad.append("no display name of its own")
+        if names.count(c["name"]) > 1:
+            bad.append(f"its name '{c['name']}' is used twice")
+        if not c.get("about"):
+            bad.append("no 'about' (the character picker shows nothing)")
+        # files and data
+        vox = "lead" if cid == "scene_all" else cid
+        for what, f in (("portrait", f"assets/portraits/{cid}.png"), ("voxel source", f"source/vox/characters/{vox}.vox")):
+            if not (ROOT / f).exists():
+                bad.append(f"no {what} ({f})")
+        if cid + ".glb" not in fit:
+            bad.append("no head fit (hats float or sink)")
+        # guess_surfaces.py leaves out its SKIP list on purpose (flat-painted on purpose)
+        if f"models/{cid}.glb" not in surfaces and cid != "scene_all" and cid not in _surface_skip():
+            bad.append("no surfaces entry (no fur or cloth texture)")
+        # clips
+        missing_body = [b for b in body if b not in clips]
+        missing_faces = [f for f in faces if f not in clips]
+        if missing_body:
+            bad.append(f"{len(missing_body)} of the 100 shared body clips missing")
+        # the app sets face parts directly (character/face.rs); the Face: clips only feed the
+        # review sheet, so the cast (which never had them) is fine
+        if missing_faces and cid not in cast:
+            bad.append(f"{len(missing_faces)} of the {len(faces)} shared face clips missing (the review sheet's face row is empty)")
+        if len(face_parts) < 23:
+            bad.append(f"{len(face_parts)} face parts, not 23 (lip sync and expressions need them all)")
+        if cid != "scene_all" and not own:
+            bad.append("no clips of its own (F9-F12 do nothing)")
+        if cid in cast and len(own) != len(cast[cid].get("own_clips", [])):
+            bad.append(f"{len(own)} own clips, but data/cast_manifest.json lists {len(cast[cid]['own_clips'])}")
+        if faceless:
+            bad.append(f"own clips that never change the face: {', '.join(faceless)}")
+        unshown = [p for p in props if p not in shown]
+        if unshown:
+            bad.append(f"props no clip shows: {', '.join(unshown)}")
+        rows.append({"id": cid, "name": c["name"], "group": c["group"], "clips": len(clips), "own": [a["name"] for a in own],
+                     "props": props, "face_parts": len(face_parts), "problems": bad})
+        problems += [f"{cid}: {b}" for b in bad]
+    return rows, problems
+
+
 def main():
     a = sys.argv[1:]
+    if a and a[0] == "audit":
+        rows, problems = audit()
+        if "--md" in a:
+            print("| Id | Name | Group | Clips | Own clips | Props | Problems |\n|---|---|---|---|---|---|---|")
+            for r in rows:
+                print(f"| `{r['id']}` | {r['name']} | {r['group']} | {r['clips']} | {', '.join(r['own']) or '—'} | {len(r['props'])} | {'; '.join(r['problems']) or 'none'} |")
+        else:
+            for p in problems:
+                print(f"- {p}")
+        print(f"\n{len(rows)} characters, {sum(1 for r in rows if r['problems'])} with problems, {len(problems)} problems", file=sys.stderr)
+        sys.exit(1 if problems else 0)
     if len(a) < 2 or a[0] not in ("info", "check", "body"):
         sys.exit(__doc__)
     cmd, cid = a[0], a[1]
