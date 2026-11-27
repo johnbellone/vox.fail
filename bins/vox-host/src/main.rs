@@ -4,7 +4,7 @@
 //! `--max-watchers`, `--trust-moves`, `--no-snapshots`, `--oxen`, `--snapshot-every`; see
 //! `vox_server::flags`), which apply to every world.
 //!
-//! `--idle-stop <minutes>`: worlds start when someone first connects and are saved and stopped
+//! `--idle-stop <minutes>` (at least 1): worlds start when someone first connects and are saved and stopped
 //! after that long with nobody playing or watching. `--keep <id>` (repeatable) names worlds that
 //! start with the host and never stop, such as the Void. Without `--idle-stop` every world
 //! starts with the host.
@@ -43,7 +43,9 @@ async fn main() {
     }
     let keep: Vec<String> = args.windows(2).filter(|w| w[0] == "--keep").map(|w| w[1].clone()).collect();
     let idle = arg("--idle-stop").map(|m| {
-        let m: f64 = m.parse().ok().filter(|m: &f64| m.is_finite() && *m > 0.0).unwrap_or_else(|| panic!("--idle-stop takes minutes"));
+        // at least a minute: a world remembers which tickets were used only while it runs, and
+        // a ticket lasts a minute, so a world can't stop and start again within one's life
+        let m: f64 = m.parse().ok().filter(|m: &f64| m.is_finite() && *m >= 1.0).unwrap_or_else(|| panic!("--idle-stop takes minutes, at least 1"));
         std::time::Duration::from_secs_f64(m * 60.0)
     });
     let mut specs = Vec::new();
