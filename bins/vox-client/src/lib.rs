@@ -83,12 +83,22 @@ struct Me {
 /// The app, ready to run.
 pub fn app(start: Start, assets: String) -> App {
     let level = if cfg!(target_arch = "wasm32") { Level::Medium } else { Level::High };
+    // screenshots at a set size (`VOX_SCREENSHOT_SIZE=960x540`), so pictures stay comparable
+    let mut window = bevy::window::WindowResolution::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((w, h)) = std::env::var("VOX_SCREENSHOT_SIZE").ok().and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.trim().parse::<u32>().ok()?.clamp(320, 3840), h.trim().parse::<u32>().ok()?.clamp(240, 2160)))
+    }) {
+        window = bevy::window::WindowResolution::new(w, h);
+    }
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Vox".into(),
+                    resolution: window,
                     canvas: start.canvas.clone(),
                     fit_canvas_to_parent: true,
                     prevent_default_event_handling: true,
@@ -146,7 +156,11 @@ pub fn app(start: Start, assets: String) -> App {
 }
 
 /// For checking the screen without looking: `VOX_SCREENSHOT=shot.png` saves a picture of the
-/// window `VOX_SCREENSHOT_AFTER` seconds (6) after the world is ready, then quits.
+/// window `VOX_SCREENSHOT_AFTER` seconds (6) after the world is ready and drawn, then quits.
+/// `VOX_SCREENSHOT_DO="time:17;look:200:-10;camera:behind"` runs those `world:` commands first
+/// (the control page's, without `world:`), `VOX_SCREENSHOT_SIZE=960x540` sets the window's
+/// size, and `VOX_SCREENSHOT_CLEAN=1` leaves the HUD out: the
+/// README's pictures are made this way (`tools/dev/screenshots.sh`).
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Resource)]
 struct ShotAt {
@@ -156,9 +170,12 @@ struct ShotAt {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 fn screenshot(
     mut commands: Commands,
-    w: Res<world::WorldClient>,
+    mut w: ResMut<world::WorldClient>,
+    ui: Query<Entity, (With<Node>, Without<ChildOf>)>,
+    mut gizmos: ResMut<GizmoConfigStore>,
     mut shot: ResMut<ShotAt>,
     mut ready_at: Local<Option<f64>>,
     mut exit: MessageWriter<AppExit>,
@@ -168,10 +185,22 @@ fn screenshot(
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     use vox_world::menu::Screen;
     let now = w.now();
-    if !w.ready {
+    // wait for the world to be drawn, not just to have arrived
+    if !w.settled() && ready_at.is_none() {
         return;
     }
+    if std::env::var("VOX_SCREENSHOT_CLEAN").is_ok_and(|v| !v.is_empty() && v != "0") {
+        // every piece of the HUD hangs off a root node: take them all away; and the outline
+        // round the block in sight (a gizmo)
+        for e in &ui {
+            commands.entity(e).despawn();
+        }
+        gizmos.config_mut::<DefaultGizmoConfigGroup>().0.enabled = false;
+    }
     let ready = *ready_at.get_or_insert_with(|| {
+        if let Ok(list) = std::env::var("VOX_SCREENSHOT_DO") {
+            w.cmds.extend(list.split(';').map(str::trim).filter(|c| !c.is_empty()).map(String::from));
+        }
         // VOX_SCREENSHOT_MENU=pause|blocks|controls|settings|wheel: with that menu open
         if std::env::var("VOX_SCREENSHOT_MENU").as_deref() == Ok("wheel") {
             wheel.scripted = Some(Vec2::new(70.0, 70.0));

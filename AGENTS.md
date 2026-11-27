@@ -57,7 +57,7 @@ Two products share one Cargo workspace:
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
 | `deploy/` | | systemd units and the Cloudflare Tunnel config for vox.fail (`deploy/README.md`); the container image (`docker/Dockerfile`) and a Helm chart for Kubernetes (`helm/vox`, see `helm/README.md`). |
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
-| `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen). |
+| `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen), `screenshots.sh` (the README's pictures, drawn by the real client into `docs/screenshots/`; run by hand when the look changes). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
 | `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
 | `.pi/agents/` | | Project subagents: `vox-writer` (haiku) and `vox-reviewer` (sonnet). See [Models and subagents](#models-and-subagents). |

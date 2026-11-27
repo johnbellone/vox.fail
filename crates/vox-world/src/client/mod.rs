@@ -530,6 +530,12 @@ impl WorldClient {
         self.ready && self.link.is_some() && !self.watch
     }
 
+    /// In a world with every chunk that has arrived drawn (nothing waiting to be meshed): what
+    /// a screenshot waits for, as meshing a big world takes many frames on a slow renderer.
+    pub fn settled(&self) -> bool {
+        self.ready && self.dirty.is_empty()
+    }
+
     /// New air (a keyframe from the server, or none in a new world). A step still running on
     /// the old air is dropped, so it can't come back over this.
     pub(crate) fn set_weather(&mut self, wx: Option<Weather>) {
