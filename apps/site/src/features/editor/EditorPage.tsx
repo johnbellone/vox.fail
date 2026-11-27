@@ -328,6 +328,8 @@ export function EditorPage() {
         onMode={changeMode}
         canAdvanced={canAdvanced}
         here={here}
+        onUndo={() => send({ type: "undo" })}
+        onRedo={() => send({ type: "redo" })}
       />
       {notice && (
         <Alert color="ember" role="alert" mx="sm" withCloseButton onClose={() => setNotice(undefined)}>

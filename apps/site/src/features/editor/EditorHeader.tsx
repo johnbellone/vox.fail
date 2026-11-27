@@ -1,5 +1,6 @@
 // The top bar: the world's name, the Basic/Advanced switch (only for those who may use it),
-// Undo and Redo (not wired yet), and whether the page is live with others here.
+// Undo and Redo (of your own changes; the client keeps them and says when there is nothing to
+// undo), and whether the page is live with others here.
 
 import { Badge, Button, Group, SegmentedControl, Text } from "@mantine/core";
 
@@ -12,9 +13,11 @@ interface Props {
   /** whether this account may use Advanced controls in this world */
   canAdvanced: boolean;
   here: number;
+  onUndo: () => void;
+  onRedo: () => void;
 }
 
-export function EditorHeader({ world, mode, onMode, canAdvanced, here }: Props) {
+export function EditorHeader({ world, mode, onMode, canAdvanced, here, onUndo, onRedo }: Props) {
   return (
     <Group justify="space-between" wrap="wrap" px="md" py="sm" gap="sm">
       <Group gap="sm" wrap="wrap">
@@ -38,10 +41,10 @@ export function EditorHeader({ world, mode, onMode, canAdvanced, here }: Props) 
         )}
       </Group>
       <Group gap="xs">
-        <Button size="xs" variant="default" disabled>
+        <Button size="xs" variant="default" onClick={onUndo}>
           Undo
         </Button>
-        <Button size="xs" variant="default" disabled>
+        <Button size="xs" variant="default" onClick={onRedo}>
           Redo
         </Button>
         <Badge color="gate" variant="light" aria-live="polite">
