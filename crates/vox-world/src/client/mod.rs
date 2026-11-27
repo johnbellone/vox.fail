@@ -614,7 +614,8 @@ impl WorldClient {
         }
     }
 
-    /// Step out of a portal in this world.
+    /// Step out of a portal in this world, facing away from the doorway you came out of (so
+    /// the world is in front of you and walking on doesn't take you straight back).
     pub fn arrive(&mut self, a: Arrival) {
         self.body.pos = a.pos;
         self.yaw = a.yaw;
@@ -622,6 +623,12 @@ impl WorldClient {
         self.zoom = a.zoom;
         self.zoom_now = a.zoom;
         self.move_yaw = a.move_yaw;
+        if let Some(away) = away_from_doorway(&self.portals, Vec3::from(a.pos), a.cam_yaw) {
+            self.cam_yaw = away;
+            self.yaw = away + std::f32::consts::PI;
+            // still walking: on, away from it
+            self.move_yaw = a.move_yaw.map(|_| away);
+        }
         // the place you were walking to is in the world you left
         if self.goal.is_some() {
             self.goal = None;
@@ -920,9 +927,52 @@ impl WorldClient {
     }
 }
 
+/// The camera yaw (-Z forward, radians) facing straight away from the doorway `pos` (blocks)
+/// is standing in or just out of, if it is at one: out of the side it's on, or, right on the
+/// sill, the side `facing` (the yaw it came out with) looks to. `None` away from every doorway.
+fn away_from_doorway(portals: &[crate::portals::PortalDef], pos: Vec3, facing: f32) -> Option<f32> {
+    // how far out of a doorway still counts as coming out of it (blocks)
+    const NEAR: f32 = 4.0;
+    let (p, d) = portals
+        .iter()
+        .filter(|p| p.within(pos))
+        .map(|p| (p, p.side_of(pos)))
+        .filter(|(_, d)| d.abs() <= NEAR)
+        .min_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))?;
+    let n = p.normal();
+    let ahead = Vec3::new(-facing.sin(), 0.0, -facing.cos());
+    let sign = if d.abs() > 1e-3 { d.signum() } else if ahead.dot(n) >= 0.0 { 1.0 } else { -1.0 };
+    let out = n * sign;
+    // -Z forward: forward is (-sin yaw, 0, -cos yaw)
+    Some((-out.x).atan2(-out.z))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coming_out_of_a_doorway_faces_away_from_it() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        let portals = crate::portals::parse(&serde_json::json!({ "portals": [
+            { "name": "north", "at": [0, 0, 0], "axis": "z", "size": [4, 6], "level": "yard", "arrive": [0, 0, 0] },
+            { "name": "east", "at": [20, 0, 0], "axis": "x", "size": [4, 6], "level": "sea", "arrive": [0, 0, 0] },
+        ]}));
+        let same = |a: f32, b: f32| ((a - b + PI).rem_euclid(2.0 * PI) - PI).abs() < 1e-4;
+        // out on the +z side of a doorway across z: facing +z, whichever way you looked
+        let y = away_from_doorway(&portals, Vec3::new(0.5, 0.0, 1.5), 0.3).unwrap();
+        assert!(same(y, PI), "{y}");
+        // out on the -z side: facing -z
+        assert!(same(away_from_doorway(&portals, Vec3::new(-1.0, 0.0, -0.8), 2.0).unwrap(), 0.0));
+        // a doorway across x, out on its +x side: facing +x (yaw -pi/2 with -Z forward)
+        assert!(same(away_from_doorway(&portals, Vec3::new(21.0, 0.0, 0.5), 0.0).unwrap(), -FRAC_PI_2));
+        // right on the sill: the side you were already looking to
+        assert!(same(away_from_doorway(&portals, Vec3::new(0.0, 0.0, 0.0), PI - 0.2).unwrap(), PI));
+        assert!(same(away_from_doorway(&portals, Vec3::new(0.0, 0.0, 0.0), 0.2).unwrap(), 0.0));
+        // nowhere near one, or beside its frame: as you were
+        assert_eq!(away_from_doorway(&portals, Vec3::new(10.0, 0.0, 10.0), 0.0), None);
+        assert_eq!(away_from_doorway(&portals, Vec3::new(5.0, 0.0, 1.0), 0.0), None, "beside the opening");
+    }
 
     fn armed() -> BuildRepeat {
         let mut r = BuildRepeat::default();

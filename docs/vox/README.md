@@ -102,7 +102,8 @@ the black **Ember Door**. Far off in the fog: a stair to nowhere, monoliths, emp
 (`data/levels/islands.json`, `tools/assets/build_islands.py`).
 
 **Portals:** walk towards the First Gate and an echo of the yard fades into it, faint and pale
-at first, solid close up; walk through and you're there. The Ember Door (west) shows the
+at first, solid close up; walk through and you're there, facing away from the doorway you
+come out of (no fade or other effect on the way). The Ember Door (west) shows the
 islands; the Tide Door (east) the dark sea, a stormy ocean rolling in big swells, whose Sky Door leads
 up to orbit: a station 250 km above the planet. A
 level lists its doorways under `"portals"` in its `"world"` object (where, which way, how big,

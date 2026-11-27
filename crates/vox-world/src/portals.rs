@@ -20,7 +20,9 @@
 //! - `arrive`: the matching point on the other side (the other doorway's sill, if it has one),
 //!   in blocks; `yaw`: which way you face there after walking through northwards (axis z) or
 //!   westwards (axis x), degrees like the camera's (0 north, 90 west). Walk through the other
-//!   way and you come out facing the other way.
+//!   way and you come out facing the other way. However you looked going in, you come out
+//!   facing straight away from the doorway you step out of (`WorldClient::arrive`), so the
+//!   world is in front of you; there is no fade or other effect on the way through.
 //!
 //! How it's drawn: each destination level is meshed once (in the background) and placed far
 //! off on its own render layer, with its own sky dome, light, haze and environment map. Each
