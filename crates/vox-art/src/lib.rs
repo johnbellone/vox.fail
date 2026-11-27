@@ -7,9 +7,12 @@
 //!
 //! Runs natively and in wasm: no threads, no clocks, no file system.
 
+pub mod check;
 pub mod grid;
+pub mod import;
 pub mod palette;
 pub mod prop;
+pub mod recipe;
 pub mod rng;
 pub mod scale;
 pub mod vox;
