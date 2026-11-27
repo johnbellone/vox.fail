@@ -5,11 +5,15 @@
 //! Voices are decoded at the wire rate (16 kHz) and stepped through at the device's rate with
 //! linear interpolation, the same way Block Avatar plays its voices.
 
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use vox_voice::jitter::Jitter;
 use vox_voice::{Packet, RATE};
+
+use super::device::{self, Slot, Status};
 
 /// Most speakers mixed at once. A new speaker past this evicts the one idle longest, so a
 /// crowd cannot grow the mix without bound.
@@ -58,31 +62,44 @@ fn lock(m: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The voices this machine plays. Holds the output stream open for as long as it lives.
+/// The voices this machine plays. The output stream lives on its own thread
+/// ([`super::device`]) for as long as this does; dropping it closes the stream.
 pub struct Playback {
     shared: Arc<Mutex<Shared>>,
-    _stream: cpal::Stream,
+    stop: Arc<AtomicBool>,
+    slot: Slot,
 }
 
-// cpal streams are not Send on every platform. The playback is kept as a resource and its
-// stream is only dropped, never touched, from another thread; the shared state is behind a
-// mutex. Same reasoning as Block Avatar's `Player`.
-unsafe impl Send for Playback {}
-unsafe impl Sync for Playback {}
-
 impl Playback {
-    /// Opens the output device named `device` (a case-insensitive part of its name), or the
-    /// default output when it is `None` or not found. Fails if there is no output at all.
+    /// Starts opening the output device named `device` (a case-insensitive part of its name),
+    /// or the default output when it is `None` or not found. Returns at once: [`Self::status`]
+    /// says when it is open, or why it couldn't be (no output at all, say).
     pub fn start(device: Option<&str>) -> Result<Playback, String> {
         let shared = Arc::new(Mutex::new(Shared {
             volume: 1.0,
             ..Default::default()
         }));
-        let stream = open_stream(shared.clone(), device)?;
-        Ok(Playback {
-            shared,
-            _stream: stream,
-        })
+        let stop = Arc::new(AtomicBool::new(false));
+        let (s, want) = (shared.clone(), device.map(str::to_string));
+        let slot = device::spawn("voice-out", stop.clone(), move || {
+            let stream = open_stream(s, want.as_deref())?;
+            Ok((stream, want.unwrap_or_else(|| "the default output".into())))
+        })?;
+        Ok(Playback { shared, stop, slot })
+    }
+
+    /// Opening, open, or failed.
+    pub fn status(&self) -> Status {
+        self.slot.status()
+    }
+
+    /// Stops playing everyone in `muted` at once, dropping what was queued for them (up to a
+    /// few hundred milliseconds), rather than letting it play out.
+    pub fn forget(&self, muted: &HashSet<u32>) {
+        if muted.is_empty() {
+            return;
+        }
+        lock(&self.shared).voices.retain(|v| !muted.contains(&v.id));
     }
 
     /// A packet from `speaker` arrived, to be played at `gains` (left, right). Packets that
@@ -125,6 +142,12 @@ impl Playback {
         if volume.is_finite() {
             lock(&self.shared).volume = volume.clamp(0.0, 1.0);
         }
+    }
+}
+
+impl Drop for Playback {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -238,6 +261,29 @@ fn build<T: cpal::SizedSample + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn muting_drops_what_was_queued_at_once() {
+        // a playback with no device: just the shared state
+        let p = Playback {
+            shared: Arc::new(Mutex::new(Shared { volume: 1.0, ..Default::default() })),
+            stop: Arc::new(AtomicBool::new(false)),
+            slot: Slot::default(),
+        };
+        for id in [1, 2, 3] {
+            let mut v = Voice { id, gains: (1.0, 1.0), ..Default::default() };
+            for seq in 0..7 {
+                v.jitter.push(seq, &vec![0.5; 320]);
+            }
+            lock(&p.shared).voices.push(v);
+        }
+        p.forget(&HashSet::new());
+        assert_eq!(lock(&p.shared).voices.len(), 3, "nobody muted: nothing dropped");
+        p.forget(&HashSet::from([2]));
+        let left: Vec<u32> = lock(&p.shared).voices.iter().map(|v| v.id).collect();
+        assert_eq!(left, vec![1, 3]);
+        assert_eq!(p.status(), Status::Starting, "no device thread was started");
+    }
 
     #[test]
     fn mix_applies_gains_and_volume_without_a_device() {

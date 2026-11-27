@@ -43,4 +43,4 @@ See `architecture/wire-protocol` for the separate world protocol.
 - [World Wire Protocol (PROTOCOL = 5)](wire-protocol.md): the separate world protocol
 
 
-World voice chat (nearby and raid party, through vox-server) is separate from shows and uses `vox-voice` and wire protocol 6: see `decisions/world-voice-chat`.
+World voice chat (nearby and raid party, through vox-server) is separate from shows and uses `vox-voice` and wire protocol 7: see `decisions/world-voice-chat`.

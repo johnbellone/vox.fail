@@ -1,9 +1,9 @@
 ---
 type: Decision
 title: "Decision: Voice Chat in Worlds (Nearby and Raid Party), Relayed by vox-server"
-description: "World voice reuses Block Avatar's IMA ADPCM voice in a new pure crate vox-voice, travels as droppable wire messages (PROTOCOL 6), and the world server alone decides who hears each packet."
+description: "World voice reuses Block Avatar's IMA ADPCM voice in a new pure crate vox-voice, travels as droppable wire messages (PROTOCOL 7), and the world server alone decides who hears each packet."
 tags: [decision, voice, networking, vox-server, vox-client]
-generated: { by: agent/cli, at: "2026-11-26T23:26:41Z" }
+generated: { by: agent/mcp, at: "2026-11-27T11:17:07Z" }
 status: stable
 ---
 
@@ -16,7 +16,7 @@ Players in a Vox world can talk to **nearby** players and to their **raid party*
 - `avatar-voice` stays as the analysis crate (lip sync, pitch, formants); `vox-world` depends on both.
 - Device code (cpal capture and playback) stays in the apps and `vox-world`, behind `cfg(not(target_arch = "wasm32"))`.
 
-## Wire (vox-core, PROTOCOL 5 to 6)
+## Wire (vox-core, PROTOCOL 7)
 - `ToServer::Voice(VoicePacket)` and `ToClient::Voice { player, packet }`, added last so older messages keep their numbers; `ToClient::Voice` is droppable.
 - `VoicePacket { channel: u8 (0 nearby, 1 party), seq: u32, samples: u16, pred: i16, index: u8, data: Vec<u8> }`, 16 kHz mono ADPCM, 20 ms (320 samples, 160 bytes). The codec byte is dropped: ADPCM is the only codec (see the ADPCM decision).
 - The relay's `proto::Voice` stays as it is for shows.
@@ -54,9 +54,16 @@ Reusing the proven ADPCM voice keeps bandwidth at about 8 KB/s per talker. Compu
 
 # As built (2026-11-26)
 - `crates/vox-voice` (adpcm, resample, jitter, packet) holds the shared code; `block_avatar` uses it.
-- Wire: `VoicePacket` has `pub` fields; `ToServer::Voice` and `ToClient::Voice` are last in their enums; PROTOCOL 6.
+- Wire: `VoicePacket` has `pub` fields; `ToServer::Voice` and `ToClient::Voice` are last in their enums; PROTOCOL 7 (6 was travel, which landed on main first; voice goes after `Through` and `Travel`).
 - Server: `voice_audience` (pure, unit-tested), per-player bucket 60/s burst 100, per-connection cap 120/s and size check, `--voice-radius` (default 32). The directory rules carry `parties` (newest 500 parties, 24 members each, refreshed every 30 s).
 - Client: input actions PushToTalk (B, D-pad right) and VoiceChannel (N, keyboard only: every pad button already had a game action). The client fades nearby voices over a fixed 32 blocks (a server with another radius mismatches).
 - Browser: stub only; Web Audio voice is a follow-up.
 - Review catches fixed: speaker positions are metres on the wire and blocks in the listener (divide by block size); the listener faces `cam_yaw`, not the character's yaw; the HUD marker holds 0.3 s.
 - Known gaps: the mic stream stays open while voice is on (push-to-talk only gates sending); muting does not flush audio already queued (up to 0.4 s); starting the devices blocks the main thread briefly; no real microphone or speakers were available, so device paths are covered by compilation and unit tests, and the audio path by `bins/vox-server/tests/voice_e2e.rs` (a real recording through a real server).
+
+# Finished (2026-11-27)
+Brought onto main (Bevy 0.20.1) and landed, with three of the known gaps closed:
+- **The radius**: the world's settings carry `voice_radius` (the server's `--voice-radius`); the client fades nearby voices over that distance (`radius_from`: finite, above zero, at most 512, else 32). No more mismatch.
+- **Mute is immediate**: `Playback::forget` drops a muted player's queued audio, instead of letting up to 0.4 s play out.
+- **No frame is blocked opening devices**: each device opens on its own thread (`voice/device.rs`) and the plugin polls (speakers first, the mic only once they are open). The speaker stream is now made and dropped on that thread too, so the `unsafe impl Send` for `Playback` is gone.
+- Still open: voice in the browser (the stub says so); the mic stays open while voice is on (push to talk gates sending, as documented); not yet tried with a real microphone and speakers on this machine (devices are covered by compilation and unit tests, the audio path by `voice_e2e`).

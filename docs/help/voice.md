@@ -26,8 +26,8 @@ devices on the same screen, and set the input and output volumes.
   out. Change the mode in the Voice screen, under **Talk mode**.
 - **Switch channel** with N on the keyboard. The Voice screen's **Channel** row does the same.
   Controllers have no channel button by default.
-- **Who hears you:** on the nearby channel, players within 32 blocks hear you by default. The
-  server sets this distance. Your voice is loudest close by, fades as they move away, and sits
+- **Who hears you:** on the nearby channel, players within 32 blocks hear you by default. Each
+  world's server can set its own distance, and your game uses the same one. Your voice is loudest close by, fades as they move away, and sits
   left or right of you by where they stand. On the party channel, members of your raid party
   hear you at any distance.
 - Guests have no raid party, so they can use the nearby channel only.

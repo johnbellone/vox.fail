@@ -370,6 +370,9 @@ pub struct WorldClient {
     pub watch: bool,
     /// voice packets from the server, for the voice plugin to play (see [`crate::voice::plugin`])
     pub(crate) voice_in: Vec<(u32, VoicePacket)>,
+    /// how far nearby voice carries in this world, blocks (the server's `--voice-radius`, sent
+    /// with the world's settings)
+    pub voice_radius: f32,
 }
 
 /// Coming out of a portal: where you stand (blocks) and which way you and the camera face.
@@ -458,6 +461,7 @@ impl Default for WorldClient {
             portal_go: None,
             watch: false,
             voice_in: Vec::new(),
+            voice_radius: crate::voice::plugin::NEARBY_RADIUS,
         }
     }
 }

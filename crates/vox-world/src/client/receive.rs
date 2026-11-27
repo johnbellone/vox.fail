@@ -71,6 +71,7 @@ pub fn receive(
                         // the endless floor, fixed cameras and the camera's starting angle
                         let set = w.settings.clone().unwrap_or_default();
                         w.floor = set.get("floor").and_then(|v| v.as_i64()).map(|f| f as i32);
+                        w.voice_radius = crate::voice::plugin::radius_from(set.get("voice_radius"));
                         w.shots = set
                             .get("cameras")
                             .and_then(|v| v.as_array())

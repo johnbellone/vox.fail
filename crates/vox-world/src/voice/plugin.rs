@@ -24,9 +24,20 @@ use crate::input::{Action, Actions};
 #[cfg(not(target_arch = "wasm32"))]
 use vox_voice::Packet;
 
-/// How far a nearby voice carries, in blocks. The server's default `--voice-radius` is 32; a
-/// server started with another radius will still be heard at this distance here.
-const NEARBY_RADIUS: f32 = 32.0;
+/// How far a nearby voice carries, in blocks, when the world doesn't say: the server's default
+/// `--voice-radius`. A world sends its own with its settings (`voice_radius`).
+pub const NEARBY_RADIUS: f32 = 32.0;
+/// The farthest radius a world may give (anything larger is taken as this).
+pub const RADIUS_MAX: f32 = 512.0;
+
+/// The nearby radius from a world's settings: a finite number above zero, at most
+/// [`RADIUS_MAX`]; anything else (missing, zero, negative, not a number) means the default.
+pub fn radius_from(v: Option<&serde_json::Value>) -> f32 {
+    v.and_then(|v| v.as_f64())
+        .map(|r| r as f32)
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .map_or(NEARBY_RADIUS, |r| r.min(RADIUS_MAX))
+}
 /// After a failed device start, wait this long (seconds) before trying again.
 #[cfg(not(target_arch = "wasm32"))]
 const RETRY_EVERY: f64 = 5.0;
@@ -169,15 +180,16 @@ pub fn keep_packet(muted: &HashSet<u32>, you: Option<u32>, player: u32, p: &Voic
 }
 
 /// Left and right gains for a voice. `listener` is your position (blocks) and facing (yaw);
-/// `speaker` is where they were last seen, if known. Party voices play in both ears even when
-/// the position is unknown; a nearby voice with no known position is not played (`None`).
-pub fn gains_for(listener: ([f32; 3], f32), speaker: Option<[f32; 3]>, channel: u8) -> Option<(f32, f32)> {
+/// `speaker` is where they were last seen, if known; `radius` is how far nearby voice carries in
+/// this world. Party voices play in both ears even when the position is unknown; a nearby voice
+/// with no known position is not played (`None`).
+pub fn gains_for(listener: ([f32; 3], f32), speaker: Option<[f32; 3]>, channel: u8, radius: f32) -> Option<(f32, f32)> {
     let at = match speaker {
         Some(at) => at,
         None if channel == VOICE_PARTY => listener.0,
         None => return None,
     };
-    Some(mix::gains(listener.0, listener.1, at, channel, NEARBY_RADIUS))
+    Some(mix::gains(listener.0, listener.1, at, channel, radius))
 }
 
 /// The wire packet as the codec's packet (the same fields; the data is copied).
@@ -227,6 +239,7 @@ mod native {
     use super::*;
 
     use crate::voice::capture::Capture;
+    use crate::voice::device::Status;
     use crate::voice::playback::Playback;
 
     /// The open devices, and when the next start may be tried.
@@ -237,15 +250,10 @@ mod native {
         retry_at: f64,
     }
 
-    /// Opens the mic and the speakers, or neither.
-    fn open(s: &VoiceSettings) -> Result<(Capture, Playback), String> {
-        // speakers first: if they fail the mic is never opened (and its OS indicator never lit)
-        let playback = Playback::start(s.device_out.as_deref())?;
-        let capture = Capture::start(s.device_in.as_deref())?;
-        Ok((capture, playback))
-    }
-
-    /// Opens the devices while voice is on, and closes them when it is off.
+    /// Opens the devices while voice is on, and closes them when it is off. Opening never waits:
+    /// the speakers start first, and the microphone only once they are open (so the mic's
+    /// indicator never lights for nothing); each is polled every frame until it is open or has
+    /// failed. A failure closes both and tries again after [`RETRY_EVERY`].
     pub fn devices(
         mut d: ResMut<Devices>,
         w: Res<WorldClient>,
@@ -262,26 +270,53 @@ mod native {
             }
             return;
         }
-        if d.capture.is_some() && d.playback.is_some() {
-            return;
-        }
         let now = w.now();
-        if now < d.retry_at {
-            return;
-        }
-        match open(&settings) {
-            Ok((c, p)) => {
-                d.capture = Some(c);
-                d.playback = Some(p);
-                state.status = "On".into();
+        let fail = |d: &mut Devices, state: &mut VoiceState, why: String| {
+            crate::note!("[voice] {why}");
+            state.status = why;
+            d.capture = None;
+            d.playback = None;
+            d.retry_at = now + RETRY_EVERY;
+        };
+        let ok = match (&d.playback, &d.capture) {
+            (None, _) => {
+                if now >= d.retry_at {
+                    match Playback::start(settings.device_out.as_deref()) {
+                        Ok(p) => {
+                            d.playback = Some(p);
+                            state.status = "Starting".into();
+                        }
+                        Err(e) => fail(&mut d, &mut state, e),
+                    }
+                }
+                false
             }
-            Err(e) => {
-                crate::note!("[voice] {e}");
-                state.status = e;
-                d.retry_at = now + RETRY_EVERY;
+            (Some(p), None) => {
+                match p.status() {
+                    Status::Starting => {}
+                    Status::Failed(e) => fail(&mut d, &mut state, e),
+                    Status::Ready(_) => match Capture::start(settings.device_in.as_deref()) {
+                        Ok(c) => d.capture = Some(c),
+                        Err(e) => fail(&mut d, &mut state, e),
+                    },
+                }
+                false
             }
-        }
-        let ok = d.capture.is_some() && d.playback.is_some();
+            (Some(_), Some(c)) => match c.status() {
+                Status::Starting => false,
+                Status::Failed(e) => {
+                    fail(&mut d, &mut state, e);
+                    false
+                }
+                Status::Ready(name) => {
+                    if state.status != "On" {
+                        crate::note!("[voice] microphone: {name}");
+                        state.status = "On".into();
+                    }
+                    true
+                }
+            },
+        };
         if settings.available != ok {
             settings.available = ok;
         }
@@ -351,12 +386,14 @@ mod native {
         }
         if let Some(p) = &d.playback {
             p.set_volume(settings.out_gain);
+            // a muted player stops at once, not after what was already queued for them
+            p.forget(&settings.muted);
             let listener = w.listener();
             for (player, packet) in inbox {
                 if !keep_packet(&settings.muted, w.you, player, &packet) {
                     continue;
                 }
-                let Some(g) = gains_for(listener, w.place_of(player), packet.channel) else {
+                let Some(g) = gains_for(listener, w.place_of(player), packet.channel, w.voice_radius) else {
                     continue;
                 };
                 p.hear(player, &packet_of(&packet), g);
@@ -461,14 +498,31 @@ mod tests {
     fn voice_gains_use_the_last_known_place() {
         let me = ([0.0, 0.0, 0.0], 0.0);
         // a party voice with no known place still plays in both ears
-        assert_eq!(gains_for(me, None, VOICE_PARTY), Some((1.0, 1.0)));
+        assert_eq!(gains_for(me, None, VOICE_PARTY, NEARBY_RADIUS), Some((1.0, 1.0)));
         // a nearby voice with no known place is not played
-        assert_eq!(gains_for(me, None, VOICE_NEARBY), None);
+        assert_eq!(gains_for(me, None, VOICE_NEARBY, NEARBY_RADIUS), None);
         // a nearby voice far away is silent
-        assert_eq!(gains_for(me, Some([500.0, 0.0, 0.0]), VOICE_NEARBY), Some((0.0, 0.0)));
+        assert_eq!(gains_for(me, Some([500.0, 0.0, 0.0]), VOICE_NEARBY, NEARBY_RADIUS), Some((0.0, 0.0)));
         // a voice dead ahead (yaw 0 faces -Z) within two blocks: full volume, equal power per ear
-        let (l, r) = gains_for(me, Some([0.0, 0.0, -1.0]), VOICE_NEARBY).unwrap();
+        let (l, r) = gains_for(me, Some([0.0, 0.0, -1.0]), VOICE_NEARBY, NEARBY_RADIUS).unwrap();
         let half = std::f32::consts::FRAC_1_SQRT_2;
         assert!((l - half).abs() < 1e-5 && (r - half).abs() < 1e-5, "{l} {r}");
+        // the world's radius is the one used: 40 blocks away is silent at 32, heard at 64
+        assert_eq!(gains_for(me, Some([40.0, 0.0, 0.0]), VOICE_NEARBY, 32.0), Some((0.0, 0.0)));
+        let (l, r) = gains_for(me, Some([40.0, 0.0, 0.0]), VOICE_NEARBY, 64.0).unwrap();
+        assert!(l + r > 0.1, "{l} {r}");
+    }
+
+    #[test]
+    fn voice_radius_from_the_worlds_settings() {
+        use serde_json::json;
+        assert_eq!(radius_from(None), NEARBY_RADIUS);
+        assert_eq!(radius_from(Some(&json!(48))), 48.0);
+        assert_eq!(radius_from(Some(&json!(12.5))), 12.5);
+        // nonsense is the default, too much is capped
+        for bad in [json!(0), json!(-3), json!("far"), json!(null)] {
+            assert_eq!(radius_from(Some(&bad)), NEARBY_RADIUS, "{bad}");
+        }
+        assert_eq!(radius_from(Some(&json!(1e9))), RADIUS_MAX);
     }
 }

@@ -94,7 +94,7 @@ See `architecture/avatar-app-runtime`, `architecture/vox-server`, `architecture/
 - [vox-client and the Web Front End](vox-client-and-web.md): player client and site
 - [Shows over the Network: Relay, Host, Guest and Viewers](show-networking.md): relay, host, guest, viewers
 - [Deployment: vox.fail on Cloudflare Tunnel, and Windows Packaging](deployment.md): how it is hosted and packaged
-- [World Wire Protocol (PROTOCOL = 6)](wire-protocol.md): the world protocol
+- [World Wire Protocol (PROTOCOL = 7)](wire-protocol.md): the world protocol
 - [Identity, Sessions and Signed Launch Tokens](identity-and-tokens.md): sign-in and tokens
 - [Asset Pipeline: MagicaVoxel to glTF](asset-pipeline.md): how assets are made
 - [Testing and Continuous Integration](testing-and-ci.md): tests and CI

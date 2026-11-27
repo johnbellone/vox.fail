@@ -13,4 +13,6 @@ pub mod plugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capture;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod device;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod playback;

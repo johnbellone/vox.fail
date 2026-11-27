@@ -1,19 +1,20 @@
 //! The microphone, as packets: opens an input device, brings its sound to 16 kHz mono, and
 //! queues the packets the [`Packetizer`] cuts from it until the game drains them.
 //!
-//! The stream lives on its own thread. cpal streams are not `Send` on every platform, and the
-//! game keeps a [`Capture`] as a resource, so the thread owns the stream and the resource only
-//! holds shared state and a stop flag. Nothing opens at module load: [`Capture::start`] is
-//! called only when voice is switched on.
+//! The stream lives on its own thread ([`super::device`]). cpal streams are not `Send` on every
+//! platform, and the game keeps a [`Capture`] as a resource, so the thread owns the stream and
+//! the resource only holds shared state and a stop flag. Nothing opens at module load:
+//! [`Capture::start`] is called only when voice is switched on, and returns at once.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use vox_voice::resample::Resampler;
 use vox_voice::{Packet, Packetizer, RATE};
+
+use super::device::{self, Slot, Status};
 
 /// Most packets handed out per [`Capture::drain`] call (about 2 s of speech).
 const DRAIN_MAX: usize = 100;
@@ -28,13 +29,13 @@ struct Shared {
     queue: Mutex<VecDeque<Packet>>,
     /// `f32` bits, so the game can change it while the stream runs
     gain: AtomicU32,
-    stop: AtomicBool,
 }
 
 /// Your microphone as packets. Dropping it stops the stream within about 100 ms.
 pub struct Capture {
     shared: Arc<Shared>,
-    device: String,
+    stop: Arc<AtomicBool>,
+    slot: Slot,
 }
 
 /// The device's name. `description()` is the cpal 0.17 way; `name()` is deprecated.
@@ -130,13 +131,8 @@ impl Feed {
     }
 }
 
-/// Opens the stream on this thread and reports the result; then holds it until `stop`.
-fn run_stream(
-    shared: Arc<Shared>,
-    want: Option<String>,
-    ready: mpsc::Sender<Result<String, String>>,
-) {
-    let opened = (|| -> Result<(cpal::Stream, String), String> {
+/// Opens the microphone on the calling thread (the device thread).
+fn open(shared: Arc<Shared>, want: Option<String>) -> Result<(cpal::Stream, String), String> {
         let device = find_device(want.as_deref())?;
         let name = dev_name(&device).unwrap_or_else(|| "microphone".into());
         let config = device
@@ -207,52 +203,26 @@ fn run_stream(
             .play()
             .map_err(|e| format!("can't start the microphone: {e}"))?;
         Ok((stream, name))
-    })();
-    match opened {
-        Ok((stream, name)) => {
-            let _ = ready.send(Ok(name));
-            // Polled, not blocked on: the stop flag is the only way out, and the stream
-            // stops when this thread returns.
-            while !shared.stop.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            drop(stream);
-        }
-        Err(msg) => {
-            crate::note!("[voice] {msg}");
-            let _ = ready.send(Err(msg));
-        }
-    }
 }
 
 impl Capture {
-    /// Opens the microphone named `device` (a part of its name), or the default one.
+    /// Starts opening the microphone named `device` (a part of its name), or the default one.
+    /// Returns at once: [`Self::status`] says when it is open, or why it couldn't be.
     pub fn start(device: Option<&str>) -> Result<Capture, String> {
         let shared = Arc::new(Shared {
             packer: Mutex::new(Packetizer::new()),
             queue: Mutex::new(VecDeque::new()),
             gain: AtomicU32::new(1.0f32.to_bits()),
-            stop: AtomicBool::new(false),
         });
-        let (tx, rx) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
         let (s, want) = (shared.clone(), device.map(str::to_string));
-        std::thread::Builder::new()
-            .name("voice-in".into())
-            .spawn(move || run_stream(s, want, tx))
-            .map_err(|e| format!("can't start the microphone thread: {e}"))?;
-        let name = rx
-            .recv()
-            .map_err(|_| "the microphone thread stopped".to_string())??;
-        crate::note!("[voice] microphone: {name}");
-        Ok(Capture {
-            shared,
-            device: name,
-        })
+        let slot = device::spawn("voice-in", stop.clone(), move || open(s, want))?;
+        Ok(Capture { shared, stop, slot })
     }
 
-    /// The name of the device this capture is using.
-    pub fn device(&self) -> &str {
-        &self.device
+    /// Opening, open (with the device's name), or failed.
+    pub fn status(&self) -> Status {
+        self.slot.status()
     }
 
     /// Sets push to talk (see [`Packetizer::set_ptt`]), then returns up to 100 packets made since
@@ -274,7 +244,7 @@ impl Capture {
 
 impl Drop for Capture {
     fn drop(&mut self) {
-        self.shared.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -322,7 +292,6 @@ mod tests {
             packer: Mutex::new(Packetizer::new()),
             queue: Mutex::new(VecDeque::new()),
             gain: AtomicU32::new(1.0f32.to_bits()),
-            stop: AtomicBool::new(false),
         };
         shared
             .gain

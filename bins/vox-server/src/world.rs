@@ -394,15 +394,16 @@ impl WorldState {
 
     /// The settings a new arrival gets: the world's own, with the portals players opened.
     pub(super) fn settings_now(&self) -> String {
-        if self.portals.is_empty() {
-            return self.settings.clone();
-        }
         let mut s: serde_json::Value = serde_json::from_str(&self.settings).unwrap_or_else(|_| serde_json::json!({}));
         let Some(obj) = s.as_object_mut() else { return self.settings.clone() };
-        let list = obj.entry("portals").or_insert_with(|| serde_json::json!([]));
-        if let Some(a) = list.as_array_mut() {
-            a.extend(self.portals.iter().cloned());
+        if !self.portals.is_empty() {
+            let list = obj.entry("portals").or_insert_with(|| serde_json::json!([]));
+            if let Some(a) = list.as_array_mut() {
+                a.extend(self.portals.iter().cloned());
+            }
         }
+        // how far nearby voice carries here, so clients fade voices over the same distance
+        obj.insert("voice_radius".into(), serde_json::json!(self.cfg.voice_radius));
         s.to_string()
     }
 
