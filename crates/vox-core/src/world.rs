@@ -386,6 +386,18 @@ impl World {
     pub fn put_chunk(&mut self, k: ChunkKey, c: Chunk) {
         self.chunks.insert(k, c);
     }
+    /// Forget every chunk `keep` says no to (streaming drops what is far off); returns their keys.
+    pub fn drop_chunks(&mut self, mut keep: impl FnMut(ChunkKey) -> bool) -> Vec<ChunkKey> {
+        let gone: Vec<ChunkKey> = self.chunks.keys().copied().filter(|k| !keep(*k)).collect();
+        for k in &gone {
+            self.chunks.remove(k);
+        }
+        gone
+    }
+    /// How many chunks are held, empty ones too.
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
     /// Chunks with any blocks in, sorted (so they go out in the same order every time).
     pub fn keys(&self) -> Vec<ChunkKey> {
         let mut v: Vec<_> = self.chunks.iter().filter(|(_, c)| !c.is_empty()).map(|(k, _)| *k).collect();
