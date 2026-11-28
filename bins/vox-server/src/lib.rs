@@ -21,6 +21,7 @@
 mod connection;
 pub mod doors;
 mod entities;
+mod interest;
 pub mod flags;
 mod neighbours;
 mod props;
@@ -147,6 +148,11 @@ pub struct Config {
     /// what the host knows about its worlds, for what doorways show ([`doors`]); `vox-host` sets
     /// it. None (a plain `vox-server`): doorways to other worlds show their unchecked look.
     pub ways: Option<Arc<dyn doors::Ways>>,
+    /// how far round a player (metres) chunks are sent at full detail, at most, when the player
+    /// streams by view (docs/design/chunk-streaming.md)
+    pub view_radius_m: f32,
+    /// coarser rings beyond, at most
+    pub view_rings: u8,
     /// where this world's host answers, for dialling its neighbours (`ws://127.0.0.1:7790`): a
     /// lone server's own `--listen`, a host's. None: no links to neighbours. Links also need
     /// `world_secret`, which both ends prove they know.
@@ -186,6 +192,8 @@ impl Config {
             editors_all: false,
             props: PathBuf::from("data/props"),
             ways: None,
+            view_radius_m: 128.0,
+            view_rings: 3,
             link_base: None,
             link_hosted: false,
         }
@@ -210,8 +218,8 @@ impl Status {
 }
 
 enum Event {
-    Join { conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64>, arrive: Option<[f32; 3]> },
-    Watch { conn: u64, tx: mpsc::Sender<Message>, protocol: u32 },
+    Join { conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64>, arrive: Option<[f32; 3]>, view: Option<vox_core::wire::View> },
+    Watch { conn: u64, tx: mpsc::Sender<Message>, protocol: u32, view: Option<vox_core::wire::View> },
     Msg { conn: u64, msg: ToServer },
     Leave { conn: u64 },
     Tick,
@@ -549,6 +557,8 @@ struct Player {
     kept: VecDeque<KeptBuild>,
     /// what each doorway near them shows, as last sent to them (by portal name)
     doors: HashMap<String, vox_core::travel::DoorState>,
+    /// what they are sent, when they stream by view; None: everything
+    interest: Option<interest::Interest>,
 }
 
 /// A player held at a waking doorway's sill until the world it leads to is up (ADR 0004
@@ -580,6 +590,13 @@ struct WorldState {
     players: HashMap<u64, Player>,
     /// connections watching without playing: they get what everyone sees, names left out
     watchers: HashMap<u64, mpsc::Sender<Message>>,
+    /// what each watcher that streams by view is sent (others get everything)
+    watcher_interest: HashMap<u64, interest::Interest>,
+    /// chunks' encoded bytes with the version they were encoded at, so many players joining
+    /// costs copies, not encoding (a chunk that changed is encoded again)
+    encoded: std::cell::RefCell<HashMap<ChunkKey, (u32, Vec<u8>)>>,
+    /// when queued chunks were last sent
+    streamed_at: Instant,
     dirty: HashSet<ChunkKey>,
     /// edits not written yet
     log: Vec<BlockEdit>,
