@@ -654,7 +654,11 @@ pub fn update(
         // after coming through) it's an empty doorway: the echo is for what's ahead of you
         let cam_side = l.def.side_of(cam_t.translation / size);
         let same_side = cam_side * l.def.side_of(body) >= 0.0;
-        let want = if s.failed || !same_side { 0.0 } else { presence(d) };
+        // a doorway the world says is closed or waking shows that even when its echo can't load
+        // (that is when it matters most); an open one with no echo shows nothing
+        let state = w.door_states.get(&l.def.name).copied().unwrap_or_default();
+        let showing_state = !matches!(state, vox_core::travel::DoorState::Open | vox_core::travel::DoorState::Unknown);
+        let want = if !same_side || (s.failed && !showing_state) { 0.0 } else { presence(d) };
         l.shown += (want - l.shown) * (1.0 - (-real.delta_secs().min(0.25) * 5.0).exp());
         let pres = l.shown;
         // walking through: you were on one side last frame and are on the other now, inside
