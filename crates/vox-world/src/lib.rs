@@ -22,6 +22,7 @@ pub mod detail;
 pub mod editor;
 pub mod entities;
 pub mod files;
+pub mod fluid;
 pub mod hud;
 pub mod input;
 pub mod menu;

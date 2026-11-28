@@ -129,7 +129,7 @@ pub fn app(start: Start, assets: String) -> App {
         MaterialPlugin::<outdoors::RainMaterial>::default(),
         MaterialPlugin::<portals::PortalMaterial>::default(),
     ))
-    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::voice::plugin::VoicePlugin, vox_world::hud::HudPlugin, vox_world::menu::MenuPlugin, vox_world::props::PropPlugin))
+    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::voice::plugin::VoicePlugin, vox_world::hud::HudPlugin, vox_world::menu::MenuPlugin, vox_world::props::PropPlugin, vox_world::fluid::FluidPlugin))
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
     .insert_resource(start.detail.as_deref().and_then(vox_world::detail::Profile::parse).unwrap_or_else(vox_world::detail::Profile::native).detail())
     .insert_resource(

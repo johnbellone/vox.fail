@@ -81,10 +81,16 @@ class Out:
 # Voxels -> mesh
 # ----------------------------------------------------------------------------------------------
 class Vox:
-    """Integer voxel grid for one body part, in 5 cm units relative to the joint."""
+    """Integer voxel grid for one body part, relative to the joint: 5 cm units, or 5 / `res` cm for
+    a finer part (the Brain's head and shirt use res=4, 1.25 cm voxels). One part, one grid: the
+    avatar app's bevel pass finds each mesh's grid from its quads."""
 
-    def __init__(self):
+    def __init__(self, res=1):
         self.v = {}
+        self.res = res
+        # cells inside a see-through shell (a jar's cavity): its glass shows no faces towards them,
+        # so the jar is one pane thick to look through, not two
+        self.inner = set()
 
     def box(self, x0, x1, y0, y1, z0, z1, c):
         for x in range(x0, x1):
@@ -156,9 +162,76 @@ class Palette:
         return ((i % 16) + 0.5) / 16, ((i // 16) + 0.5) / 16
 
 
+def greedy(faces, s, inset=0.0):
+    """Merges same-coloured faces in one plane into rectangles. `faces` maps (direction, voxel) to
+    a palette uv; the result is (positions, normals, uvs, indices). For the see-through glass and
+    fluid of a finer part, where per-voxel faces would only make the file bigger (the avatar app's
+    bevel pass splits the glass back into voxel faces anyway)."""
+    pos, nrm, uv, idx = [], [], [], []
+    for d in DIRS:
+        ax = [i for i in range(3) if d[i]][0]
+        ua, va = (ax + 1) % 3, (ax + 2) % 3
+        planes = {}
+        for (fd, k), u in faces.items():
+            if fd == d:
+                planes.setdefault(k[ax], {})[(k[ua], k[va])] = u
+        for w, cells in planes.items():
+            left = dict(cells)
+            for (a0, b0) in sorted(cells):
+                if (a0, b0) not in left:
+                    continue
+                u = left[(a0, b0)]
+                a1 = a0 + 1
+                while left.get((a1, b0)) == u:
+                    a1 += 1
+                b1 = b0 + 1
+                while all(left.get((a, b1)) == u for a in range(a0, a1)):
+                    b1 += 1
+                for a in range(a0, a1):
+                    for b in range(b0, b1):
+                        del left[(a, b)]
+                base = len(pos)
+                for cx, cy, cz in FACES[d]:
+                    c = (cx, cy, cz)
+                    q = [0.0, 0.0, 0.0]
+                    q[ax] = (w + c[ax]) * s - d[ax] * inset
+                    q[ua] = (a0 + (a1 - a0) * c[ua]) * s
+                    q[va] = (b0 + (b1 - b0) * c[va]) * s
+                    pos.append(tuple(q))
+                    nrm.append(d)
+                    uv.append(u)
+                idx += [base, base + 1, base + 2, base, base + 2, base + 3]
+    return np.array(pos, "f4").reshape(-1, 3), np.array(nrm, "f4").reshape(-1, 3), np.array(uv, "f4").reshape(-1, 2), np.array(idx, "u4")
+
+
 def mesh_vox(vox, pal, translucent=False):
     """Colours with a 4th component are see-through (visors, shields) and go in their own primitive."""
     pos, nrm, uv, idx = [], [], [], []
+    s = V / vox.res
+    if vox.res > 1:
+        # a finer part is merged into rectangles (the file stays small; the avatar app's bevel pass
+        # splits them back into voxel faces). That pass finds a mesh's grid from its quads' sides,
+        # and takes 5 cm when half of them are multiples of it: check a merged part can't pass
+        faces = {}
+        for (x, y, z), c in vox.v.items():
+            if (len(c) == 4) != translucent:
+                continue
+            for d in DIRS:
+                k = (x + d[0], y + d[1], z + d[2])
+                nb = vox.v.get(k)
+                if translucent:
+                    show = (nb is None or len(nb) != 4) and k not in vox.inner
+                else:
+                    show = nb is None or len(nb) == 4
+                if show:
+                    faces[(d, (x, y, z))] = pal.uv(c[:3])
+        out = greedy(faces, s)
+        if not translucent and len(out[0]):
+            q = out[0].reshape(-1, 4, 3)
+            sides = np.concatenate([np.linalg.norm(q[:, 1] - q[:, 0], axis=1), np.linalg.norm(q[:, 3] - q[:, 0], axis=1)])
+            coarse = np.mean(np.abs(sides / V - np.round(sides / V)) < 0.02)
+            assert coarse < 0.4, f"a {s * 100:.2f} cm part merged into quads that look like a 5 cm grid ({coarse:.0%})"
+        return out
     for (x, y, z), c in vox.v.items():
         if (len(c) == 4) != translucent:
             continue
@@ -169,11 +242,33 @@ def mesh_vox(vox, pal, translucent=False):
             base = len(pos)
             u = pal.uv(c[:3])
             for cx, cy, cz in FACES[d]:
-                pos.append(((x + cx) * V, (y + cy) * V, (z + cz) * V))
+                pos.append(((x + cx) * s, (y + cy) * s, (z + cz) * s))
                 nrm.append(d)
                 uv.append(u)
             idx += [base, base + 1, base + 2, base, base + 2, base + 3]
     return np.array(pos, "f4"), np.array(nrm, "f4"), np.array(uv, "f4"), np.array(idx, "u4")
+
+
+# a fluid's faces sit this far inside its voxels, so they never fight the glass they touch (m)
+FLUID_INSET = 0.0015
+
+
+def mesh_fluid(fluid, solid, pal):
+    """A jar's fluid (`Vox`, same grid as the part it fills): only the faces that show, i.e. not
+    those against more fluid or against an opaque voxel of `solid` (the brain), each pulled a hair
+    inward. It gets its own material ("VoxelFluid"), which the apps draw with the slosh shader
+    (shaders/fluid.wesl)."""
+    faces = {}
+    for (x, y, z), c in fluid.v.items():
+        for d in DIRS:
+            k = (x + d[0], y + d[1], z + d[2])
+            if k in fluid.v:
+                continue
+            nb = solid.v.get(k)
+            if nb is not None and len(nb) == 3:
+                continue
+            faces[(d, (x, y, z))] = pal.uv(c[:3])
+    return greedy(faces, V / fluid.res, FLUID_INSET)
 
 
 def mesh_box(b0, b1, c, pal):
@@ -538,61 +633,251 @@ def capybara():
                 note="Original capybara: warm brown barrel body, big blunt dark muzzle, small round ears; sometimes a yuzu on its head.")
 
 
+def hash3(x, y, z, seed):
+    h = (x * 374761393 + y * 668265263 + z * 2147483647 + seed * 1274126177) & 0xFFFFFFFF
+    h = ((h ^ (h >> 13)) * 1274126177) & 0xFFFFFFFF
+    return ((h ^ (h >> 16)) & 0xFFFF) / 65535.0
+
+
+def vnoise3(x, y, z, seed=0):
+    """smooth value noise, 0-1 (for the brain's folds: deterministic, no dependencies)"""
+    xi, yi, zi = math.floor(x), math.floor(y), math.floor(z)
+    fx, fy, fz = x - xi, y - yi, z - zi
+    fx, fy, fz = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy), fz * fz * (3 - 2 * fz)
+    def lerp(a, b, t):
+        return a + (b - a) * t
+    c = [[[hash3(xi + i, yi + j, zi + k, seed) for k in (0, 1)] for j in (0, 1)] for i in (0, 1)]
+    return lerp(lerp(lerp(c[0][0][0], c[0][0][1], fz), lerp(c[0][1][0], c[0][1][1], fz), fy),
+                lerp(lerp(c[1][0][0], c[1][0][1], fz), lerp(c[1][1][0], c[1][1][1], fz), fy), fx)
+
+
+# a red lumberjack flannel: red ground, a broad black band and a thin gold line, 20 cm repeat (16
+# voxels of 1.25 cm); where the warp and weft threads differ the cell is their mix, as woven
+PLAID_RED, PLAID_BLACK, PLAID_GOLD = (176, 34, 40), (34, 28, 32), (220, 184, 104)
+
+
+def plaid_thread(k):
+    k %= 16
+    if 7 <= k <= 10:
+        return PLAID_BLACK
+    if k == 14:
+        return PLAID_GOLD
+    return PLAID_RED
+
+
+def plaid(u, v):
+    a, b = plaid_thread(u), plaid_thread(v)
+    return a if a == b else tuple((p + q) // 2 for p, q in zip(a, b))
+
+
+def paint_plaid(vox, x0, x1, z0, z1, keep=lambda x, y, z: False, shift=(0, 0)):
+    """Plaid on a box-shaped part: the vertical threads run round it (x on the front and back,
+    z on the sides), the horizontal ones down it."""
+    for (x, y, z), c in list(vox.v.items()):
+        if keep(x, y, z):
+            continue
+        side = x in (x0, x1 - 1) and z not in (z0, z1 - 1)
+        u = (z if x == x1 - 1 else -z) if side else (x if z == z1 - 1 else -x)
+        vox.v[(x, y, z)] = plaid(u + shift[0], y + shift[1])
+
+
 def brain():
     """The Brain, from the comic From the Brain of Michael Collins (the requester's own): Michael's
     brain in a jar, pink with round glasses, fact-checking everything. Here the jar is the head of a
-    professor in a tweed jacket and bow tie: computer scientist, dungeon master and the foremost
-    expert on tabletop wargame lore. Props: a pointer for lectures, a d20, a painted miniature."""
-    tweed, fleck, patch, shirt, tie = (128, 92, 60), (100, 72, 46), (84, 56, 38), WHITE, (196, 40, 52)
-    glove, slacks, shoe = (244, 238, 226), (84, 88, 98), (92, 60, 40)
-    pink, fold, frame = (240, 150, 176), (204, 104, 140), (28, 28, 34)
-    glass, fluid = (214, 236, 244, 70), (170, 228, 200, 96)
-    metal, bolt = (150, 156, 164), (70, 74, 82)
+    professor in a red plaid flannel shirt: computer scientist, dungeon master and the foremost
+    expert on tabletop wargame lore. Props: a pointer for lectures, a d20, a painted miniature.
+
+    The head and the shirt are built from 1.25 cm voxels (res=4), four to the usual 5 cm one: the
+    brain gets real folds, a fissure, a cerebellum and a stem; the glasses are round; the shirt is
+    woven plaid with a collar, buttons and pockets. The fluid the brain floats in is its own layer
+    (`fluid`), drawn by the apps with a slosh shader (shaders/fluid.wesl) that keeps its surface
+    level as the head moves and sets it rocking."""
+    R = 4
+    glove, slacks, shoe, belt, buckle = (244, 238, 226), (66, 72, 86), (92, 60, 40), (70, 46, 30), (206, 178, 96)
+    button, tee = (238, 232, 216), (240, 238, 232)
+    pink, light, fold, deep = (244, 128, 164), (252, 168, 194), (206, 88, 128), (148, 48, 90)
+    cereb, cereb_dk, stem = (226, 128, 154), (186, 88, 120), (230, 160, 160)
+    frame, lens = (28, 28, 34), WHITE
+    glass, glint, fluid_c = (214, 236, 244, 60), (240, 250, 255, 150), (150, 214, 236, 110)
+    metal, metal_dk, bolt, copper = (150, 156, 164), (112, 118, 128), (70, 74, 82), (196, 116, 58)
 
     def torso(t):
-        t.paint(lambda x, y, z: True, tweed)
-        t.paint(lambda x, y, z: (x * 5 + y * 3 + z * 7) % 9 == 0, fleck)              # tweed flecks
-        t.paint(lambda x, y, z: z == 3 and -2 <= x <= 1 and y >= 4, shirt)             # shirt in the open jacket
-        t.paint(lambda x, y, z: z == 3 and x in (-3, 2) and y >= 6, fleck)             # lapels
-        t.box(-2, 2, 9, 10, 3, 5, tie).box(-1, 1, 9, 10, 4, 5, (150, 24, 36))           # bow tie
-        t.paint(lambda x, y, z: y <= 1, slacks)                                        # trousers at the waist
+        pass
 
     def arm(side, ua, la):
-        ua.paint(lambda x, y, z: True, tweed)
-        la.paint(lambda x, y, z: True, tweed)
-        ua.paint(lambda x, y, z: z == -2 and y <= -3, patch)                           # elbow patches
-        la.paint(lambda x, y, z: z == -2 and y >= -1, patch)
-        la.paint(lambda x, y, z: y <= -4, glove)
+        pass
 
     def leg(side, ul, ll):
         ul.paint(lambda x, y, z: True, slacks)
         ll.paint(lambda x, y, z: True, slacks)
         ll.paint(lambda x, y, z: y <= -5, shoe)
 
-    p = standard_body(tweed, torso, arm, leg, glove)
-    # the jar: glass walls (green with fluid up to the shoulders of the brain), a bolted lid, a base ring
-    h = Vox().box(-7, 7, -1, 11, -6, 8, glass).cut(-6, 6, -1, 11, -5, 7)
-    h.paint(lambda x, y, z: y <= 8, fluid)
-    # no pane over the face (it would wash the brain out): a glint and the rim keep it reading as glass
-    h.cut(-6, 6, -1, 11, 7, 8).box(-5, -3, 2, 9, 7, 8, (236, 248, 252, 120))
-    h.box(-7, 7, -2, -1, -6, 8, metal)
-    h.box(-8, 8, 11, 13, -7, 9, metal).bevel(-8, 8, 11, 13, -7, 9, "top")
-    for x in (-6, 5):
-        h.box(x, x + 1, 11, 12, 9, 10, bolt)
-    # the brain: front flat at the face plane (z = 6) so the face kit sits on it
-    b = Vox().box(-6, 6, -1, 10, -5, 6, pink).bevel(-6, 6, -1, 10, -5, 6)
-    b.cut(-1, 1, 7, 10, -5, 4)                                                       # the two halves
-    b.paint(lambda x, y, z: not (z == 5 and -5 <= x <= 4 and -1 <= y <= 8) and ((x * 3 + y * 5) % 4 == 0 or (z * 3 + y * 2) % 5 == 0), fold)
-    b.paint(lambda x, y, z: z == 5 and 4 <= y <= 5 and (-4 <= x <= -2 or 1 <= x <= 3), WHITE)   # white lenses, as drawn
+    p = standard_body(slacks, torso, arm, leg, glove)
+
+    # ---- the shirt (torso: the same box as the 5 cm one, -0.25..0.25 x 0..0.55 x -0.15..0.20)
+    t = Vox(R).box(-20, 20, 0, 44, -12, 16, slacks)
+    paint_plaid(t, -20, 20, -12, 16, keep=lambda x, y, z: y < 8)
+    t.paint(lambda x, y, z: 6 <= y <= 7, belt)                                       # the belt
+    t.box(-2, 2, 5, 9, 16, 17, buckle).cut(-1, 1, 6, 8, 16, 17)
+    t.box(-1, 1, 6, 8, 16, 17, belt)
+    t.paint(lambda x, y, z: z == 15 and -2 <= x <= 1 and y >= 38, tee)                # the tee in the open neck
+    t.paint(lambda x, y, z: z == 15 and x in (-3, 2) and 9 <= y < 38, PLAID_BLACK)    # the placket's seams
+    for y in range(12, 37, 7):
+        t.box(-1, 1, y, y + 2, 16, 17, button)                                        # buttons
+    for y in range(36, 44):                                                           # the collar points
+        w = (y - 35) // 2 + 2
+        for x in range(-2 - w, -2):
+            t.v[(x, y, 16)] = plaid(x + 5, y)
+        for x in range(2, 2 + w):
+            t.v[(x, y, 16)] = plaid(x + 5, y)
+    t.box(-20, 20, 42, 44, -12, -11, PLAID_RED)                                       # the collar at the back
+    for x0 in (-15, 5):                                                               # chest pockets, cut on the bias
+        for x in range(x0, x0 + 10):
+            for y in range(24, 34):
+                t.v[(x, y, 16)] = plaid(x + y, y - x + 3)
+        t.box(x0, x0 + 10, 32, 35, 16, 17, PLAID_BLACK).box(x0 + 4, x0 + 6, 31, 33, 17, 18, button)
+    p["Hips"] = t
+
+    # ---- sleeves (6 voxels each side of the joint: the 5 cm arm's -0.075..0.075)
+    for side in ("L", "R"):
+        ua = Vox(R).box(-6, 6, -20, 4, -6, 6, PLAID_RED)
+        paint_plaid(ua, -6, 6, -6, 6, shift=(3, 0))
+        la = Vox(R).box(-6, 6, -20, 0, -6, 6, PLAID_RED)
+        paint_plaid(la, -6, 6, -6, 6, shift=(3, 8))
+        la.paint(lambda x, y, z: -16 <= y <= -13, PLAID_BLACK)                        # cuffs
+        la.paint(lambda x, y, z: y < -16, glove)
+        la.box(-1, 1, -15, -14, 6, 7, button)
+        p[f"UpperArm_{side}"], p[f"LowerArm_{side}"] = ua, la
+
+    # ---- the jar (head): glass -0.35..0.35 x -0.05..0.55 x -0.30..0.40, base ring, lid
+    h = Vox(R).box(-28, 28, -4, 44, -24, 32, glass).cut(-27, 27, -4, 44, -23, 31)
+    h.cut(-27, 27, -3, 43, 31, 32)                                                    # no pane over the face
+    for y in range(4, 40):                                                            # glints down the front edge
+        for x in (-26, -25):
+            if (x + y) % 9 < 5:
+                h.v[(x, y, 31)] = glint
+    for x in range(14, 24):
+        h.v[(x, 38 - (x - 14) // 3, 31)] = glint
+    h.box(-28, 28, -8, -4, -24, 32, metal).box(-29, 29, -6, -5, -25, 33, metal_dk)    # the base ring and its rim
+    h.box(-32, 32, 44, 52, -28, 36, metal).bevel(-32, 32, 44, 52, -28, 36, "top")     # the lid
+    h.paint(lambda x, y, z: y in (45, 47) and (x, y, z) in h.v and h.v[(x, y, z)] == metal, metal_dk)  # its threads
+    for x, z in ((-26, 34), (25, 34), (-26, -27), (25, -27)):
+        h.box(x, x + 2, 48, 50, z, z + 2, bolt)
+    h.box(-3, 3, 52, 55, -4, 2, metal_dk).box(-2, 2, 55, 57, -3, 1, bolt)             # a terminal on top
+
+    # ---- the brain: a big flat front (the face kit sits on it, z = 0.30), rounded to the back
+    b = Vox(R)
+    for x in range(-24, 24):
+        for y in range(-4, 41):
+            for z in range(-22, 24):
+                zc = z + 0.5
+                s = 1.0 if zc >= -6 else math.sqrt(max(0.0, 1 - ((zc + 6) / 17.0) ** 2))
+                if zc > 21:
+                    s *= 0.96
+                if s <= 0:
+                    continue
+                if (abs(x + 0.5) / (23.0 * s)) ** 6 + (abs(y + 0.5 - 18) / (22.0 * s)) ** 6 <= 1:
+                    b.v[(x, y, z)] = pink
+    # the two halves: a fissure from the back up over the top, stopping short of the face
+    for k in list(b.v):
+        x, y, z = k
+        if x in (-1, 0) and y >= 22 + max(0, z - 10) // 1 and z < 20:
+            del b.v[k]
+    # the cerebellum: a smaller, finely ridged lobe under the back, and the stem below it
+    for x in range(-18, 18):
+        for y in range(-4, 14):
+            for z in range(-24, -8):
+                if (((abs(x + 0.5) - 8) / 10.0) ** 2 + ((y + 0.5 - 5) / 8.0) ** 2 + ((z + 0.5 + 15) / 8.0) ** 2) <= 1:
+                    b.v[(x, y, z)] = cereb_dk if y % 3 == 0 else cereb
+    b.box(-4, 4, -4, 6, -12, -4, stem)
+
+    def depth(k):
+        """0 on the surface, 1 just under it, 2 deeper"""
+        x, y, z = k
+        for d in range(3):
+            if any((x + dx * (d + 1), y + dy * (d + 1), z + dz * (d + 1)) not in b.v for dx, dy, dz in DIRS):
+                return d
+        return 3
+
+    face = lambda x, y, z: z >= 21 and -21 <= x <= 20 and -4 <= y <= 38
+    shell = {k: depth(k) for k in b.v if b.v[k] == pink}
+    for k, d in shell.items():
+        x, y, z = k
+        if d > 1 or face(x, y, z):
+            continue
+        # gyri and sulci: the folds wind where warped noise crosses its middle
+        wx, wy, wz = x / 7.0, y / 7.0, z / 7.0
+        n = vnoise3(wx + 1.6 * vnoise3(wx, wy, wz, 7), wy + 1.6 * vnoise3(wx, wy, wz, 11), wz, 3)
+        n2 = vnoise3(wx * 2.1, wy * 2.1, wz * 2.1, 5)
+        g = abs(n - 0.5) + 0.12 * (n2 - 0.5)
+        if g < 0.07:
+            if d == 0:
+                del b.v[k]
+            else:
+                b.v[k] = deep
+        elif g < 0.11 and d == 0:
+            b.v[k] = fold
+        elif g > 0.32 and d == 0:
+            b.v[k] = light
+    # the lateral groove down each side, between the temporal lobe and the rest
+    for k in list(b.v):
+        x, y, z = k
+        if abs(x + 0.5) >= 21.5 and abs(y - (12 + (z + 6) * 0.35)) < 1.0 and -18 < z < 18 and k in shell and shell[k] == 0:
+            del b.v[k]
+    for k, c in list(b.v.items()):
+        x, y, z = k
+        if c == pink and shell.get(k, 3) <= 1 and abs(x + 0.5) >= 20.5 and abs(y - (12 + (z + 6) * 0.35)) < 2.0 and -18 < z < 18:
+            b.v[k] = deep
+    # the face plane: folds drawn on it (colour only: it stays flat for the face kit), kept clear
+    # of the eyes, brows and mouth
+    kit = lambda x, y: (abs(x + 0.5) < 18.5 and 14 <= y <= 26) or (abs(x + 0.5) < 21 and 27 <= y <= 38) or (abs(x + 0.5) < 11 and y <= 10)
+    for k, c in list(b.v.items()):
+        x, y, z = k
+        if z < 22 or c != pink or kit(x, y):
+            continue
+        wx, wy = x / 6.0, y / 6.0
+        n = vnoise3(wx + 1.6 * vnoise3(wx, wy, 0.5, 7), wy + 1.6 * vnoise3(wx, wy, 0.5, 11), 0.5, 3)
+        g = abs(n - 0.5)
+        if g < 0.04:
+            b.v[k] = fold
+        elif g > 0.42:
+            b.v[k] = light
     h.v.update(b.v)
-    for x0 in (-5, 0):                                                               # round glasses round the eyes
-        for x in range(x0, x0 + 5):
-            for y in range(3, 7):
-                if x in (x0, x0 + 4) or y in (3, 6):
-                    if not ((x in (x0, x0 + 4)) and (y in (3, 6))):
-                        h.v[(x, y, 6)] = frame
-    h.v[(-6, 5, 6)] = frame
-    h.v[(5, 5, 6)] = frame
+
+    # the fluid: the jar's inside, round the brain, up to just below the lid
+    fl = Vox(R)
+    for x in range(-27, 27):
+        for y in range(-4, 41):
+            for z in range(-23, 32):
+                if (x, y, z) not in b.v:
+                    fl.v[(x, y, z)] = fluid_c
+    # electrodes: two copper leads from the lid down into the top of the brain
+    for x0 in (-12, 10):
+        for y in range(30, 44):
+            if (x0, y, -4) not in b.v:
+                h.v[(x0, y, -4)] = copper
+                h.v[(x0 + 1, y, -4)] = copper
+                fl.v.pop((x0, y, -4), None)
+                fl.v.pop((x0 + 1, y, -4), None)
+    for k in list(fl.v):
+        if k in h.v and len(h.v[k]) == 3:
+            del fl.v[k]
+    h.inner = {(x, y, z) for x in range(-27, 27) for y in range(-4, 44) for z in range(-23, 31)}
+
+    # round glasses: wire rims just proud of the face, white lenses on it, as drawn
+    for cx in (-9.5, 9.5):
+        for x in range(-24, 24):
+            for y in range(8, 32):
+                r = math.hypot(x + 0.5 - cx, y + 0.5 - 20)
+                if 7.2 <= r < 8.6:
+                    h.v[(x, y, 24)] = frame
+                elif r < 7.2 and abs(y + 0.5 - 20) < 4.5:
+                    h.v[(x, y, 23)] = lens
+    for x in range(-2, 2):
+        h.v[(x, 22, 24)] = frame                                                      # the bridge
+    for x0, x1 in ((-24, -18), (18, 24)):                                             # the arms back to the "ears"
+        for x in range(x0, x1):
+            h.v[(x, 21, 24)] = frame
     p["Head"] = h
 
     die = ball(3.0, (204, 40, 52), cy=3.0)
@@ -609,8 +894,8 @@ def brain():
         dict(name="d20", parent="LowerArm_R", at=GRIP, rot=(0, 0, 0), off=(0.5, 0, 0.5), vox=die),
         dict(name="mini", parent="LowerArm_L", at=GRIP, rot=(90, 0, 0), off=(0.5, 0, 0.5), vox=mini),
     ]
-    return dict(name="brain", label="The Brain", parts=p, props=props, mouth=(0, 0.0, 0.0), tail_at=None, tail_sway=None,
-                note="The Brain from the comic From the Brain of Michael Collins: a pink brain with round glasses in a jar, on a professor in tweed with a bow tie.")
+    return dict(name="brain", label="The Brain", parts=p, fluid={"Head": fl}, glass_alpha=0.22, props=props, mouth=(0, 0.0, 0.0), tail_at=None, tail_sway=None,
+                note="The Brain from the comic From the Brain of Michael Collins: a pink brain with round glasses in a jar of sloshing fluid, on a professor in a red plaid flannel shirt.")
 
 
 # ----------------------------------------------------------------------------------------------
@@ -886,12 +1171,25 @@ def build(spec, j0, bin0, pal_img):
         meshes.append({"name": name + "_mesh", "primitives": prims})
         return len(meshes) - 1
 
+    fluids = spec.get("fluid", {})
+    if fluids:
+        # material 2: see-through like the glass, drawn by the apps' slosh shader (by this name)
+        fl = json.loads(json.dumps(j["materials"][1]))
+        fl["name"] = "VoxelFluid"
+        j["materials"].append(fl)
+    if "glass_alpha" in spec:
+        # a big pane to look through (the Brain's jar) wants clearer glass than a visor
+        j["materials"][1]["pbrMetallicRoughness"]["baseColorFactor"][3] = spec["glass_alpha"]
     for i, node in enumerate(j["nodes"]):
         if "mesh" not in node:
             continue
         nm = node["name"]
         if nm in parts:
-            mesh_of_node[i] = emit_vox(nm, parts[nm], OFFSETS.get(nm, (0, 0, 0)))
+            # the half-voxel shift of the arms is for 5 cm parts; a finer part is built centred
+            mesh_of_node[i] = emit_vox(nm, parts[nm], OFFSETS.get(nm, (0, 0, 0)) if parts[nm].res == 1 else (0, 0, 0))
+            if nm in fluids:
+                p, n, u, ix = mesh_fluid(fluids[nm], parts[nm], pal)
+                meshes[-1]["primitives"].append(prim(p, n, u, ix, 2))
         elif nm in ("hand_palm", "hand_point", "hand_thumb"):
             pr = j0["meshes"][node["mesh"]]["primitives"][0]
             a = j0["accessors"][pr["attributes"]["POSITION"]]
@@ -1053,6 +1351,7 @@ JOINT_POS = {"Hips": (0, 0.55, 0), "Head": (0, 1.10, 0), "UpperArm_L": (0.325, 1
 
 def write_vox(spec, path):
     grid = {}
+    solid = set()
     for nm, vox in spec["parts"].items():
         if nm == "Tail":
             base = (spec["tail_at"][0], 0.55 + spec["tail_at"][1], spec["tail_at"][2])
@@ -1061,9 +1360,18 @@ def write_vox(spec, path):
         else:
             continue
         off = OFFSETS.get(nm, (0, 0, 0))
+        r = vox.res
+        if r != 1:
+            # the MagicaVoxel source stays on the 5 cm grid: a finer part is sampled down to it
+            off = (0, 0, 0)
         for (x, y, z), c in vox.v.items():
-            key = (int(math.floor(x + off[0] + base[0] / V + 1e-6)), int(round(y + base[1] / V)), int(math.floor(z + off[2] + base[2] / V + 1e-6)))
+            x, y, z = x / r, y / r, z / r
+            key = (int(math.floor(x + off[0] + base[0] / V + 1e-6)), int(round(y + base[1] / V)) if r == 1 else int(math.floor(y + base[1] / V + 1e-6)), int(math.floor(z + off[2] + base[2] / V + 1e-6)))
+            if r != 1 and key in grid and (len(c) == 4 or key in solid):
+                continue                                     # a cell's first opaque colour wins
             grid[key] = tuple(c[:3])
+            if len(c) == 3:
+                solid.add(key)
     xs = [k[0] for k in grid]; ys = [k[1] for k in grid]; zs = [k[2] for k in grid]
     x0, y0, z0 = min(xs), min(ys), min(zs)
     sx, sy, sz = max(xs) - x0 + 1, max(ys) - y0 + 1, max(zs) - z0 + 1

@@ -9,6 +9,12 @@
 //! say), and `--snapshot-at` is the moment every clip is held at (0.5 s by default): a picture of
 //! a pose, for reviewing a character.
 //!
+//!     block_avatar --snapshot out.png --model models/brain.glb --snapshot-do "emote:hop" --snapshot-film 60
+//!
+//! `--snapshot-film <n>` keeps the clock and the clips running and saves `n` pictures, one every
+//! third frame (20 a second of simulated time): `out_000.png`, `out_001.png`, ... for things
+//! that move (the Brain's sloshing fluid, say).
+//!
 //! Everything that moves on its own (idle life, voice reactions, blinks, weather) is held still
 //! so the same build makes the same picture. Every frame is exactly one simulation tick (see
 //! `main`), so with `--snapshot-fx` the burst fired on the first frame is always photographed
@@ -37,16 +43,29 @@ pub struct Snapshot {
     pub act: Option<String>,
     /// the moment every clip is held at, s
     pub at: f32,
+    /// a film: this many pictures, with time running
+    pub film: Option<u32>,
+    /// pictures of the film asked for so far
+    filmed: u32,
 }
 
 /// How long to let things settle after the character is ready, and how long to wait for the
 /// picture to reach the disk.
 const SETTLE: u32 = 40;
 const SAVE: u32 = 30;
+/// Frames between a film's pictures.
+const FILM_EVERY: u32 = 3;
+
+/// A film's `i`th picture: `out_007.png` for `out.png`.
+fn film_path(out: &std::path::Path, i: u32) -> PathBuf {
+    let stem = out.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = out.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "png".into());
+    out.with_file_name(format!("{stem}_{i:03}.{ext}"))
+}
 
 impl Snapshot {
     pub fn new(out: PathBuf, set: Option<String>, fx: Option<String>) -> Self {
-        Snapshot { out, set, fx, frames: 0, shot_at: None, moving: false, act: None, at: 0.5 }
+        Snapshot { out, set, fx, frames: 0, shot_at: None, moving: false, act: None, at: 0.5, film: None, filmed: 0 }
     }
 }
 
@@ -104,6 +123,34 @@ pub fn run(
     // the loading card times itself out on the clock, which stops below
     for mut v in &mut cards {
         *v = Visibility::Hidden;
+    }
+    // a film: the clock runs, a picture every few frames, and the last one awaited
+    if let Some(n) = snap.film {
+        if snap.frames == 1
+            && let Some(dir) = snap.out.parent()
+        {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if snap.filmed < n && snap.frames >= 3 && (snap.frames - 3) % FILM_EVERY == 0 {
+            let path = film_path(&snap.out, snap.filmed);
+            let _ = std::fs::remove_file(&path);
+            commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+            snap.filmed += 1;
+            if snap.filmed == n {
+                snap.shot_at = Some(snap.frames);
+            }
+        }
+        if let Some(at) = snap.shot_at {
+            let last = film_path(&snap.out, n - 1);
+            if (last.exists() && snap.frames > at + 2) || snap.frames > at + SAVE * 10 {
+                if !last.exists() {
+                    eprintln!("snapshot: the film's last picture was not saved");
+                    std::process::exit(2);
+                }
+                exit.write(AppExit::Success);
+            }
+        }
+        return;
     }
     // the pose: every clip held at the same moment, and the clock stopped
     if snap.frames >= 3 {

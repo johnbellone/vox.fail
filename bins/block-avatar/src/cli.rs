@@ -27,6 +27,10 @@ pub(super) struct Args {
     /// pose, for reviewing a character
     pub(super) snapshot_do: Option<String>,
     pub(super) snapshot_at: Option<f32>,
+    /// --snapshot-film <pictures>: instead of one held pose, let time and the clips run and save
+    /// that many pictures, every third frame (`out_000.png`, `out_001.png`, ...): for reviewing
+    /// things that move, such as a shader
+    pub(super) snapshot_film: Option<u32>,
     /// --watch http://relay:7779/<session> [--code ABC123]: watch someone's show
     pub(super) watch: Option<(String, String)>,
     /// --join http://relay:7779/<session> --code ABC123 [--name Sam]: be a show's guest
@@ -81,6 +85,7 @@ pub(super) fn parse_args() -> Option<Args> {
         snapshot: get("--snapshot").map(|p| (p, get("--snapshot-set"), get("--snapshot-fx"))),
         snapshot_do: get("--snapshot-do"),
         snapshot_at: get("--snapshot-at").and_then(|t| t.parse().ok()).filter(|t: &f32| t.is_finite() && *t >= 0.0),
+        snapshot_film: get("--snapshot-film").and_then(|n| n.parse().ok()).filter(|n: &u32| (1..=600).contains(n)),
         watch: get("--watch").map(|u| (u, get("--code").unwrap_or_default())),
         join: get("--join").map(|u| (u, get("--code").unwrap_or_default(), get("--name").unwrap_or_default())),
         world: get("--world"),
