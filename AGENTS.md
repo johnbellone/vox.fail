@@ -308,6 +308,10 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [cloudflare-hosting.md](docs/design/cloudflare-hosting.md): vox.fail on Cloudflare Containers: one
   container (directory and vox-host) behind the edge Worker as a Durable Object, sleeping when
   idle; SQLite kept, streamed to R2 by Litestream; the Worker serves the site; the server path retired.
+- [gateway.md](docs/design/gateway.md) (proposed): the gateway that holds each player's one
+  connection (ADR 0005 step 3), in `vox-host` rather than the Durable Object; everything still
+  goes through the player's own world (which forwards across borders, as ADR 0005 says); a
+  crossing as a slot swap over one socket; resume tokens MACed with the world secret; cost per hop.
 
 ## Known gaps (not yet done)
 
