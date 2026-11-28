@@ -154,7 +154,7 @@ summaries), and of where to sample. Plain arrays do the arithmetic. The tree onl
 6. `vox-1lp.7` World gravity setting (and declared bodies).
 7. `vox-1lp.8` Design: voxel objects (spin): their format, simulation, collision and
    networking.
-8. `vox-1lp.9` Decision: structural collapse (ADR 0002, accepted or rejected).
+8. `vox-1lp.9` Decision: structural collapse (an ADR of its own, accepted or rejected).
 9. `vox-1lp.10` The octree as the sampling index: coupling points by depth and distance,
    weighted random ticks with a seeded pick, and ray queries for exposure and sky.
 10. `vox-1lp.11` Prototype: one field (air temperature and humidity) in octree-indexed bricks

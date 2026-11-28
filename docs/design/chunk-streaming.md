@@ -374,7 +374,9 @@ The same octree, traced per pixel on the GPU instead of meshed:
   first. Workers would need wasm threads and cross-origin isolation headers; revisit only if
   measurements show the budget can't keep up.
 - **Cave culling** (15 bits a chunk) for the islands, the sea's depths and the dungeons, after
-  frustum culling. It matters little in the open Void, so it comes last.
+  frustum culling. It matters little in the open Void, so it comes last. Interiors we author
+  get exact culling from rooms and openings instead
+  ([ADR 0002](../decisions/0002-bsn-scenes-rooms-and-openings.md)).
 - **Fewer draw calls**: count them first. If they bound frame time, merge each 2 × 2 × 2 group
   of coarse chunks into one mesh per material. Multi-draw indirect can't be relied on in
   browsers yet.
