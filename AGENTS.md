@@ -301,6 +301,9 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [block-scale.md](docs/design/block-scale.md): quarter-metre blocks in every world, sizes
   written in metres (`vox_core::BLOCK_M`, `in_blocks`), the 25 km Void, and the one-time
   conversion of saved worlds and the directory.
+- [chunk-streaming.md](docs/design/chunk-streaming.md): paletted chunks, levels loaded straight
+  into chunks, streaming by view radius, draw distance (64 m browser, 128 m desktop) and
+  mip-mapped LOD rings; how Minecraft and others do it.
 - [cloudflare-hosting.md](docs/design/cloudflare-hosting.md): vox.fail on Cloudflare Containers: one
   container (directory and vox-host) behind the edge Worker as a Durable Object, sleeping when
   idle; SQLite kept, streamed to R2 by Litestream; the Worker serves the site; the server path retired.
