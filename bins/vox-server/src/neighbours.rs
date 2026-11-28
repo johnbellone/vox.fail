@@ -17,7 +17,6 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    hash::{BuildHasher, Hasher},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -174,22 +173,13 @@ impl Links {
     }
 }
 
-/// A fresh nonce. It needs to be unique and unguessable, not secret-grade: it keeps an old
-/// proof from being replayed. The standard library's `RandomState` is seeded from the operating
-/// system, so its hashes of a counter and the time serve without a new dependency.
-fn nonce() -> [u8; 32] {
-    static COUNT: AtomicU64 = AtomicU64::new(0);
-    let n = COUNT.fetch_add(1, Ordering::Relaxed);
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+/// A number used once in a handshake, so a proof can't be replayed: from the operating system's
+/// random source. None when there is none: that handshake is given up rather than run with a
+/// guessable nonce.
+fn nonce() -> Option<[u8; 32]> {
     let mut out = [0u8; 32];
-    for (i, chunk) in out.chunks_mut(8).enumerate() {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u64(n);
-        h.write_u64(t);
-        h.write_usize(i);
-        chunk.copy_from_slice(&h.finish().to_le_bytes());
-    }
-    out
+    getrandom::fill(&mut out).ok()?;
+    Some(out)
 }
 
 fn binary(m: &Answer) -> Message {
@@ -232,7 +222,9 @@ pub(crate) async fn listen(links: Arc<Links>, world: mpsc::Sender<crate::Event>,
     if !links.listens_for(&from) {
         return refuse(&mut sink, &from, format!("not a neighbour of {me} that dials it")).await;
     }
-    let ours = nonce();
+    let Some(ours) = nonce() else {
+        return refuse(&mut sink, &from, "no random source here".into()).await;
+    };
     let challenge = Answer::Challenge { world: me.clone(), nonce: ours, proof: neighbour::proof(&secret, Side::Listener, &theirs, &me, &from) };
     if sink.send(binary(&challenge)).await.is_err() {
         return;
@@ -318,7 +310,7 @@ impl Dialler {
         for ev in self.link.drain() {
             match ev {
                 vox_link::Event::Status(s) if s == "Connected" => {
-                    let n = nonce();
+                    let Some(n) = nonce() else { return Some("no random source here".into()) };
                     self.link.send(neighbour::encode(&Hail::Hello { protocol: LINK_PROTOCOL, from: me.clone(), nonce: n }));
                     self.phase = Phase::Hailed(n);
                     self.heard = Instant::now();
@@ -506,6 +498,6 @@ mod tests {
 
     #[test]
     fn nonces_differ() {
-        assert_ne!(nonce(), nonce());
+        assert_ne!(nonce().unwrap(), nonce().unwrap());
     }
 }
