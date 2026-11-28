@@ -25,7 +25,14 @@ pub fn receive(
     mut editor: Option<ResMut<crate::editor::EditorOutbox>>,
     mut editing: Option<ResMut<crate::editor::EditorState>>,
     mut commands: Commands,
+    detail: Option<Res<crate::detail::Detail>>,
 ) {
+    // how far this device sees (its profile can change: the page picks one for a phone)
+    let radius = super::stream_radius(crate::detail::Detail::of(detail.as_deref()).view_m);
+    if w.stream_radius != radius {
+        w.stream_radius = radius;
+        w.forget_view();
+    }
     if !w.active() {
         return;
     }
@@ -43,6 +50,15 @@ pub fn receive(
     for m in msgs {
         match m {
             Incoming::Status(s) => {
+                // streaming by view: say how far you see before saying hello, so joining sends
+                // only what's near (docs/design/chunk-streaming.md §3)
+                if s == "Connected" {
+                    w.granted_radius = None;
+                    w.forget_view();
+                    if let Some(v) = w.stream() {
+                        w.send(&ToServer::View(v));
+                    }
+                }
                 if s == "Connected" && w.watch {
                     w.send(&ToServer::Watch { protocol: PROTOCOL });
                 } else if s == "Connected" {
@@ -104,6 +120,8 @@ pub fn receive(
                         // its portals (from the settings, until its entities say otherwise);
                         // and if you came through one, where you come out
                         w.portals = crate::portals::parse(&set);
+                        // how far this world sends round you: drop chunks where it forgets them
+                        w.grant(&set);
                         w.edges = set["atlas"]["edges"]
                             .as_array()
                             .map(|a| a.iter().filter_map(|e| e.as_str()).take(4).map(String::from).collect())
@@ -243,6 +261,9 @@ pub fn receive(
                     // the far side drawn ahead of time comes with vox-81l.3; until then it is
                     // heard and left
                     ToClient::Prepare { .. } => {}
+                    // the far field's rings are drawn from these once they exist (vox-cti.13);
+                    // until then they are heard and left
+                    ToClient::FarTile { .. } => {}
                     // world entities (protocol 9); the portals are drawn from them in portals.rs
                     ToClient::Entities(changes) => {
                         entities.apply(&changes);
@@ -290,5 +311,14 @@ pub fn receive(
                 }
             }
         }
+    }
+    // in a new chunk: tell the world how far you see from here; what's well behind is dropped.
+    // (Not while watching: a watcher may send nothing after its Watch.)
+    if w.ready
+        && !w.watch
+        && w.link.is_some()
+        && let Some(v) = w.stream()
+    {
+        w.send(&ToServer::View(v));
     }
 }

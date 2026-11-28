@@ -20,7 +20,8 @@ const DOOR_NEAR: f32 = vox_core::in_blocks(24.0);
 const HOLD_MOST: Duration = Duration::from_secs(90);
 /// Farther than this (blocks) from the sill, a held player has walked away: 3 m.
 const HOLD_NEAR: f32 = vox_core::in_blocks(3.0);
-use vox_core::wire::EntityChange;
+use vox_core::wire::{EntityChange, View};
+use crate::interest::{self, Interest};
 
 /// How far from a doorway's plane (blocks) a player may be and still go through it: their last
 /// checked pose can be a step or two behind the client's.
@@ -150,6 +151,9 @@ impl WorldState {
             seq,
             players: HashMap::new(),
             watchers: HashMap::new(),
+            watcher_interest: HashMap::new(),
+            encoded: std::cell::RefCell::new(HashMap::new()),
+            streamed_at: Instant::now(),
             dirty,
             log: Vec::new(),
             spawn,
@@ -214,9 +218,9 @@ impl WorldState {
     pub(super) fn run(mut self, mut rx: mpsc::Receiver<Event>) {
         while let Some(ev) = rx.blocking_recv() {
             match ev {
-                Event::Join { conn, tx, protocol, name, avatar, account, arrive } => self.join(conn, tx, protocol, name, avatar, account, arrive),
+                Event::Join { conn, tx, protocol, name, avatar, account, arrive, view } => self.join(conn, tx, protocol, name, avatar, account, arrive, view),
                 Event::Msg { conn, msg } => self.message(conn, msg),
-                Event::Watch { conn, tx, protocol } => self.watch(conn, tx, protocol),
+                Event::Watch { conn, tx, protocol, view } => self.watch(conn, tx, protocol, view),
                 Event::Leave { conn } => self.leave(conn),
                 Event::Tick => {
                     let behind = self.weather_at.elapsed().as_secs_f32();
@@ -233,6 +237,7 @@ impl WorldState {
                         self.save();
                     }
                     self.build_step();
+                    self.stream_step();
                     if self.doors_at.elapsed() >= DOOR_CHECK {
                         self.doors_at = Instant::now();
                         self.check_doors();
@@ -522,7 +527,20 @@ impl WorldState {
     /// The world as a newcomer gets it: welcome, chunks, every entity (nearest `from` first),
     /// ready, weather, who's here. The entities come before `Ready` so a client has them all
     /// when it is told the world is complete. False if they couldn't keep up.
-    pub(super) fn send_world(&self, tx: &mpsc::Sender<Message>, you: u32, name: &str, names: bool, from: [f32; 3]) -> bool {
+    /// With `interest` (a client that streams by view), only the chunks within its view, nearest
+    /// first; without, every chunk, as before.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn send_world(&self, tx: &mpsc::Sender<Message>, you: u32, name: &str, names: bool, from: [f32; 3], interest: Option<&mut Interest>) -> bool {
+        // a client that streams is told the radius it was granted, so it drops chunks where this
+        // world forgets them
+        let settings = match &interest {
+            Some(i) => {
+                let mut s: serde_json::Value = serde_json::from_str(&self.settings_now()).unwrap_or_else(|_| serde_json::json!({}));
+                s["view_radius"] = serde_json::json!(i.radius());
+                s.to_string()
+            }
+            None => self.settings_now(),
+        };
         let mut ok = Self::send_to(
             tx,
             &ToClient::Welcome {
@@ -532,13 +550,21 @@ impl WorldState {
                 block_size: self.cfg.block_size,
                 bounds: self.cfg.bounds,
                 spawn: self.spawn,
-                settings: self.settings_now(),
+                settings,
                 name: name.to_string(),
             },
         );
-        for k in self.world.keys() {
-            let c = self.world.chunk(k).expect("listed");
-            ok &= Self::send_to(tx, &ToClient::Chunk { key: k, version: c.version, data: c.encode() });
+        let keys = match interest {
+            Some(i) => {
+                i.queue(self.world.chunk_keys());
+                i.take_all()
+            }
+            None => self.world.keys(),
+        };
+        for k in keys {
+            if let Some(m) = self.chunk_message(k) {
+                ok &= Self::send_to(tx, &m);
+            }
         }
         for batch in entities::batches(self.entities.all_from(from)) {
             ok &= Self::send_to(tx, &ToClient::Entities(batch));
@@ -555,7 +581,7 @@ impl WorldState {
     }
 
     /// Someone watching without playing: the world and what happens in it, no names.
-    pub(super) fn watch(&mut self, conn: u64, tx: mpsc::Sender<Message>, protocol: u32) {
+    pub(super) fn watch(&mut self, conn: u64, tx: mpsc::Sender<Message>, protocol: u32, view: Option<View>) {
         let bye = |why: &str| {
             let _ = tx.try_send(Message::Binary(wire::encode(&ToClient::Bye { why: why.into() }).into()));
         };
@@ -567,13 +593,19 @@ impl WorldState {
         }
         // no player has this number: the watcher's own poses never come back to it
         let from = self.spawn;
-        if self.send_world(&tx, u32::MAX, "", false, from) {
+        // a watcher sees round the spawn (it can't send another view to move it)
+        let centre = ChunkKey::of(from.map(|v| v.floor() as i32));
+        let mut interest = view.map(|v| Interest::new(View { centre, ..v }, self.limits(), self.cfg.bounds));
+        if self.send_world(&tx, u32::MAX, "", false, from, interest.as_mut()) {
             self.watchers.insert(conn, tx);
+            if let Some(i) = interest {
+                self.watcher_interest.insert(conn, i);
+            }
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn join(&mut self, conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64>, arrive: Option<[f32; 3]>) {
+    pub(super) fn join(&mut self, conn: u64, tx: mpsc::Sender<Message>, protocol: u32, name: String, avatar: Vec<u8>, account: Option<u64>, arrive: Option<[f32; 3]>, view: Option<View>) {
         let bye = |why: &str| {
             let _ = tx.try_send(Message::Binary(wire::encode(&ToClient::Bye { why: why.into() }).into()));
         };
@@ -585,7 +617,12 @@ impl WorldState {
         }
         let id = conn as u32;
         let name = if name.is_empty() { format!("player {id}") } else { name };
-        let ok = self.send_world(&tx, id, &name, true, arrive.unwrap_or(self.spawn));
+        // the view is centred on where they really start (a fresh client guesses before it knows
+        // the spawn), so what joining sends is what is round them
+        let from = arrive.unwrap_or(self.spawn);
+        let centre = ChunkKey::of(from.map(|v| v.floor() as i32));
+        let mut interest = view.map(|v| Interest::new(View { centre, ..v }, self.limits(), self.cfg.bounds));
+        let ok = self.send_world(&tx, id, &name, true, from, interest.as_mut());
         if !ok {
             return;
         }
@@ -604,7 +641,7 @@ impl WorldState {
         }
         let voice = Bucket::new(MAX_VOICE_PER_SECOND, VOICE_BURST);
         let edits = Bucket::new(EDIT_RATE, EDIT_RATE);
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None, kept: VecDeque::new(), doors: HashMap::new() });
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None, kept: VecDeque::new(), doors: HashMap::new(), interest });
     }
 
     /// Send `conn` on to `url`, arriving at `arrive` moving as `motion` (both in the arriving
@@ -856,9 +893,140 @@ impl WorldState {
 
     pub(super) fn leave(&mut self, conn: u64) {
         self.watchers.remove(&conn);
+        self.watcher_interest.remove(&conn);
         if let Some(p) = self.players.remove(&conn) {
             eprintln!("{} left ({} here)", p.name, self.players.len());
             self.broadcast(&ToClient::Left { player: p.id }, None);
+        }
+    }
+
+    /// What this world allows a view.
+    fn limits(&self) -> interest::Limits {
+        interest::Limits::new(self.cfg.view_radius_m, self.cfg.view_rings)
+    }
+
+    /// A chunk as a message, its encoding kept until the chunk changes.
+    fn chunk_message(&self, key: ChunkKey) -> Option<ToClient> {
+        let c = self.world.chunk(key)?;
+        let mut cache = self.encoded.borrow_mut();
+        let data = match cache.get(&key) {
+            Some((v, data)) if *v == c.version => data.clone(),
+            _ => {
+                let data = c.encode();
+                cache.insert(key, (c.version, data.clone()));
+                data
+            }
+        };
+        Some(ToClient::Chunk { key, version: c.version, data })
+    }
+
+    /// Edits to everyone who sees them: everything to those who don't stream by view, and to
+    /// those who do, the edits in chunks within their view (not in one still queued, which will
+    /// carry them).
+    fn broadcast_edits(&mut self, applied: Vec<Applied>) {
+        let everyone = self.players.values().all(|p| p.interest.is_none()) && self.watcher_interest.is_empty();
+        if everyone {
+            return self.broadcast(&ToClient::Edits(applied), None);
+        }
+        let mut gone = Vec::new();
+        let for_view = |i: &mut Interest, me: u32| -> Vec<Applied> { i.edits_for(&applied, me) };
+        for (conn, p) in self.players.iter_mut() {
+            let mine = match p.interest.as_mut() {
+                None => applied.clone(),
+                Some(i) => for_view(i, p.id),
+            };
+            if !mine.is_empty() && !Self::send_to(&p.tx, &ToClient::Edits(mine)) {
+                gone.push(*conn);
+            }
+        }
+        for (conn, tx) in &self.watchers {
+            let mine = match self.watcher_interest.get_mut(conn) {
+                None => applied.clone(),
+                Some(i) => for_view(i, u32::MAX),
+            };
+            if !mine.is_empty() && !Self::send_to(tx, &ToClient::Edits(mine)) {
+                gone.push(*conn);
+            }
+        }
+        for conn in gone {
+            self.leave(conn);
+        }
+    }
+
+    /// A whole chunk again (after a big build) to everyone who sees it.
+    fn broadcast_chunk(&mut self, key: ChunkKey) {
+        let Some(m) = self.chunk_message(key) else { return };
+        let mut gone = Vec::new();
+        for (conn, p) in self.players.iter_mut() {
+            let wanted = p.interest.as_mut().is_none_or(|i| {
+                let w = i.wants_edit(key) || i.holds(key);
+                if w {
+                    i.mark_sent(key);
+                }
+                w
+            });
+            if wanted && !Self::send_to(&p.tx, &m) {
+                gone.push(*conn);
+            }
+        }
+        for (conn, tx) in &self.watchers {
+            let wanted = self.watcher_interest.get_mut(conn).is_none_or(|i| {
+                let w = i.wants_edit(key) || i.holds(key);
+                if w {
+                    i.mark_sent(key);
+                }
+                w
+            });
+            if wanted && !Self::send_to(tx, &m) {
+                gone.push(*conn);
+            }
+        }
+        for conn in gone {
+            self.leave(conn);
+        }
+    }
+
+    /// Chunks queued for those who stream by view, paced to each one's budget. Run every tick;
+    /// edits and poses never wait behind these.
+    fn stream_step(&mut self) {
+        let dt = self.streamed_at.elapsed().as_secs_f64();
+        self.streamed_at = Instant::now();
+        let waiting = self.players.values().any(|p| p.interest.as_ref().is_some_and(|i| i.has_pending()))
+            || self.watcher_interest.values().any(|i| i.has_pending());
+        if !waiting {
+            return;
+        }
+        // a chunk's size as last encoded, or a guess for one not encoded yet
+        let sizes: HashMap<ChunkKey, usize> = self.encoded.borrow().iter().map(|(k, (_, d))| (*k, d.len())).collect();
+        let size = |k: ChunkKey| sizes.get(&k).copied().unwrap_or(2048);
+        let mut out: Vec<(mpsc::Sender<Message>, u64, Vec<ChunkKey>)> = Vec::new();
+        for (conn, p) in self.players.iter_mut() {
+            if let Some(i) = p.interest.as_mut() {
+                let keys = i.take_paced(dt, size);
+                if !keys.is_empty() {
+                    out.push((p.tx.clone(), *conn, keys));
+                }
+            }
+        }
+        for (conn, i) in self.watcher_interest.iter_mut() {
+            let keys = i.take_paced(dt, size);
+            if let (false, Some(tx)) = (keys.is_empty(), self.watchers.get(conn)) {
+                out.push((tx.clone(), *conn, keys));
+            }
+        }
+        let mut gone = Vec::new();
+        for (tx, conn, keys) in out {
+            for k in keys {
+                if let Some(m) = self.chunk_message(k)
+                    && !Self::send_to(&tx, &m)
+                {
+                    gone.push(conn);
+                    break;
+                }
+            }
+        }
+        for conn in gone {
+            self.leave(conn);
         }
     }
 
@@ -1509,16 +1677,12 @@ impl WorldState {
             .map(|&(seq, cell, block)| Applied { seq, player: job.player, id: 0, cell, block })
             .collect();
         if !applied.is_empty() {
-            self.broadcast(&ToClient::Edits(applied), None);
+            self.broadcast_edits(applied);
         }
         let mut whole: Vec<ChunkKey> = bulk.into_iter().collect();
         whole.sort();
         for key in whole {
-            let m = match self.world.chunk(key) {
-                Some(c) => ToClient::Chunk { key, version: c.version, data: c.encode() },
-                None => continue,
-            };
-            self.broadcast(&m, None);
+            self.broadcast_chunk(key);
         }
         // after the blocks, so everyone sees the support go and then the prop
         if !changed_cells.is_empty() {
@@ -1682,6 +1846,23 @@ impl WorldState {
             }
             ToServer::Build { id, node } => self.entity_edit(conn, id, Edit::Build { node }),
             ToServer::Unbuild { id, build } => self.start_unbuild(conn, id, build),
+            // where they are and how far they see: what comes into view is queued, nearest first;
+            // a player who starts streaming only now is sent what's in view again
+            ToServer::View(v) => {
+                let (limits, bounds) = (self.limits(), self.cfg.bounds);
+                let Some(p) = self.players.get_mut(&conn) else { return };
+                let changed = match p.interest.as_mut() {
+                    Some(i) => i.set_view(v, limits, bounds),
+                    None => {
+                        p.interest = Some(Interest::new(v, limits, bounds));
+                        true
+                    }
+                };
+                // the same view again: nothing new to queue
+                if changed && let Some(i) = p.interest.as_mut() {
+                    i.queue(self.world.chunk_keys());
+                }
+            }
             ToServer::Through { portal, side, motion } => {
                 if !p.bucket.take(now) {
                     return;
@@ -1858,7 +2039,7 @@ impl WorldState {
                         if old != 0 {
                             broke = Some((p.name.clone(), p.account, cell));
                         }
-                        self.broadcast(&ToClient::Edits(vec![a]), None);
+                        self.broadcast_edits(vec![a]);
                     }
                 }
             }

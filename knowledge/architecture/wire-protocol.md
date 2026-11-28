@@ -1,9 +1,9 @@
 ---
 type: Architecture
-title: World Wire Protocol (PROTOCOL = 11)
-description: "The message set between a world server and its players, how it is encoded, and what each protocol version added (11: crossings carry motion and a frame; Prepare and DoorState)."
+title: World Wire Protocol (PROTOCOL = 12)
+description: "The message set between a world server and its players, how it is encoded, and what each protocol version added (12: streaming by view, View before Hello and FarTile)."
 tags: [architecture, protocol, networking, postcard]
-generated: { by: agent/mcp, at: "2026-11-28T06:27:35Z" }
+generated: { by: agent/mcp, at: "2026-11-28T13:54:52Z" }
 status: stable
 governance: constraint
 code_refs: [crates/vox-core/src/wire.rs, crates/vox-world/src/proto.rs]
@@ -11,7 +11,7 @@ code_refs: [crates/vox-core/src/wire.rs, crates/vox-world/src/proto.rs]
 
 # World Wire Protocol
 
-Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 11`). Each WebSocket **binary** message is one postcard-encoded value. Bump the constant whenever messages change in a way old players cannot read; the server refuses a wrong version.
+Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 12`). Each WebSocket **binary** message is one postcard-encoded value. Bump the constant whenever messages change in a way old players cannot read; the server refuses a wrong version.
 
 ## Messages
 **ToServer**:
@@ -19,9 +19,10 @@ Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 11`). Each 
 - `Through {portal, side, motion}` (protocol 6; `motion` since 11): go through a portal. The world checks you're in the doorway, holds `motion` to what a player can do, and answers `Travel`.
 - `Voice(VoicePacket)` (protocol 7).
 - The entity messages of protocol 9 (below), appended last: `Put`, `Remove`, `Build`, `Unbuild`.
+- `View(View {centre, radius, rings, budget_kbps})` (protocol 12). One may come **before** `Hello` or `Watch`, and then joining sends only what it covers.
 
 **ToClient**:
-- `Welcome {you, world, palette, block_size, bounds, spawn, settings (JSON string), name}`. `block_size` is 0.25 since protocol 10.
+- `Welcome {you, world, palette, block_size, bounds, spawn, settings (JSON string), name}`. `block_size` is 0.25 since protocol 10. For a client that sent a view, `settings` carries `view_radius`, the radius granted in chunks.
 - `Chunk {key, version, data}` (run-length encoded), `Ready`, `Joined {player, name, avatar}`, `Left`.
 - `Edits(Vec<Applied{seq, player, id, cell, block}>)`, `Refused {id, why}`, `Pose`, `Weather` (a `weather::Keyframe`), `Bye {why}`.
 - Added last, so older clients ignore it, `Correct {at}`: the server's answer to an impossible position, telling the client to go back.
@@ -30,6 +31,7 @@ Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 11`). Each 
 - `Voice {player, packet}` (protocol 7).
 - The entity messages `Entities`, `EntityRefused`, `EntityDone` (protocol 9).
 - `Prepare {url, ticket, frame}` and `DoorState {portal, state}` (protocol 11).
+- `FarTile {key, depth, bytes}` (protocol 12): the far-field octree of one 256 m tile. Defined but not sent yet; it is checked with `far_tile_ok`.
 
 New messages always go last, so older ones keep their numbers; a test pins each one's first byte. `Pose`, `Weather` and `Voice` are *droppable*: a newer one follows, so a full queue drops them instead of disconnecting the player. Everything else is reliable.
 
@@ -57,9 +59,13 @@ New messages always go last, so older ones keep their numbers; a test pins each 
 - `Frame {offset, turn}`: a point here is `turn(p) + offset` there (a rotation about y, as glam's). `Door::frame(side)` gives a doorway's, which maps points exactly as `Door::carry`; an atlas edge's is a move of one tile. `Frame::valid()` checks one from the network.
 - `Motion {velocity (blocks/s), yaw}`: `sane(block_size)` holds it to the move check's limits (`moves::MAX_SPEED` sideways, `MAX_RISE` up, `MAX_FALL` down) and makes nonsense still; `through(frame)` turns it into the far frame.
 - The client sends its motion with `Through`; the origin world holds it sane, turns it through the frame, and asks the directory (`/api/world/travel` takes an optional `motion`, held sane again). The signed `Ticket` carries `motion`. The client arrives still falling (`Arrival::vy`); walking comes from the player's own input.
-- `Prepare` (the far side ahead of time) and `DoorState` (`travel::DoorState`: Unknown, Open, Waking, Unlinked, Restricted(Party | Full | SignIn)) are defined; the client hears and ignores them until vox-81l.3 and vox-81l.8.
+- `Prepare` (the far side ahead of time) and `DoorState` (`travel::DoorState`: Unknown, Open, Waking, Unlinked, Restricted(Party | Full | SignIn)) are defined. The client keeps doorway states (`vox-81l.8`); `Prepare` waits on `vox-81l.3`.
 
-Planned next, protocol 12: `ToServer::View` and `ToClient::FarTile` for streaming by view radius and the far-field octree (`architecture/chunk-streaming-design`).
+**Streaming (protocol 12, `vox-cti.6` to `.8`).**
+- **The client's view.** `View::sane` caps a view at 64 chunks and 8 rings, before the world's own limit (`view_radius_m` 128 m, 3 rings). The client sends its view before saying hello, and again on each new chunk (never while watching).
+- **What the server does with it.** It sends the nearest chunks first, paced to the budget. Edits go only to players whose view holds the chunk, but a player always gets their own. Views are capped at 10 a second.
+- **Old clients.** Clients that send no view get everything.
+- How it works: [Streaming by view radius, as built](../decisions/streaming-by-view-as-built.md).
 
 ## Version history (from docs/PROJECT.md; v3 is not documented)
 | Version | Change |
@@ -74,6 +80,7 @@ Planned next, protocol 12: `ToServer::View` and `ToClient::FarTile` for streamin
 | 9 | World entities: `Put`, `Remove`, `Build`, `Unbuild`; `Entities`, `EntityRefused`, `EntityDone` (see `decisions/world-editor`) |
 | 10 | Quarter-metre blocks in every world (`architecture/quarter-metre-blocks-decision`) |
 | 11 | Crossings carry motion and a frame; `Prepare`, `DoorState` (ADR 0004) |
+| 12 | Streaming by view: `ToServer::View` (also before `Hello`), `ToClient::FarTile` |
 
 ## Separate protocol
 Shows (host, guest, viewers) use a different format in `crates/vox-world/src/proto.rs`, carried by `vox-relay`. See `architecture/show-networking`.
@@ -88,3 +95,4 @@ Shows (host, guest, viewers) use a different format in `crates/vox-world/src/pro
 - [vox-core](vox-core.md): the entity and edit rules behind them
 - [Quarter-metre blocks](quarter-metre-blocks-decision.md): protocol 10
 - [Seamless transitions](../decisions/seamless-transitions.md): protocol 11
+- [Streaming by view radius, as built](../decisions/streaming-by-view-as-built.md): protocol 12

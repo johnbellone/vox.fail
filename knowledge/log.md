@@ -1,4 +1,6 @@
 ## 2026-11-28
+* **Update** [2026-11-28T13:54:52Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 12: View and FarTile (vox-cti.6), View before Hello (vox-cti.7).
+* **Creation** [2026-11-28T13:54:24Z]: Documented concept `decisions/streaming-by-view-as-built.md` (Streaming by View Radius, as Built (Paletted Chunks, Protocol 12)). — Recorded streaming as built (vox-cti.4, .6, .7, .8).
 * **Update** [2026-11-28T07:04:06Z]: Updated concept `decisions/seamless-transitions.md`. — Built: crossings carry motion and a frame (vox-81l.2), doorway states (vox-81l.8).
 * **Update** [2026-11-28T07:03:47Z]: Updated concept `decisions/traversing-servers.md`. — Built: server-to-server links (vox-7jh.1).
 * **Update** [2026-11-28T06:27:35Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 11: Through and Travel carry motion and a frame; Prepare, DoorState (vox-81l.2).

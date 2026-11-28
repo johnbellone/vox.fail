@@ -82,6 +82,7 @@ pub(super) async fn watch_connection(
     server: Server,
     conn: u64,
     protocol: u32,
+    view: Option<vox_core::wire::View>,
     mut sink: futures_util::stream::SplitSink<WebSocket, Message>,
     mut stream: futures_util::stream::SplitStream<WebSocket>,
 ) {
@@ -94,7 +95,7 @@ pub(super) async fn watch_connection(
         }
         let _ = sink.close().await;
     });
-    if server.tx.send(Event::Watch { conn, tx, protocol }).await.is_err() {
+    if server.tx.send(Event::Watch { conn, tx, protocol, view }).await.is_err() {
         return;
     }
     while let Some(Ok(m)) = stream.next().await {
@@ -110,14 +111,22 @@ pub(super) async fn watch_connection(
     writer.abort();
 }
 
+/// Views a player may send in a second (see the cap in [`run_connection`]).
+const MAX_VIEWS_PER_SECOND: u32 = 10;
+
 pub(super) async fn run_connection(server: Server, socket: WebSocket) {
     let conn = server.next_conn.fetch_add(1, Ordering::Relaxed);
     let (mut sink, mut stream) = socket.split();
-    // the first message must be a hello
+    // the first message must be a hello (or a watch), with at most a view before it: a client
+    // that streams by view says so first, so joining sends only what it asked for
+    let mut view = None;
     let hello = tokio::time::timeout(HELLO_WITHIN, async {
         while let Some(Ok(m)) = stream.next().await {
             if let Message::Binary(b) = m {
-                return wire::decode::<ToServer>(&b).ok();
+                match wire::decode::<ToServer>(&b).ok() {
+                    Some(ToServer::View(v)) if view.is_none() => view = Some(v.sane()),
+                    other => return other,
+                }
             }
         }
         None
@@ -125,7 +134,7 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
     .await;
     let (protocol, name, avatar, token) = match hello {
         Ok(Some(ToServer::Hello { protocol, name, avatar, token })) => (protocol, name, avatar, token),
-        Ok(Some(ToServer::Watch { protocol })) => return watch_connection(server, conn, protocol, sink, stream).await,
+        Ok(Some(ToServer::Watch { protocol })) => return watch_connection(server, conn, protocol, view, sink, stream).await,
         _ => {
             let bye = wire::encode(&ToClient::Bye { why: "say hello first".into() });
             let _ = sink.send(Message::Binary(bye.into())).await;
@@ -151,12 +160,12 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
         let _ = sink.close().await;
     });
     let name = clean(&name, 32);
-    if server.tx.send(Event::Join { conn, tx, protocol, name, avatar, account, arrive }).await.is_err() {
+    if server.tx.send(Event::Join { conn, tx, protocol, name, avatar, account, arrive, view }).await.is_err() {
         return;
     }
     // poses and voice have no limit further on: cap them here, before they queue. Each has its
     // own count in the same one-second window.
-    let (mut window, mut poses, mut voices) = (Instant::now(), 0u32, 0u32);
+    let (mut window, mut poses, mut voices, mut views) = (Instant::now(), 0u32, 0u32, 0u32);
     while let Some(Ok(m)) = stream.next().await {
         match m {
             Message::Binary(b) => match wire::decode::<ToServer>(&b) {
@@ -167,10 +176,21 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
                             break;
                         }
                         if window.elapsed() >= Duration::from_secs(1) {
-                            (window, poses, voices) = (Instant::now(), 0, 0);
+                            (window, poses, voices, views) = (Instant::now(), 0, 0, 0);
                         }
                         poses += 1;
                         if poses > MAX_POSES_PER_SECOND {
+                            continue;
+                        }
+                    }
+                    // a view is sent on crossing a chunk border: a few a second even flying fast;
+                    // more is someone making the world thread work for nothing
+                    if let ToServer::View(_) = &msg {
+                        if window.elapsed() >= Duration::from_secs(1) {
+                            (window, poses, voices, views) = (Instant::now(), 0, 0, 0);
+                        }
+                        views += 1;
+                        if views > MAX_VIEWS_PER_SECOND {
                             continue;
                         }
                     }
@@ -180,7 +200,7 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
                             continue;
                         }
                         if window.elapsed() >= Duration::from_secs(1) {
-                            (window, poses, voices) = (Instant::now(), 0, 0);
+                            (window, poses, voices, views) = (Instant::now(), 0, 0, 0);
                         }
                         voices += 1;
                         if voices > MAX_VOICE_PER_SECOND {

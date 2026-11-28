@@ -274,6 +274,15 @@ const ASK_WITHIN: f64 = 5.0;
 const HELD_WITHIN: f64 = 95.0;
 /// Most doorway states kept (a world's own doorways; a hostile world can't grow this).
 const DOOR_STATES_MOST: usize = 256;
+/// Chunks held past the view's radius before they are dropped (the server forgets them there too).
+const STREAM_KEEP_BEYOND: i64 = 2;
+/// A watcher's radius, in chunks: 48 m.
+const WATCH_RADIUS: u16 = 6;
+
+/// A view's radius in chunks for `metres` of full detail.
+pub fn stream_radius(metres: f32) -> u16 {
+    ((vox_core::in_blocks(metres.max(0.0)) / vox_core::world::CHUNK as f32).ceil() as u16).clamp(1, vox_core::wire::MAX_VIEW_RADIUS)
+}
 /// Farther than this (blocks) from a waking doorway's sill, we've walked off: 3 m, or half its
 /// width and a metre for a wide one, as the world's own limit on holding us (`HOLD_NEAR`).
 const WALKED_OFF: f32 = vox_core::in_blocks(3.0);
@@ -363,6 +372,12 @@ pub struct WorldClient {
     vy: f32,
     /// how fast you moved last frame, blocks a second (sent with a crossing)
     velocity: [f32; 3],
+    /// chunks of full detail round you to ask the world for (from the device's profile)
+    pub stream_radius: u16,
+    /// the chunk the last view was centred on (None: none sent on this connection yet)
+    last_view: Option<ChunkKey>,
+    /// the radius this world granted (from its welcome): chunks are dropped where it forgets them
+    pub granted_radius: Option<u16>,
     /// what each doorway here shows about where it leads, as the world last said (by name)
     pub door_states: HashMap<String, vox_core::travel::DoorState>,
     /// the doorway asked to go through, while its answer is awaited
@@ -486,6 +501,9 @@ impl Default for WorldClient {
             vy: 0.0,
             velocity: [0.0; 3],
             door_states: HashMap::new(),
+            stream_radius: stream_radius(crate::detail::Detail::default().view_m),
+            last_view: None,
+            granted_radius: None,
             asked_door: None,
             yaw: 0.0,
             cam_yaw: 0.0,
@@ -781,6 +799,46 @@ impl WorldClient {
         self.send(&ToServer::Through { portal: portal.into(), side: if side < 0.0 { -1 } else { 1 }, motion });
         self.asked = Some((a, self.now()));
         self.asked_door = Some(portal.to_string());
+    }
+
+    /// The view to send: centred on where you are (or are about to arrive), the radius the device
+    /// asks for, a small one when only watching.
+    pub fn view_now(&self) -> vox_core::wire::View {
+        let at = self.arrival.as_ref().map_or(self.body.pos, |a| a.pos);
+        let asked = if self.watch { WATCH_RADIUS } else { self.stream_radius };
+        let radius = self.granted_radius.map_or(asked, |g| asked.min(g.max(1)));
+        vox_core::wire::View { centre: ChunkKey::of(at.map(|v| v.floor() as i32)), radius, rings: 0, budget_kbps: 0 }
+    }
+
+    /// A new connection: the next view goes out before the hello, and the world there says what
+    /// it grants.
+    pub fn forget_view(&mut self) {
+        self.last_view = None;
+    }
+
+    /// The world's welcome said what radius it grants (`view_radius` in its settings).
+    pub fn grant(&mut self, settings: &serde_json::Value) {
+        let g = settings["view_radius"].as_u64().map(|r| r.min(vox_core::wire::MAX_VIEW_RADIUS as u64) as u16);
+        if g != self.granted_radius {
+            self.granted_radius = g;
+            self.last_view = None;
+        }
+    }
+
+    /// Streaming, each frame: once you are in a new chunk, the view to send the world (None while
+    /// in the same one), and the chunks now past the radius and two more are dropped (their
+    /// meshes go with the next remesh).
+    pub fn stream(&mut self) -> Option<vox_core::wire::View> {
+        let v = self.view_now();
+        if self.last_view == Some(v.centre) {
+            return None;
+        }
+        self.last_view = Some(v.centre);
+        let keep = (v.radius as i64 + STREAM_KEEP_BEYOND).pow(2);
+        let c = v.centre.0;
+        let gone = self.view.confirmed.drop_chunks(|k| (0..3).map(|i| (k.0[i] as i64 - c[i] as i64).pow(2)).sum::<i64>() <= keep);
+        self.dirty.extend(gone);
+        Some(v)
     }
 
     /// Put back at `to` (blocks) by something that won't let you on, no longer falling.
@@ -1366,5 +1424,60 @@ mod tests {
 
         assert!(w.apply_live_settings(serde_json::json!({"voice_radius": 8.0})));
         assert_eq!(w.voice_radius, 8.0);
+    }
+
+    #[test]
+    fn walking_200_m_keeps_the_chunks_held_bounded() {
+        let mut w = WorldClient::default();
+        w.stream_radius = 4;
+        // a line of chunks with blocks in them, 100 chunks (800 m) long
+        let mut c = vox_core::world::Chunk::default();
+        c.set([0, 0, 0], 1);
+        for x in -10..90 {
+            w.view.confirmed.put_chunk(ChunkKey([x, 0, 0]), c.clone());
+        }
+        assert!(w.stream().is_some(), "the first view goes out");
+        assert!(w.stream().is_none(), "the same chunk: nothing to send");
+        // a metre at a time, east, 200 m
+        let mut sent = 0;
+        let mut most = 0;
+        for step in 0..=200 {
+            w.body.pos = [vox_core::in_blocks(step as f32), 0.0, 0.0];
+            if let Some(v) = w.stream() {
+                sent += 1;
+                assert_eq!(v.centre, ChunkKey::of(w.body.pos.map(|p| p.floor() as i32)));
+                assert_eq!(v.radius, 4);
+            }
+            most = most.max(w.view.confirmed.chunk_count());
+        }
+        // 200 m is 800 blocks, 25 chunks: a view each
+        assert_eq!(sent, 25);
+        // at most the radius and two more each way along the line
+        assert!(most <= 2 * (4 + 2) + 1, "{most}");
+        assert!(w.view.confirmed.chunk_count() <= 2 * (4 + 2) + 1, "{}", w.view.confirmed.chunk_count());
+        assert!(w.view.confirmed.chunk(ChunkKey([0, 0, 0])).is_none(), "far behind: dropped");
+        assert!(w.dirty.contains(&ChunkKey([0, 0, 0])), "its mesh goes at the next remesh");
+    }
+
+    #[test]
+    fn a_world_that_grants_less_is_asked_for_no_more() {
+        let mut w = WorldClient::default();
+        w.stream_radius = 16;
+        w.grant(&serde_json::json!({ "view_radius": 4 }));
+        assert_eq!(w.view_now().radius, 4);
+        w.grant(&serde_json::json!({ "view_radius": 1000 }));
+        assert_eq!(w.view_now().radius, 16, "never more than the device asks");
+        w.grant(&serde_json::json!({}));
+        assert_eq!(w.view_now().radius, 16, "a world that says nothing");
+    }
+
+    #[test]
+    fn a_devices_view_in_metres_is_chunks() {
+        assert_eq!(stream_radius(128.0), 16);
+        assert_eq!(stream_radius(64.0), 8);
+        assert_eq!(stream_radius(0.0), 1);
+        let mut w = WorldClient::default();
+        w.watch = true;
+        assert_eq!(w.view_now().radius, WATCH_RADIUS);
     }
 }
