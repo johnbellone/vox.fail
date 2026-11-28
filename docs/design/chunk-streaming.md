@@ -172,6 +172,22 @@ keep one chunk format everywhere.
   doorway, not a second world.
 - Acceptance: seeding the sea peaks under 400 MB on the server, and the Void with the Tide Door
   in view stays under 300 MB of wasm memory in Chrome.
+- **Done (vox-cti.2, vox-cti.3).** Seeding the sea now peaks at 142 MB, which is also its
+  memory at rest (it was 1,687 MB), and the islands at 97 MB. An echo holds the chunks within
+  the device's echo radius of its arrival point: from the Void, the sea is 659 chunks on the
+  desktop (64 m), 390 in a browser (48 m) and 123 on a phone (24 m), not its 2,179. The avatar
+  app's level sets load the same way. Browser memory is still to be measured (vox-cti.1).
+- **Device profiles** (`crates/vox-world/src/detail.rs`): desktop, browser and mobile, each
+  with a full-detail distance, LOD rings, an echo radius and a meshing budget. The page picks
+  `mobile` for a touch screen or a browser that says it's mobile (`deviceDetail` in
+  `apps/site/src/game/wasm.ts`); `vox-client --detail mobile` tries it on the desktop.
+
+  | | Desktop | Browser | Mobile |
+  | --- | --- | --- | --- |
+  | Full detail | 128 m | 64 m | 32 m |
+  | LOD rings | 3 | 3 | 2 |
+  | Echo radius | 64 m | 48 m | 24 m |
+  | Meshing per frame | 8 ms | 5 ms | 3 ms |
 
 ### 2. Paletted chunks
 
@@ -304,6 +320,8 @@ vox-cti.3 block shipping the quarter-metre branch.
 7. **Cave culling**, then draw-call batching if measurements call for it.
 
 ## Budgets (first targets)
+
+Per device profile (see §1, *Device profiles*, for mobile):
 
 | | Browser | Desktop |
 | --- | --- | --- |

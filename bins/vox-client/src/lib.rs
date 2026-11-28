@@ -51,6 +51,11 @@ pub struct Start {
     /// Browser only: the desktop client ignores it, since there is no page to talk to
     #[serde(default)]
     pub edit: bool,
+    /// how much this device draws and keeps: `desktop`, `browser` or `mobile`
+    /// (vox_world::detail). The page says which in the browser; unknown or missing means the
+    /// platform's default.
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 impl Start {
@@ -126,6 +131,7 @@ pub fn app(start: Start, assets: String) -> App {
     ))
     .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::voice::plugin::VoicePlugin, vox_world::hud::HudPlugin, vox_world::menu::MenuPlugin, vox_world::props::PropPlugin))
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
+    .insert_resource(start.detail.as_deref().and_then(vox_world::detail::Profile::parse).unwrap_or_else(vox_world::detail::Profile::native).detail())
     .insert_resource(
         world::WorldClient::new(Some(start.url.clone()), start.name.clone())
             .with_token(start.token.clone())

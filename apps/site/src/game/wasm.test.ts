@@ -1,8 +1,9 @@
 // The play page's check before loading the client: no WebGPU, or no GPU behind it, is said
-// plainly (Firefox gets the setting to switch on), rather than the client stopping at "Starting…".
+// plainly (Firefox gets the setting to switch on), rather than the client stopping at "Starting…";
+// and which detail profile the device gets.
 
 import { expect, test } from "bun:test";
-import { webgpuProblem } from "./wasm";
+import { deviceDetail, webgpuProblem } from "./wasm";
 
 const FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0";
 const CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0 Safari/537.36";
@@ -26,4 +27,11 @@ test("WebGPU without a graphics card says so", async () => {
 
 test("a GPU to draw with: no problem", async () => {
   expect(await webgpuProblem(FIREFOX, { requestAdapter: async () => ({}) })).toBeUndefined();
+});
+
+test("phones and tablets get the mobile profile, computers the browser one", () => {
+  expect(deviceDetail({ coarse: true })).toBe("mobile");
+  expect(deviceDetail({ coarse: false, mobile: true })).toBe("mobile");
+  expect(deviceDetail({ coarse: false, mobile: false })).toBe("browser");
+  expect(deviceDetail({ coarse: false })).toBe("browser");
 });

@@ -2,15 +2,11 @@
 
 use super::*;
 
-/// How long meshing may take each frame: a world arriving all at once fills in over a few
-/// frames, nearest first, instead of stopping the game. (At least one chunk always goes.)
-#[cfg(not(target_arch = "wasm32"))]
-const MESH_BUDGET_MS: u128 = 8;
-#[cfg(target_arch = "wasm32")]
-const MESH_BUDGET_MS: u128 = 5;
-
-/// Rebuild the meshes of chunks that changed, nearest to you first, within a budget.
+/// Rebuild the meshes of chunks that changed, nearest to you first, within the device's
+/// per-frame budget ([`crate::detail::Detail::mesh_budget_ms`]): a world arriving all at once
+/// fills in over a few frames instead of stopping the game. (At least one chunk always goes.)
 pub fn remesh(
+    detail: Option<Res<crate::detail::Detail>>,
     mut w: ResMut<WorldClient>,
     blocks: Res<crate::blocks::Blocks>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -28,11 +24,12 @@ pub fn remesh(
     if backlog.0 == 0 {
         *backlog = (keys.len(), w.now(), 0.0, 0);
     }
+    let budget = u128::from(crate::detail::Detail::of(detail.as_deref()).mesh_budget_ms);
     let started = Instant::now();
     let mut grid = Vec::new();
     let mut done = 0;
     for k in keys {
-        if done > 0 && started.elapsed().as_millis() >= MESH_BUDGET_MS {
+        if done > 0 && started.elapsed().as_millis() >= budget {
             break;
         }
         w.dirty.remove(&k);

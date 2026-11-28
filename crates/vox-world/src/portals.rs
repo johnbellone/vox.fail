@@ -215,9 +215,12 @@ pub struct PortalSurface;
 
 type Loaded = Result<(Meshes, Value), String>;
 
-/// A destination level, meshed and placed on its own layer.
+/// A destination level, meshed and placed on its own layer: only the part round the arrival
+/// point, `region` (the far side is a picture through a doorway, not a second world, and a
+/// whole level at quarter-metre blocks can be tens of millions of blocks).
 struct Scene {
     level: String,
+    region: vox_core::Bounds,
     layer: usize,
     offset: Vec3,
     look: Option<SkyLook>,
@@ -281,9 +284,26 @@ fn target(px: UVec2) -> Image {
     img
 }
 
-/// Mesh a level in the background, once its file is here (in the browser it's fetched first:
-/// None means ask again next frame).
-fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Option<Loaded>>>> {
+/// The part of a level an echo arriving at `arrive` (blocks) holds: `radius_m` round it along
+/// x and z, every height.
+fn echo_region(arrive: Vec3, radius_m: f32) -> vox_core::Bounds {
+    let r = vox_core::in_blocks(radius_m).ceil();
+    // `as` saturates, so a wild arrival point from a level file can't overflow
+    let lo = |v: f32| (v - r).floor() as i32;
+    let hi = |v: f32| ((v + r).ceil() as i32).saturating_add(1);
+    vox_core::Bounds { lo: [lo(arrive.x), i32::MIN, lo(arrive.z)], hi: [hi(arrive.x), i32::MAX, hi(arrive.z)] }
+}
+
+/// Does `region` hold the echo for an arrival at `arrive` well enough: is `arrive` at least
+/// half the radius inside it? Otherwise a doorway gets a scene of its own.
+fn covers(region: &vox_core::Bounds, arrive: Vec3, radius_m: f32) -> bool {
+    let m = vox_core::in_blocks(radius_m) * 0.5;
+    arrive.x - m >= region.lo[0] as f32 && arrive.x + m <= region.hi[0] as f32 && arrive.z - m >= region.lo[2] as f32 && arrive.z + m <= region.hi[2] as f32
+}
+
+/// Mesh a level's `region` in the background, once its file is here (in the browser it's
+/// fetched first: None means ask again next frame).
+fn load(level: &str, region: vox_core::Bounds, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Option<Loaded>>>> {
     let slot = Arc::new(Mutex::new(None));
     let Some(path) = crate::blocks::level_path(level) else {
         *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("no level called {level}")));
@@ -298,9 +318,9 @@ fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Opti
         .spawn(async move {
             let made = (|| -> Loaded {
                 let pal = crate::blocks::Palette::load(&crate::files::base().join("data/blocks.json"))?;
-                let cells = crate::blocks::load_level(&text, &pal)?;
+                let world = crate::blocks::load_level_world(&text, &pal, Some(region))?;
                 let settings = serde_json::from_str(&vox_core::level::settings(&text)).unwrap_or(Value::Null);
-                Ok((crate::blocks::mesh_level(&cells, &pal, &rects), settings))
+                Ok((crate::blocks::mesh_world(&world, &pal, &rects), settings))
             })();
             if let Err(e) = &made {
                 crate::note!("[portal] echo of {level}: {e}");
@@ -333,7 +353,9 @@ pub fn update(
         ResMut<Assets<FloorMaterial>>,
     ),
     mut commands: Commands,
+    detail: Option<Res<crate::detail::Detail>>,
 ) {
+    let echo_m = crate::detail::Detail::of(detail.as_deref()).echo_m;
     let p = &mut *portals;
     if !w.active() {
         for l in p.live.drain(..) {
@@ -381,16 +403,18 @@ pub fn update(
             commands.entity(l.cam).try_despawn();
         }
         for def in w.portals.clone() {
-            let scene = match p.scenes.iter().position(|s| s.level == def.level) {
+            let scene = match p.scenes.iter().position(|s| s.level == def.level && covers(&s.region, def.arrive, echo_m)) {
                 Some(i) => i,
                 None => {
                     let i = p.scenes.len();
+                    let region = echo_region(def.arrive, echo_m);
                     p.scenes.push(Scene {
                         level: def.level.clone(),
+                        region,
                         layer: i + 1,
                         offset: Vec3::new(AWAY + APART * i as f32, 0.0, 0.0),
                         look: None,
-                        loading: load(&def.level, &blocks.rects),
+                        loading: load(&def.level, region, &blocks.rects),
                         env: None,
                         failed: false,
                     });
@@ -433,7 +457,7 @@ pub fn update(
     // ---- echoes arriving from the background
     for s in &mut p.scenes {
         if s.loading.is_none() && s.look.is_none() && !s.failed {
-            s.loading = load(&s.level, &blocks.rects);
+            s.loading = load(&s.level, s.region, &blocks.rects);
         }
         let Some(slot) = &s.loading else { continue };
         let Some(made) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() else { continue };
@@ -666,6 +690,22 @@ fn go(w: &mut WorldClient, def: &PortalDef, body: Vec3, side: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_echo_holds_the_part_round_its_arrival() {
+        let r = echo_region(Vec3::new(10.0, 3.0, -20.0), 48.0);
+        let reach = vox_core::in_blocks(48.0) as i32;
+        assert_eq!((r.lo[0], r.lo[2]), (10 - reach, -20 - reach));
+        assert_eq!((r.hi[0], r.hi[2]), (10 + reach + 1, -20 + reach + 1));
+        assert!(r.contains([10, -1000, -20]) && r.contains([10, 1000, -20]), "every height");
+        assert!(!r.contains([10 + reach + 2, 0, -20]));
+        // a second doorway arriving near the first shares its echo; one far away gets its own
+        assert!(covers(&r, Vec3::new(20.0, 0.0, -20.0), 48.0));
+        assert!(!covers(&r, Vec3::new(10.0 + reach as f32, 0.0, -20.0), 48.0));
+        // a wild arrival point can't overflow
+        let far = echo_region(Vec3::new(f32::MAX, 0.0, f32::MIN), 48.0);
+        assert!(far.lo[0] <= far.hi[0] && far.lo[2] <= far.hi[2]);
+    }
 
     fn gate() -> PortalDef {
         parse(&serde_json::json!({"portals": [

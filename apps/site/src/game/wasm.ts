@@ -24,6 +24,8 @@ export interface StartConfig {
   /** start in edit mode (the world editor); the client refuses commands otherwise */
   edit?: boolean;
   base?: string;
+  /** how much this device draws and keeps (vox_world::detail): `browser` or `mobile` */
+  detail?: "desktop" | "browser" | "mobile";
 }
 
 interface Client {
@@ -49,7 +51,26 @@ export async function loadClient(): Promise<(config: StartConfig) => void> {
     throw new Error("the browser client isn't installed on this server yet (tools/dev/build_web.sh builds it)");
   }
   loaded = client;
-  return (config) => client.start(JSON.stringify({ base: location.origin, ...config }));
+  return (config) => client.start(JSON.stringify({ base: location.origin, detail: deviceDetail(), ...config }));
+}
+
+interface Device {
+  coarse: boolean;
+  mobile?: boolean;
+}
+
+/**
+ * The detail profile for this device: `mobile` for a phone or tablet (a touch screen as the
+ * main pointer, or a browser that says it's mobile), else `browser`. Phones get a shorter draw
+ * distance and smaller portal echoes. `device` is a parameter so the rule can be tested.
+ */
+export function deviceDetail(
+  device: Device = {
+    coarse: typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches,
+    mobile: (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile,
+  },
+): "browser" | "mobile" {
+  return device.coarse || device.mobile ? "mobile" : "browser";
 }
 
 /** Sends one editor command (JSON text) to the running client. Throws when no client is loaded

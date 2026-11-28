@@ -10,6 +10,7 @@
 //! - [`portals`]: doorways that show an echo of another place and lead there.
 //! - [`pose`] and [`proto`]: avatars over the network (the pose format and playing it back).
 //! - [`files`]: reading the game's files from disk, or (in the browser) from what was fetched.
+//! - [`detail`]: how much a desktop, a browser or a phone draws and keeps.
 //!
 //! What the host app provides: a camera marked [`WorldCamera`], a [`LocalAvatar`] describing
 //! the player's own character (and acting on its `walking`), and a [`WorldRender`] with the
@@ -17,6 +18,7 @@
 
 pub mod blocks;
 pub mod client;
+pub mod detail;
 pub mod editor;
 pub mod entities;
 pub mod files;

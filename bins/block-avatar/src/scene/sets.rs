@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use crate::blocks::{Blocks, LevelRoot, Meshes, level_path, load_level, mesh_level};
+use crate::blocks::{Blocks, LevelRoot, Meshes, level_path, load_level_world, mesh_world};
 
 /// A level that just became the set: read it, mesh it, put it in place (with a sky behind).
 pub fn build(
@@ -22,7 +22,8 @@ pub fn build(
         let cells = level_path(&root.0)
             .ok_or_else(|| format!("no level called {}", root.0))
             .and_then(|p| std::fs::read_to_string(&p).map_err(|e| e.to_string()))
-            .and_then(|t| load_level(&t, pal));
+            // held as chunks, not a map of every block: levels are big at quarter-metre blocks
+            .and_then(|t| load_level_world(&t, pal, None));
         let cells = match cells {
             Ok(c) => c,
             Err(err) => {
@@ -31,8 +32,8 @@ pub fn build(
                 continue;
             }
         };
-        let Meshes { opaque, glass: clear, water, flame } = mesh_level(&cells, pal, &blocks.rects);
-        crate::note!("[blocks] level {}: {} blocks, {} faces", root.0, cells.len(), opaque.faces() + clear.faces() + water.faces());
+        let Meshes { opaque, glass: clear, water, flame } = mesh_world(&cells, pal, &blocks.rects);
+        crate::note!("[blocks] level {}: {} blocks, {} faces", root.0, cells.count(), opaque.faces() + clear.faces() + water.faces());
         commands.entity(e).with_children(|c| {
             c.spawn((Mesh3d(meshes.add(opaque.into_mesh())), MeshMaterial3d(blocks.solid.clone()), crate::bevel::NoBevel, Name::new("level")));
             if clear.faces() > 0 {

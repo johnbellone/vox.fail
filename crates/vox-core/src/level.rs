@@ -142,8 +142,14 @@ pub fn bounds(text: &str) -> Option<Bounds> {
     ok.then_some(Bounds { lo, hi })
 }
 
-/// A level's blocks: position -> id, where id is the index in `names` plus one.
-pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> {
+/// A level's blocks, put one at a time into `put(cell, id)` in the file's order (id 0 is air:
+/// clear the cell), only those inside `within`. Boxes are clipped to `within` before their
+/// cells are visited, so a small region of a big level costs only that region. Every block
+/// name is checked before anything is put, so a bad level puts nothing.
+///
+/// Nothing here holds the level's blocks: at quarter-metre blocks the sea is 34 million of
+/// them, which a map of every block can't afford (docs/design/chunk-streaming.md).
+pub fn apply(text: &str, names: &[String], within: Bounds, mut put: impl FnMut(Cell, u16)) -> Result<(), String> {
     let f: LevelFile = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let id = |name: &str| -> Result<u16, String> {
         if name == "air" {
@@ -156,31 +162,37 @@ pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> 
                 .ok_or_else(|| format!("no block called \"{name}\""))
         }
     };
-    let mut cells = HashMap::new();
-    let mut put = |p: Cell, b: u16| {
-        if b == 0 {
-            cells.remove(&p);
-        } else {
-            cells.insert(p, b);
-        }
-    };
+    // names and sizes first
+    let mut boxes = Vec::with_capacity(f.boxes.len());
     for bx in &f.boxes {
         let b = id(&bx.block)?;
         let lo: [i32; 3] = std::array::from_fn(|i| bx.from[i].min(bx.to[i]));
         let hi: [i32; 3] = std::array::from_fn(|i| bx.from[i].max(bx.to[i]));
-        let size: [f32; 3] = std::array::from_fn(|i| (hi[i] - lo[i]) as f32);
+        // in i64: the corners come from a file, and their difference can overflow an i32
+        let size: [f32; 3] = std::array::from_fn(|i| (i64::from(hi[i]) - i64::from(lo[i])) as f32);
         if (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() > MAX_BOX {
             return Err(format!("a {} box is too big", bx.block));
         }
-        let centre: [f32; 3] = std::array::from_fn(|i| (lo[i] + hi[i]) as f32 * 0.5);
+        boxes.push((bx, b, lo, hi, size));
+    }
+    let singles: Vec<(Cell, u16)> = f.blocks.iter().map(|(x, y, z, name)| Ok(([*x, *y, *z], id(name)?))).collect::<Result<_, String>>()?;
+    for (bx, b, lo, hi, size) in boxes {
+        let centre: [f32; 3] = std::array::from_fn(|i| (lo[i] as f32 + hi[i] as f32) * 0.5);
         let half: [f32; 3] = std::array::from_fn(|i| (size[i] * 0.5 + 0.5).max(0.5));
-        for x in lo[0]..=hi[0] {
-            for y in lo[1]..=hi[1] {
-                for z in lo[2]..=hi[2] {
+        let t = i32::from(bx.thick.unwrap_or(1).max(1));
+        // the part of the box inside the region (hi inclusive here, exclusive in Bounds)
+        let first: [i32; 3] = std::array::from_fn(|i| lo[i].max(within.lo[i]));
+        let last: [i32; 3] = std::array::from_fn(|i| hi[i].min(within.hi[i].saturating_sub(1)));
+        // a hollow box's middle: more than `t` in from every face (in i64, as for `size`)
+        let middle = |p: Cell| (0..3).all(|i| {
+            let (v, t) = (i64::from(p[i]), i64::from(t));
+            v >= i64::from(lo[i]) + t && v <= i64::from(hi[i]) - t
+        });
+        for x in first[0]..=last[0] {
+            for y in first[1]..=last[1] {
+                for z in first[2]..=last[2] {
                     let p = [x, y, z];
-                    let t = i32::from(bx.thick.unwrap_or(1).max(1));
-                    let inside = (0..3).all(|i| p[i] >= lo[i] + t && p[i] <= hi[i] - t);
-                    if bx.hollow && inside {
+                    if bx.hollow && middle(p) {
                         continue;
                     }
                     if let Some(r) = bx.round {
@@ -194,24 +206,42 @@ pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> 
             }
         }
     }
-    for (x, y, z, name) in &f.blocks {
-        put([*x, *y, *z], id(name)?);
+    for (c, b) in singles {
+        if within.contains(c) {
+            put(c, b);
+        }
     }
+    Ok(())
+}
+
+/// Bounds that take in every block a level can have: for reading a whole level.
+pub fn everywhere() -> Bounds {
+    Bounds { lo: [i32::MIN; 3], hi: [i32::MAX; 3] }
+}
+
+/// A level's blocks as a map: position -> id, where id is the index in `names` plus one. For
+/// tests and small levels; a world is filled with [`fill`], which keeps no map.
+pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> {
+    let mut cells = HashMap::new();
+    apply(text, names, everywhere(), |p, b| {
+        if b == 0 {
+            cells.remove(&p);
+        } else {
+            cells.insert(p, b);
+        }
+    })?;
     Ok(cells)
 }
 
-/// Put a level's blocks into a world (those outside its bounds are left out); returns how
-/// many went in.
+/// Put a level's blocks into a world (those outside its bounds are left out), straight into
+/// its chunks; returns how many blocks the world gained.
 pub fn fill(world: &mut World, text: &str, names: &[String]) -> Result<usize, String> {
-    let cells = load(text, names)?;
-    let mut n = 0;
-    for (c, b) in cells {
-        if world.bounds.contains(c) {
-            world.set(c, b);
-            n += 1;
-        }
-    }
-    Ok(n)
+    let before = world.count();
+    let within = world.bounds;
+    apply(text, names, within, |c, b| {
+        world.set(c, b);
+    })?;
+    Ok(world.count().saturating_sub(before))
 }
 
 #[cfg(test)]
@@ -254,6 +284,41 @@ mod tests {
         assert_eq!(c.get(&[3, 3, 3]), None, "the middle");
         assert_eq!(c.get(&[4, 4, 4]), Some(&2), "the shell's inner layer, far side");
         assert_eq!(c.len(), 6 * 6 * 6 - 2 * 2 * 2);
+    }
+
+    #[test]
+    fn a_region_of_a_level_is_that_region_of_the_whole() {
+        let text = r#"{
+            "boxes": [
+                { "block": "grass", "from": [-20, -1, -20], "to": [20, -1, 20] },
+                { "block": "stone", "from": [-3, 0, -3], "to": [6, 5, 6], "hollow": true, "thick": 2 },
+                { "block": "leaves", "from": [2, 2, 2], "to": [9, 9, 9], "round": 0.9 },
+                { "block": "air", "from": [0, -1, 0], "to": [1, -1, 1] }
+            ],
+            "blocks": [[4, 4, 4, "stone"], [30, 0, 0, "stone"]]
+        }"#;
+        let whole = load(text, &names()).unwrap();
+        let region = Bounds { lo: [-2, -1, 1], hi: [5, 4, 8] };
+        let mut part = HashMap::new();
+        apply(text, &names(), region, |c, b| {
+            assert!(region.contains(c), "{c:?} is outside the region");
+            if b == 0 { part.remove(&c); } else { part.insert(c, b); }
+        })
+        .unwrap();
+        let want: HashMap<Cell, u16> = whole.into_iter().filter(|(c, _)| region.contains(*c)).collect();
+        assert!(!want.is_empty());
+        assert_eq!(part, want);
+    }
+
+    #[test]
+    fn a_level_with_a_bad_block_puts_nothing() {
+        let text = r#"{"boxes": [{ "block": "stone", "from": [0, 0, 0], "to": [3, 3, 3] }, { "block": "lava", "from": [0, 0, 0], "to": [0, 0, 0] }]}"#;
+        let mut put = 0;
+        assert!(apply(text, &names(), everywhere(), |_, _| put += 1).is_err());
+        assert_eq!(put, 0);
+        // corners far apart are refused, not overflowed
+        let wide = r#"{"boxes": [{ "block": "stone", "from": [-2147483648, 0, 0], "to": [2147483647, 0, 0] }]}"#;
+        assert!(load(wide, &names()).is_err());
     }
 
     #[test]

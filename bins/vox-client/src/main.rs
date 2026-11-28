@@ -3,7 +3,8 @@
 //! The launch code comes from the directory's page ("Copy launch code"); it says who you are
 //! and what you look like. Without one, `--model models/dog.glb --name Sam` joins a world
 //! that lets guests in. `--world` defaults to the Void at vox.fail (`--world
-//! ws://127.0.0.1:7780/ws` for one on this machine).
+//! ws://127.0.0.1:7780/ws` for one on this machine). `--detail browser` or `--detail mobile`
+//! draws and keeps as little as a browser or a phone would (`vox_world::detail`), to try them.
 
 use std::path::PathBuf;
 
@@ -27,6 +28,7 @@ fn main() {
         watch: args.iter().any(|a| a == "--watch"),
         // the in-world editor is a page feature: only the browser client starts it
         edit: false,
+        detail: arg("--detail"),
     }
     .from_token();
     vox_client::app(start, root.join("assets").to_string_lossy().into_owned()).run();
