@@ -5,7 +5,14 @@
 use super::*;
 
 pub(super) async fn status_page(State(server): State<Server>) -> Json<serde_json::Value> {
-    Json(server.status().await.map(|s| s.json()).unwrap_or(serde_json::json!({ "error": "stopped" })))
+    let Some(mut page) = server.status().await.map(|s| s.json()) else { return Json(serde_json::json!({ "error": "stopped" })) };
+    let neighbours: Vec<_> = server.neighbours().into_iter().map(|n| serde_json::json!({ "world": n.world, "linked": n.linked })).collect();
+    page["neighbours"] = serde_json::json!(neighbours);
+    Json(page)
+}
+
+pub(super) async fn link(State(server): State<Server>, ws: WebSocketUpgrade) -> Response {
+    server.accept_link(ws)
 }
 
 pub(super) async fn connect(State(server): State<Server>, ws: WebSocketUpgrade) -> Response {
