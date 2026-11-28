@@ -7040,6 +7040,7 @@ name = "vox-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "blake3",
  "ed25519-dalek",
  "postcard",
  "serde",
@@ -7146,6 +7147,7 @@ dependencies = [
  "vox-core",
  "vox-format",
  "vox-graph",
+ "vox-link",
  "vox-voice",
 ]
 

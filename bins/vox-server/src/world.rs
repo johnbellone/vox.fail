@@ -4,6 +4,7 @@
 #[allow(unused_imports)]
 use super::*;
 use crate::entities::{self, Entities};
+use crate::neighbours;
 use crate::props;
 use vox_core::edit::{self, Ctx, EYES, PlotArea, REACH, Role};
 use vox_core::entity::{Axis, Component, Dest, EntityWhy, Portal, Prop, Settings, Spawn, prop_cell};
@@ -22,6 +23,8 @@ const BUILD_PER_TICK: usize = 4_096;
 /// A chunk that one tick's batch changes by more than this many blocks is sent whole (`Chunk`)
 /// rather than as a run of `Applied` entries.
 const BULK_CHUNK: usize = 256;
+/// How often the world works out its neighbours again (portals and settings change).
+const PLAN_EVERY: Duration = Duration::from_secs(2);
 
 impl WorldState {
     pub(super) fn open(mut cfg: Config) -> Result<WorldState, String> {
@@ -171,6 +174,8 @@ impl WorldState {
             build_palette,
             builds: VecDeque::new(),
             last_build: None,
+            plan: None,
+            plan_at: Instant::now(),
         };
         // the entities are the source of truth: where the stored settings differ from them, the
         // world takes the entities' (a change made while it was closed)
@@ -216,6 +221,9 @@ impl WorldState {
                         self.save();
                     }
                     self.build_step();
+                    if self.plan_at.elapsed() >= PLAN_EVERY {
+                        self.send_plan();
+                    }
                     // a refund that could not be queued is tried once more, here
                     for (account, key) in std::mem::take(&mut self.refunds_due) {
                         if !self.ask_refund(account, key) {
@@ -612,13 +620,7 @@ impl WorldState {
         let Some(tile) = &self.cfg.tile else { return };
         let Some((_, d)) = vox_core::terrain::EDGES.iter().find(|(n, _)| *n == edge) else { return };
         let Some(next) = tile.next(*d) else { return };
-        // an edge the Settings entity no longer lists is closed; a world whose settings say
-        // nothing about edges stays open, as every world was before this rule
-        let closed = serde_json::from_str::<serde_json::Value>(&self.settings_now())
-            .ok()
-            .and_then(|s| s["atlas"]["edges"].as_array().map(|e| !e.iter().any(|x| x.as_str() == Some(edge))))
-            .unwrap_or(false);
-        if closed {
+        if !self.edge_open(edge) {
             return;
         }
         let Some(p) = self.players.get(&conn) else { return };
@@ -649,6 +651,51 @@ impl WorldState {
         let frame = Frame::moved([-(d[0] as f32) * t, 0.0, -(d[1] as f32) * t]);
         let (account, tx) = (p.account, p.tx.clone());
         self.send_on(conn, account, &tx, url, arrive, motion, frame);
+    }
+
+    /// Is this tile's `edge` open? An edge the Settings entity no longer lists is closed; a world
+    /// whose settings say nothing about edges stays open, as every world was before this rule.
+    fn edge_open(&self, edge: &str) -> bool {
+        let closed = serde_json::from_str::<serde_json::Value>(&self.settings_now())
+            .ok()
+            .and_then(|s| s["atlas"]["edges"].as_array().map(|e| !e.iter().any(|x| x.as_str() == Some(edge))))
+            .unwrap_or(false);
+        !closed
+    }
+
+    /// Work out this world's neighbours (neighbours.rs) and hand them to the link task if they
+    /// changed: the tiles over its open edges, and where its doorways lead.
+    pub(super) fn send_plan(&mut self) {
+        self.plan_at = Instant::now();
+        let (Some(plan), Some(base)) = (&self.plan, &self.cfg.link_base) else { return };
+        let tiles: Vec<String> = match &self.cfg.tile {
+            Some(tile) => vox_core::terrain::EDGES
+                .iter()
+                .filter(|(name, _)| self.edge_open(name))
+                .filter_map(|(_, d)| tile.next(*d))
+                .map(|next| next.id())
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut urls: Vec<String> = self
+            .entities
+            .map
+            .values()
+            .filter_map(|(_, c)| match c {
+                Component::Portal(p) => self.travel_of(p)?.0,
+                _ => None,
+            })
+            .collect();
+        urls.sort();
+        urls.dedup();
+        let next = neighbours::plan(&tiles, &urls, base, self.cfg.link_hosted);
+        plan.send_if_modified(|now| {
+            let changed = *now != next;
+            if changed {
+                *now = next;
+            }
+            changed
+        });
     }
 
     /// Someone stands at the objective: it's reached (once), everyone here is told, and the

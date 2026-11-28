@@ -10,3 +10,5 @@ serde_json.workspace = true
 postcard.workspace = true
 ed25519-dalek = "2"
 base64 = "0.22"
+# the neighbour link's proofs (keyed hashes of the world secret); already built for vox-format, wasm too
+blake3 = "1"

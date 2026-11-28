@@ -5,6 +5,8 @@
 //! `/w/<id>/` its status. A world may also answer to an **alias**, the port it used to have
 //! (`/w/7781/ws` for the yard), so levels whose portals say `":7781"` and clients already at
 //! `wss://vox.fail/w/7780/ws` keep working unchanged. `GET /` lists the worlds.
+//! `/w/<id>/link` is a neighbouring world's link to world `<id>` (see vox-server's
+//! neighbours.rs); it reaches only a running world, and never starts one.
 //!
 //! **On demand** (with an idle time, [`Options::idle`]): a world starts when the first
 //! connection for it arrives, and is saved and stopped once nobody has played in it or watched
@@ -256,10 +258,10 @@ impl Host {
         Ok(host)
     }
 
-    /// The routes: `/w/<name>/ws`, `/w/<name>/`, `GET /` listing the worlds, and (with
+    /// The routes: `/w/<name>/ws`, `/w/<name>/link`, `/w/<name>/`, `GET /` listing the worlds, and (with
     /// instances) `POST /api/host/instance` for the directory.
     pub fn router(&self) -> Router {
-        let mut r = Router::new().route("/", get(list)).route("/w/{name}/", get(status)).route("/w/{name}/ws", get(connect));
+        let mut r = Router::new().route("/", get(list)).route("/w/{name}/", get(status)).route("/w/{name}/ws", get(connect)).route("/w/{name}/link", get(link));
         if self.instances.is_some() {
             r = r.route("/api/host/instance", post(make_instance));
         }
@@ -351,6 +353,17 @@ async fn connect(State(host): State<Host>, Path(name): Path<String>, ws: WebSock
             eprintln!("vox-host: can't start {}: {e}", w.id);
             (StatusCode::SERVICE_UNAVAILABLE, "that world can't be opened just now").into_response()
         }
+    }
+}
+
+/// A neighbour's link to a world. Only a running world takes one: a link that started its
+/// neighbours would wake them in a chain across a whole atlas, and keep idle worlds from
+/// stopping. The dialler tries again (with backoff) until the world is running.
+async fn link(State(host): State<Host>, Path(name): Path<String>, ws: WebSocketUpgrade) -> Response {
+    let Some(w) = host.world(&name) else { return StatusCode::NOT_FOUND.into_response() };
+    match w.running().await {
+        Some(server) => server.accept_link(ws),
+        None => (StatusCode::SERVICE_UNAVAILABLE, "that world isn't running").into_response(),
     }
 }
 
