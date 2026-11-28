@@ -38,7 +38,8 @@ container awake, and leaving the offline page to the Worker.
 When worlds span several hosts (several containers, or a self-hosted cluster), each host's
 `vox-host` is the gateway for the players connected to it. It reaches worlds on other hosts over
 **gateway links**: the neighbour link's handshake (both ends prove the world secret), carrying
-player traffic. Such a link crosses a network, so it needs TLS, or a session key derived from the
+player traffic. So all hosts that link share one world secret, as they already share one
+directory; the resume token's MAC depends on it too. Such a link crosses a network, so it needs TLS, or a session key derived from the
 handshake, before it carries anything (the handshake has no channel binding; see ADR 0005).
 
 ## A session
@@ -118,7 +119,9 @@ its public key, and a ticket lasts a minute while the container may take two min
 (`READY_MS`).
 
 - **A resume token is the gateway's own**, a new type beside `Ticket`, MACed with a key derived from
-  the world secret, which every world on the host already holds. It says:
+  the world secret under its own context string (`"vox.fail resume token v1"`, as the link's proof
+  uses `"vox.fail neighbour link v1"`), so a resume MAC can never pass for a link proof or the
+  other way round. Every world on the host already holds the secret. It says:
   - the account and the name and character from their sign-in;
   - their world;
   - their last checked position and motion, which the gateway asks of their world as part of its
@@ -177,6 +180,8 @@ its public key, and a ticket lasts a minute while the container may take two min
 2. **One socket, several worlds, in `vox-host`** (vox-7jh.5): sessions, the prepared world, and a
    crossing as a swap on one host. Old clients keep today's flow.
 3. **The envelope** (`Slot`, `In`, `Close`, and the `Hello` flag), once streaming lets a prepared
-   world stream (vox-cti.7, .8; vox-81l.3).
-4. **Resume tokens.**
+   world stream (vox-cti.7, .8; vox-81l.3). A protocol bump: `Hello` gains the flag (`Watch` is
+   unchanged; watchers get no envelope), and an old client is refused as any older version is.
+4. **Resume tokens**, with the session message by which the gateway asks a world for a player's
+   last checked position and motion.
 5. **Gateway links between hosts**, with TLS or a derived session key.
