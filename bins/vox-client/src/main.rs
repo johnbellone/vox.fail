@@ -6,6 +6,9 @@
 //! ws://127.0.0.1:7780/ws` for one on this machine). `--detail browser` or `--detail mobile`
 //! draws and keeps as little as a browser or a phone would (`vox_world::detail`), to try them.
 
+// a release build on Windows opens no console window beside the game (as block_avatar)
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 
 /// Where the Void is.
