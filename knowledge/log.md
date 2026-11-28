@@ -1,4 +1,6 @@
 ## 2026-11-28
+* **Update** [2026-11-28T07:04:06Z]: Updated concept `decisions/seamless-transitions.md`. — Built: crossings carry motion and a frame (vox-81l.2), doorway states (vox-81l.8).
+* **Update** [2026-11-28T07:03:47Z]: Updated concept `decisions/traversing-servers.md`. — Built: server-to-server links (vox-7jh.1).
 * **Update** [2026-11-28T06:27:35Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 11: Through and Travel carry motion and a frame; Prepare, DoorState (vox-81l.2).
 * **Update** [2026-11-28T05:25:42Z]: Updated concept `decisions/wheels-replace-hotbar.md`. — Emote targets: left stick looks, L2 locks on (owner's call).
 * **Update** [2026-11-28T05:14:59Z]: Updated concept `architecture/vox-world.md`. — HUD row: the wheels replace the hotbar (vox-jps).

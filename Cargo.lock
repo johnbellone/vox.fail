@@ -7138,6 +7138,7 @@ dependencies = [
  "avatar-voice",
  "axum",
  "futures-util",
+ "getrandom 0.3.4",
  "reqwest",
  "rusqlite",
  "serde_json",
