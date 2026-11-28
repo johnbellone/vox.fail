@@ -560,6 +560,8 @@ struct Held {
     /// the doorway, for the notice, and its sill: walking away gives up the wait
     door: String,
     sill: [f32; 3],
+    /// how far (blocks) from the sill's middle still counts as at the doorway: more for a wide one
+    reach: f32,
     url: String,
     arrive: [f32; 3],
     motion: vox_core::travel::Motion,

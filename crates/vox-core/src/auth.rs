@@ -87,8 +87,10 @@ pub struct Ticket {
     pub arrive: [f32; 3],
     /// a number used once: a world lets a ticket in only once
     pub nonce: u64,
-    /// how they were moving as they crossed, already turned into the arriving world's frame
-    /// (ADR 0004): the world there takes it through [`crate::travel::Motion::sane`]
+    /// how they were moving as they crossed, already turned into the arriving world's frame and
+    /// held sane by the world they left and the directory (ADR 0004). Signed in so the world
+    /// they arrive in can trust it once it reads it (the client is told its motion in
+    /// `Travel`; the arriving world doesn't use this yet)
     pub motion: crate::travel::Motion,
 }
 

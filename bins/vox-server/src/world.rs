@@ -607,8 +607,6 @@ impl WorldState {
         self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None, kept: VecDeque::new(), doors: HashMap::new() });
     }
 
-    /// On to `url`, arriving at `arrive`: with a ticket from the directory when there is one to
-    /// be had (a signed-in player, a directory), else straight away without.
     /// Send `conn` on to `url`, arriving at `arrive` moving as `motion` (both in the arriving
     /// world's frame) through `frame`: with a ticket from the directory when there is one.
     #[allow(clippy::too_many_arguments)]
@@ -692,6 +690,21 @@ impl WorldState {
         }
     }
 
+    /// Tell `conn` what the doorway called `door` shows now, and remember it as sent.
+    fn tell_door(&mut self, conn: u64, door: &str, state: DoorState) {
+        if let Some(p) = self.players.get_mut(&conn) {
+            p.doors.insert(door.to_string(), state);
+            let _ = Self::send_to(&p.tx, &ToClient::DoorState { portal: door.to_string(), state });
+        }
+    }
+
+    /// A held player's wait is over without a way: told so.
+    fn give_up(&mut self, h: &Held, tx: &mpsc::Sender<Message>) {
+        let text = DoorState::Unlinked.line(&h.door).unwrap_or_default();
+        let _ = Self::send_to(tx, &ToClient::Notice { text });
+        self.tell_door(h.conn, &h.door, DoorState::Unlinked);
+    }
+
     /// Players held at a waking doorway: sent on once the world there is up, or told the way
     /// closed if it went away or took too long.
     fn send_held(&mut self) {
@@ -702,7 +715,7 @@ impl WorldState {
         for h in std::mem::take(&mut self.held) {
             let Some(p) = self.players.get(&h.conn) else { continue };
             // walked away from the doorway: no longer waiting
-            let away = p.at.is_none_or(|at| (0..3).map(|i| (at[i] - h.sill[i]).powi(2)).sum::<f32>() > HOLD_NEAR * HOLD_NEAR);
+            let away = p.at.is_none_or(|at| (0..3).map(|i| (at[i] - h.sill[i]).powi(2)).sum::<f32>() > h.reach * h.reach);
             if away {
                 continue;
             }
@@ -710,14 +723,10 @@ impl WorldState {
             let way = ways.as_deref().map_or(doors::Way::Running, |w| w.way(&h.name));
             match way {
                 doors::Way::Running => self.send_on(h.conn, account, &tx, h.url, h.arrive, h.motion, h.frame),
-                doors::Way::Absent => {
-                    let text = DoorState::Unlinked.line(&h.door).unwrap_or_default();
-                    let _ = Self::send_to(&tx, &ToClient::Notice { text });
-                }
-                _ if h.since.elapsed() >= HOLD_MOST => {
-                    let text = DoorState::Unlinked.line(&h.door).unwrap_or_default();
-                    let _ = Self::send_to(&tx, &ToClient::Notice { text });
-                }
+                // gone, or too long: the way is closed (told as the doorway's state too, which
+                // ends the client's wait)
+                doors::Way::Absent => self.give_up(&h, &tx),
+                _ if h.since.elapsed() >= HOLD_MOST => self.give_up(&h, &tx),
                 _ => self.held.push(h),
             }
         }
@@ -1715,11 +1724,13 @@ impl WorldState {
                         let text = state.line(&door.name).unwrap_or_default();
                         let _ = Self::send_to(&tx, &ToClient::Notice { text });
                         self.held.retain(|h| h.conn != conn);
-                        self.held.push(Held { conn, name, door: door.name.clone(), sill: door.at, url, arrive, motion: motion.through(&frame), frame, since: Instant::now() });
+                        self.held.push(Held { conn, name, door: door.name.clone(), sill: door.at, reach: HOLD_NEAR.max(door.size[0] * 0.5 + vox_core::in_blocks(1.0)), url, arrive, motion: motion.through(&frame), frame, since: Instant::now() });
                     }
                     (s, _) if !s.lets_through() => {
                         let text = s.line(&door.name).unwrap_or_default();
                         let _ = Self::send_to(&tx, &ToClient::Notice { text });
+                        // and the state itself, so the client stops waiting for an answer
+                        self.tell_door(conn, &door.name, s);
                     }
                     _ => self.send_on(conn, account, &tx, url, arrive, motion.through(&frame), frame),
                 }

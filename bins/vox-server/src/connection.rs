@@ -5,9 +5,9 @@
 use super::*;
 
 pub(super) async fn status_page(State(server): State<Server>) -> Json<serde_json::Value> {
-    let Some(mut page) = server.status().await.map(|s| s.json()) else { return Json(serde_json::json!({ "error": "stopped" })) };
-    let neighbours: Vec<_> = server.neighbours().into_iter().map(|n| serde_json::json!({ "world": n.world, "linked": n.linked })).collect();
-    page["neighbours"] = serde_json::json!(neighbours);
+    // (which neighbours a world links to is not shown: the page is public; `Server::neighbours`
+    // tells the host and the tests)
+    let Some(page) = server.status().await.map(|s| s.json()) else { return Json(serde_json::json!({ "error": "stopped" })) };
     Json(page)
 }
 

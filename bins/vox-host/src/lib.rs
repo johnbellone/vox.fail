@@ -140,6 +140,24 @@ struct World {
     /// [`STOPPED`], [`STARTING`] or [`RUNNING`], for what doorways to it show (read without
     /// waiting on `slot`, which a start holds)
     state: AtomicU8,
+    /// when a doorway last woke it: a wake is tried at most every [`WAKE_EVERY`] (players near a
+    /// doorway look at it every second)
+    woken: std::sync::Mutex<Option<Instant>>,
+}
+
+/// The least time between two wakes of one world from its doorways.
+const WAKE_EVERY: Duration = Duration::from_secs(30);
+
+/// Puts a world back to stopped if its start doesn't finish (the connection that started it went
+/// away and its future was dropped mid-start), so doorways don't show it waking for ever.
+struct Starting<'a>(&'a AtomicU8, bool);
+
+impl Drop for Starting<'_> {
+    fn drop(&mut self) {
+        if !self.1 {
+            self.0.store(STOPPED, Ordering::Release);
+        }
+    }
 }
 
 const STOPPED: u8 = 0;
@@ -148,7 +166,7 @@ const RUNNING: u8 = 2;
 
 impl World {
     fn new(id: String, aliases: Vec<String>, keep: bool, ends: Option<Instant>, cfg: Config) -> World {
-        World { id, aliases, keep, ends, cfg, slot: Mutex::new(None), gone: AtomicBool::new(false), state: AtomicU8::new(STOPPED) }
+        World { id, aliases, keep, ends, cfg, slot: Mutex::new(None), gone: AtomicBool::new(false), state: AtomicU8::new(STOPPED), woken: std::sync::Mutex::new(None) }
     }
 
     /// What doorways to it show.
@@ -176,16 +194,11 @@ impl World {
         }
         let cfg = self.cfg.clone();
         self.state.store(STARTING, Ordering::Release);
+        let mut starting = Starting(&self.state, false);
         // opening its database and loading its chunks is blocking work
-        let started = tokio::task::spawn_blocking(move || Server::start(cfg)).await.map_err(|e| e.to_string()).and_then(|r| r);
-        let server = match started {
-            Ok(s) => s,
-            Err(e) => {
-                self.state.store(STOPPED, Ordering::Release);
-                return Err(e);
-            }
-        };
+        let server = tokio::task::spawn_blocking(move || Server::start(cfg)).await.map_err(|e| e.to_string())??;
         self.state.store(RUNNING, Ordering::Release);
+        starting.1 = true;
         eprintln!("vox-host: started {}", self.id);
         *slot = Some((server.clone(), Instant::now()));
         Ok(server)
@@ -275,6 +288,13 @@ impl vox_server::doors::Ways for HostWays {
         let Some(host) = self.host() else { return };
         // an instance is made only by the directory, for a party; nothing else is woken twice
         let Some(w) = host.world_or_tile(name).filter(|w| w.ends.is_none() && w.way() == vox_server::doors::Way::Stopped) else { return };
+        {
+            let mut woken = w.woken.lock().unwrap_or_else(|e| e.into_inner());
+            if woken.is_some_and(|t| t.elapsed() < WAKE_EVERY) {
+                return;
+            }
+            *woken = Some(Instant::now());
+        }
         self.handle.spawn(async move {
             if let Err(e) = w.ensure().await {
                 eprintln!("vox-host: couldn't wake {}: {e}", w.id);

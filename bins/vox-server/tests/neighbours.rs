@@ -63,9 +63,9 @@ async fn neighbours_link_drop_and_relink() {
     assert_eq!(n.len(), 1, "a map two tiles wide: one neighbour");
     assert!(n[0].dials && n[0].world == b_id);
     assert!(until(10, || linked(&a, &b_id) && linked(&b, &a_id)).await, "never linked: {:?} / {:?}", a.neighbours(), b.neighbours());
-    // the status page says so too
+    // the public status page doesn't tell who a world links to (that is the host's business)
     let page: serde_json::Value = reqwest::get(format!("http://{b_addr}/")).await.unwrap().json().await.unwrap();
-    assert_eq!(page["neighbours"], serde_json::json!([{ "world": a_id, "linked": true }]));
+    assert!(page.get("neighbours").is_none());
     // heartbeats keep it up past the silence limit's worth of pings
     tokio::time::sleep(Duration::from_secs(6)).await;
     assert!(linked(&a, &b_id) && linked(&b, &a_id), "the link fell over while both ran");

@@ -19,7 +19,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -188,8 +188,39 @@ fn binary(m: &Answer) -> Message {
 
 /// The listening end of a link (`GET /link`): check the hail, prove ourselves, check the
 /// dialler's proof, then answer pings until it goes quiet, closes, or this world stops.
+/// Most handshakes not yet proved at once, across every world in this process: a hail that
+/// can't prove itself holds a socket for up to the handshake's time limit, so they are capped.
+const UNPROVED_MOST: usize = 32;
+static UNPROVED: AtomicUsize = AtomicUsize::new(0);
+
+/// One handshake counted in [`UNPROVED`] while it lasts.
+struct Unproved;
+
+impl Unproved {
+    fn take() -> Option<Unproved> {
+        let n = UNPROVED.fetch_add(1, Ordering::AcqRel);
+        if n >= UNPROVED_MOST {
+            UNPROVED.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(Unproved)
+    }
+}
+
+impl Drop for Unproved {
+    fn drop(&mut self) {
+        UNPROVED.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 pub(crate) async fn listen(links: Arc<Links>, world: mpsc::Sender<crate::Event>, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
+    // too many unproved at once: this one waits for another day (the dialler retries)
+    let Some(unproved) = Unproved::take() else {
+        let _ = sink.send(binary(&Answer::Bye { why: "busy".into() })).await;
+        let _ = sink.close().await;
+        return;
+    };
     let me = links.world.clone();
     let refuse = async |sink: &mut futures_util::stream::SplitSink<WebSocket, Message>, from: &str, why: String| {
         if !from.is_empty() {
@@ -233,6 +264,8 @@ pub(crate) async fn listen(links: Arc<Links>, world: mpsc::Sender<crate::Event>,
         Some(Ok(Hail::Proof { proof })) if neighbour::same(&proof, &neighbour::proof(&secret, Side::Dialler, &ours, &from, &me)) => {}
         _ => return refuse(&mut sink, &from, "wrong proof".into()).await,
     }
+    // proved: no longer counted against the cap
+    drop(unproved);
     if sink.send(binary(&Answer::Linked)).await.is_err() {
         return;
     }
