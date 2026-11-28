@@ -159,7 +159,8 @@ it. This waits until a world needs more than one machine.
 3. `vox-7jh.3` One owner per cell; cross-border edits forwarded to the owner.
 4. `vox-7jh.4` Review of the three above.
 5. `vox-7jh.5` One socket, several worlds, in `vox-host`.
-6. `vox-7jh.6` Design: the gateway for worlds on several hosts.
+6. `vox-7jh.6` Design: the gateway for worlds on several hosts (written:
+   [gateway.md](../design/gateway.md)).
 7. `vox-7jh.7` Decision: federation between directories.
 
 Step 1 is ADR 0004's epic (`vox-81l`, with `vox-81l.7` for preparing by time, waking the
