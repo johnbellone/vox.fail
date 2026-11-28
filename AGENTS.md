@@ -64,7 +64,7 @@ Two products share one Cargo workspace:
 | `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen), `screenshots.sh` (the README's pictures, drawn by the real client into `docs/screenshots/`; run by hand when the look changes). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
 | `tools/review/` | | Avatar review: `render_sheet.mjs` (the close-up sheet, three.js), `ingame.py` (the in-game sheet, the app's snapshot mode), `avatar_pr.py` (check an avatar, write or check its pull request). See `docs/avatar/avatar-workflow.md`. |
-| `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
+| `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents), `decisions/` (architecture decision records, numbered). |
 | `.pi/agents/` | | Project subagents: `vox-writer` (haiku) and `vox-reviewer` (sonnet). See [Models and subagents](#models-and-subagents). |
 | `.pi/prompts/`, `.agents/skills/` | | Pi commands (`/new-avatar`, `/review-avatar`) and skills (`new-avatar`, `okf-memory`). |
 | `.beads/` | | The beads task database (`bd`). Never edit by hand. |

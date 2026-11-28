@@ -1,4 +1,5 @@
 ## 2026-11-28
+* **Creation** [2026-11-28T04:21:54Z]: Documented concept `decisions/simulation-in-the-voxel-octree.md` (Decision (proposed): Simulation State in the Sparse Voxel Octree). — ADR 0001 written 2026-11-28 at the owner's request (simulation affecting blocks through the SVO: climate, gravity, spin).
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/asset-pipeline.md`. — Level builders write through rescale_level.py at quarter-metre blocks.
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/vox-client-and-web.md`. — Device profiles: Start.detail, vox-client --detail, the page's deviceDetail; editor portal limits and prop units at quarter-metre blocks.
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/weather-simulation.md`. — The luminous Void is a haze now (humidity 0.98, no fog bank), with a thinner fog volume and 450 m visibility.

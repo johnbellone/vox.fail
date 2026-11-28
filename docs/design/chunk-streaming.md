@@ -321,6 +321,9 @@ the one below, so the levels are the coarse copies the rings need (the clipmap i
   ring chunk count as air when it is meshed, so its sides are closed. Those side faces act as
   skirts, and no cracks show where it meets a finer chunk. Finer data arrives before coarser
   is dropped.
+- **Simulation** keeps its activity and its effects in the same tree: awake bits, per-node
+  summaries (wetness, snow, temperature, damage) and sparse per-block state. See
+  [ADR 0001](../decisions/0001-simulation-in-the-voxel-octree.md).
 - Generated ground (atlas tiles) could build its octree on the client without the network.
   That waits for zones and the generator (world-scaling.md).
 
