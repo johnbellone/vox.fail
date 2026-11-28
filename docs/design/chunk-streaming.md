@@ -177,6 +177,10 @@ keep one chunk format everywhere.
   the device's echo radius of its arrival point: from the Void, the sea is 659 chunks on the
   desktop (64 m), 390 in a browser (48 m) and 123 on a phone (24 m), not its 2,179. The avatar
   app's level sets load the same way. Browser memory is still to be measured (vox-cti.1).
+  An echo no doorway shows any more is dropped with what it spawned, and arrival points from
+  the network are made finite and brought within 2^24 blocks first, so echoes can't pile up.
+  An echo ends at the edge of its region: check in vox-cti.1 that haze hides that edge at the
+  phone's 24 m.
 - **Device profiles** (`crates/vox-world/src/detail.rs`): desktop, browser and mobile, each
   with a full-detail distance, LOD rings, an echo radius and a meshing budget. The page picks
   `mobile` for a touch screen or a browser that says it's mobile (`deviceDetail` in

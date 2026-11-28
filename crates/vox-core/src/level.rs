@@ -234,7 +234,8 @@ pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> 
 }
 
 /// Put a level's blocks into a world (those outside its bounds are left out), straight into
-/// its chunks; returns how many blocks the world gained.
+/// its chunks; returns the net number of blocks the world gained (all of the level's, for an
+/// empty world: the only kind it is used on).
 pub fn fill(world: &mut World, text: &str, names: &[String]) -> Result<usize, String> {
     let before = world.count();
     let within = world.bounds;

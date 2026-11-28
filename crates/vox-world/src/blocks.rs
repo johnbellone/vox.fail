@@ -502,12 +502,15 @@ pub fn mesh_level(cells: &HashMap<IVec3, u16>, pal: &Palette, rects: &HashMap<St
     mesh_cells(keys, |p| cells.get(&p).copied().unwrap_or(0), pal, rects, false)
 }
 
-/// [`mesh_level`] for a level held as chunks ([`load_level_world`]).
+/// [`mesh_level`] for a level held as chunks ([`load_level_world`]). Faces come chunk by chunk
+/// (each in y, z, x order), not in one order over the whole level as `mesh_level`'s do: the
+/// same faces, listed differently. Every cell of a non-empty chunk is looked at, which costs
+/// more than a map of solid blocks for a thin level, but holds no map.
 pub fn mesh_world(world: &vox_core::World, pal: &Palette, rects: &HashMap<String, [f32; 4]>) -> Meshes {
     let mut keys = world.keys();
     keys.sort_by_key(|k| (k.0[1], k.0[2], k.0[0]));
     let n = vox_core::CHUNK;
-    let cells = keys.into_iter().filter_map(|k| world.chunk(k).map(|c| (k.origin(), c))).flat_map(move |(o, c)| {
+    let cells = keys.into_iter().filter_map(|k| world.chunk(k).filter(|c| !c.is_empty()).map(|c| (k.origin(), c))).flat_map(move |(o, c)| {
         (0..n).flat_map(move |y| (0..n).flat_map(move |z| (0..n).map(move |x| [o[0] + x, o[1] + y, o[2] + z])))
             .filter_map(move |p| match c.get(p) {
                 0 => None,

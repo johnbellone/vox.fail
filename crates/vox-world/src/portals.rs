@@ -221,7 +221,12 @@ type Loaded = Result<(Meshes, Value), String>;
 struct Scene {
     level: String,
     region: vox_core::Bounds,
+    /// its place among the scenes: its render layer is `slot + 1` and it sits at
+    /// `AWAY + APART * slot` (a dropped scene's slot is used again)
+    slot: usize,
     layer: usize,
+    /// what it spawned (meshes, sky, light, floor), despawned when no doorway shows it
+    spawned: Vec<Entity>,
     offset: Vec3,
     look: Option<SkyLook>,
     loading: Option<Arc<Mutex<Option<Loaded>>>>,
@@ -284,9 +289,17 @@ fn target(px: UVec2) -> Image {
     img
 }
 
+/// An arrival point fit to hold an echo round: a world's doorways come from the network, so
+/// a coordinate that isn't a number becomes 0 and a huge one is brought within 2^24 blocks.
+fn sane(arrive: Vec3) -> Vec3 {
+    const FAR: f32 = (1 << 24) as f32;
+    arrive.to_array().map(|v| if v.is_finite() { v.clamp(-FAR, FAR) } else { 0.0 }).into()
+}
+
 /// The part of a level an echo arriving at `arrive` (blocks) holds: `radius_m` round it along
 /// x and z, every height.
 fn echo_region(arrive: Vec3, radius_m: f32) -> vox_core::Bounds {
+    let arrive = sane(arrive);
     let r = vox_core::in_blocks(radius_m).ceil();
     // `as` saturates, so a wild arrival point from a level file can't overflow
     let lo = |v: f32| (v - r).floor() as i32;
@@ -297,6 +310,7 @@ fn echo_region(arrive: Vec3, radius_m: f32) -> vox_core::Bounds {
 /// Does `region` hold the echo for an arrival at `arrive` well enough: is `arrive` at least
 /// half the radius inside it? Otherwise a doorway gets a scene of its own.
 fn covers(region: &vox_core::Bounds, arrive: Vec3, radius_m: f32) -> bool {
+    let arrive = sane(arrive);
     let m = vox_core::in_blocks(radius_m) * 0.5;
     arrive.x - m >= region.lo[0] as f32 && arrive.x + m <= region.hi[0] as f32 && arrive.z - m >= region.lo[2] as f32 && arrive.z + m <= region.hi[2] as f32
 }
@@ -408,11 +422,15 @@ pub fn update(
                 None => {
                     let i = p.scenes.len();
                     let region = echo_region(def.arrive, echo_m);
+                    // the first slot no scene holds (dropped scenes leave gaps)
+                    let slot = (0..).find(|k| !p.scenes.iter().any(|s| s.slot == *k)).unwrap_or(i);
                     p.scenes.push(Scene {
                         level: def.level.clone(),
                         region,
-                        layer: i + 1,
-                        offset: Vec3::new(AWAY + APART * i as f32, 0.0, 0.0),
+                        slot,
+                        spawned: Vec::new(),
+                        layer: slot + 1,
+                        offset: Vec3::new(AWAY + APART * slot as f32, 0.0, 0.0),
                         look: None,
                         loading: load(&def.level, region, &blocks.rects),
                         env: None,
@@ -452,6 +470,27 @@ pub fn update(
                 .id();
             p.live.push(Live { def, scene, quad, cam, image, mat, px, last_side: None, dressed: false, shown: 0.0 });
         }
+        // scenes no doorway shows any more (a doorway moved or removed, another world): gone,
+        // with what they spawned, so they don't pile up while a world is edited
+        let used: Vec<bool> = (0..p.scenes.len()).map(|i| p.live.iter().any(|l| l.scene == i)).collect();
+        if used.iter().any(|u| !u) {
+            let mut moved = vec![usize::MAX; p.scenes.len()];
+            let mut kept = Vec::new();
+            for (i, s) in std::mem::take(&mut p.scenes).into_iter().enumerate() {
+                if used[i] {
+                    moved[i] = kept.len();
+                    kept.push(s);
+                } else {
+                    for e in s.spawned {
+                        commands.entity(e).try_despawn();
+                    }
+                }
+            }
+            p.scenes = kept;
+            for l in &mut p.live {
+                l.scene = moved[l.scene];
+            }
+        }
     }
 
     // ---- echoes arriving from the background
@@ -482,18 +521,19 @@ pub fn update(
             if let Some(b) = aabb {
                 e.insert(b);
             }
+            s.spawned.push(e.id());
         }
         if glass.faces() > 0 {
-            commands.spawn((Mesh3d(meshes.add(glass.into_mesh())), MeshMaterial3d(blocks.glass.clone()), Transform::from_translation(o), layer.clone(), crate::NoBevel));
+            s.spawned.push(commands.spawn((Mesh3d(meshes.add(glass.into_mesh())), MeshMaterial3d(blocks.glass.clone()), Transform::from_translation(o), layer.clone(), crate::NoBevel)).id());
         }
         if water.faces() > 0 {
-            commands.spawn((Mesh3d(meshes.add(water.into_mesh())), MeshMaterial3d(blocks.water.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel));
+            s.spawned.push(commands.spawn((Mesh3d(meshes.add(water.into_mesh())), MeshMaterial3d(blocks.water.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel)).id());
         }
         if flame.faces() > 0 {
-            commands.spawn((Mesh3d(meshes.add(flame.into_mesh())), MeshMaterial3d(blocks.flame.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel));
+            s.spawned.push(commands.spawn((Mesh3d(meshes.add(flame.into_mesh())), MeshMaterial3d(blocks.flame.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel)).id());
         }
         // its sky, its light and (the void) its endless floor
-        commands.spawn((
+        let sky = commands.spawn((
             Mesh3d(meshes.add(crate::outdoors::dome_mesh())),
             MeshMaterial3d(sky_mats.add(SkyMaterial { sky: crate::outdoors::sky_uniform(&look, clouds, Vec4::ZERO) })),
             Transform::from_translation(o),
@@ -502,8 +542,9 @@ pub fn update(
             layer.clone(),
             crate::NoBevel,
         ));
+        s.spawned.push(sky.id());
         let shadows = studio.level >= crate::Level::Medium;
-        commands.spawn((
+        let sun = commands.spawn((
             DirectionalLight {
                 illuminance: look.lux,
                 color: Color::linear_rgb(look.light.x, look.light.y, look.light.z),
@@ -516,8 +557,9 @@ pub fn update(
             Transform::from_translation(o + look.key * 50.0).looking_at(o, Vec3::Y),
             layer.clone(),
         ));
+        s.spawned.push(sun.id());
         if let Some(f) = set.get("floor").and_then(|v| v.as_f64()) {
-            commands.spawn((
+            let floor = commands.spawn((
                 Mesh3d(meshes.add(Plane3d::default().mesh().size(1600.0, 1600.0).subdivisions(8))),
                 MeshMaterial3d(floor_mats.add(FloorMaterial {
                     base: StandardMaterial { base_color: Color::srgb(0.86, 0.86, 0.89), perceptual_roughness: 0.08, reflectance: 0.55, ..default() },
@@ -527,6 +569,7 @@ pub fn update(
                 layer.clone(),
                 crate::NoBevel,
             ));
+            s.spawned.push(floor.id());
         }
         s.env = Some(images.add(crate::outdoors::sky_cube(&look, 64)));
         s.look = Some(look);
@@ -702,9 +745,13 @@ mod tests {
         // a second doorway arriving near the first shares its echo; one far away gets its own
         assert!(covers(&r, Vec3::new(20.0, 0.0, -20.0), 48.0));
         assert!(!covers(&r, Vec3::new(10.0 + reach as f32, 0.0, -20.0), 48.0));
-        // a wild arrival point can't overflow
-        let far = echo_region(Vec3::new(f32::MAX, 0.0, f32::MIN), 48.0);
-        assert!(far.lo[0] <= far.hi[0] && far.lo[2] <= far.hi[2]);
+        // a wild arrival point can't overflow, and still holds its own echo: a world sending
+        // one can't make a new scene on every rebuild
+        for wild in [Vec3::new(f32::MAX, 0.0, f32::MIN), Vec3::new(f32::NAN, 0.0, f32::INFINITY), Vec3::new(1e10, 0.0, -1e10)] {
+            let far = echo_region(wild, 48.0);
+            assert!(far.lo[0] <= far.hi[0] && far.lo[2] <= far.hi[2]);
+            assert!(covers(&far, wild, 48.0), "{wild}");
+        }
     }
 
     fn gate() -> PortalDef {
