@@ -243,6 +243,9 @@ pub fn receive(
                     // the far side drawn ahead of time comes with vox-81l.3; until then it is
                     // heard and left
                     ToClient::Prepare { .. } => {}
+                    // the far field's rings are drawn from these once they exist (vox-cti.13);
+                    // until then they are heard and left
+                    ToClient::FarTile { .. } => {}
                     // world entities (protocol 9); the portals are drawn from them in portals.rs
                     ToClient::Entities(changes) => {
                         entities.apply(&changes);

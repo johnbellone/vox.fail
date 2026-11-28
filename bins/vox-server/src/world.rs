@@ -1682,6 +1682,8 @@ impl WorldState {
             }
             ToServer::Build { id, node } => self.entity_edit(conn, id, Edit::Build { node }),
             ToServer::Unbuild { id, build } => self.start_unbuild(conn, id, build),
+            // streaming by view (vox-cti.7) acts on this; until then everything is sent, as before
+            ToServer::View(_) => {}
             ToServer::Through { portal, side, motion } => {
                 if !p.bucket.take(now) {
                     return;

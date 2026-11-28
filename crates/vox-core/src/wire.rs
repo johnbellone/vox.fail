@@ -34,8 +34,19 @@ use serde::{Deserialize, Serialize};
 /// `ToClient::EntityRefused`, `ToClient::EntityDone`); 10: quarter-metre blocks (every
 /// position, size and level is at the new scale, so an older client must not come in); 11:
 /// crossings carry motion and a frame (`ToServer::Through`'s `motion`, `ToClient::Travel`'s
-/// `motion` and `frame`, `ToClient::Prepare`, `ToClient::DoorState`; ADR 0004).
-pub const PROTOCOL: u32 = 11;
+/// `motion` and `frame`, `ToClient::Prepare`, `ToClient::DoorState`; ADR 0004); 12: streaming by
+/// view radius (`ToServer::View`, `ToClient::FarTile`; docs/design/chunk-streaming.md).
+pub const PROTOCOL: u32 = 12;
+
+/// The most chunks of full detail a client may ask for round it, before the world's own limit
+/// clamps it further (64 chunks: 512 m).
+pub const MAX_VIEW_RADIUS: u16 = 64;
+/// The most coarser rings beyond full detail a client may ask for.
+pub const MAX_VIEW_RINGS: u8 = 8;
+/// The deepest a far tile's octree goes (a 256 m tile down to quarter-metre blocks is 10 levels).
+pub const MAX_FAR_DEPTH: u8 = 12;
+/// A far tile's side, in blocks: 256 m.
+pub const FAR_TILE: i32 = crate::whole_blocks(256.0);
 
 /// Voice channel: heard by players near the speaker.
 pub const VOICE_NEARBY: u8 = 0;
@@ -124,6 +135,32 @@ pub enum ToServer {
     /// under `id` (then a [`ToClient::Notice`] with the counts), or refused. Added last, so older
     /// messages keep their numbers.
     Unbuild { id: u32, build: u32 },
+    /// What to send me (protocol 12): the chunks of full detail within `radius` chunks of `centre`,
+    /// `rings` coarser rings beyond from the far field, at most `budget_kbps` kilobits a second.
+    /// Sent on joining and on crossing a chunk border. The world clamps it to its own limits
+    /// ([`View::sane`] first). Until a player sends one, the world sends everything. Added last,
+    /// so older messages keep their numbers.
+    View(View),
+}
+
+/// A player's view: see [`ToServer::View`].
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct View {
+    pub centre: ChunkKey,
+    /// chunks of full detail round `centre`
+    pub radius: u16,
+    /// coarser rings beyond, from the far field
+    pub rings: u8,
+    /// kilobits a second for chunks and far tiles; 0 is the world's own default
+    pub budget_kbps: u32,
+}
+
+impl View {
+    /// Within what any world allows ([`MAX_VIEW_RADIUS`], [`MAX_VIEW_RINGS`]); a world then
+    /// clamps it to its own, smaller limits.
+    pub fn sane(self) -> View {
+        View { radius: self.radius.min(MAX_VIEW_RADIUS), rings: self.rings.min(MAX_VIEW_RINGS), ..self }
+    }
 }
 
 /// An edit the server made.
@@ -201,6 +238,17 @@ pub enum ToClient {
     /// for every doorway checked so far after the welcome. Added last, so older messages keep
     /// their numbers.
     DoorState { portal: String, state: DoorState },
+    /// Part of the far field (protocol 12): the octree of the 256 m tile `key` (in tiles: block
+    /// position div [`FAR_TILE`]), down to `depth` levels, breadth first
+    /// (docs/design/chunk-streaming.md §5). Sent under the same view and budget as chunks. A
+    /// client checks it with [`far_tile_ok`] before reading `bytes`. Added last, so older
+    /// messages keep their numbers.
+    FarTile { key: [i32; 3], depth: u8, bytes: Vec<u8> },
+}
+
+/// Whether a far tile from the network is one to read: not too deep, and no bigger than a frame.
+pub fn far_tile_ok(depth: u8, bytes: &[u8]) -> bool {
+    depth <= MAX_FAR_DEPTH && bytes.len() <= MAX_MESSAGE
 }
 
 /// A change to one entity: its new component, or `None` when it was removed.
@@ -275,6 +323,7 @@ mod tests {
             ToClient::EntityDone { id: 6, entity: EntityId(3), seq: (1 << 40) | 2 },
             ToClient::Prepare { url: "/w/sea/ws".into(), ticket: None, frame: Frame::moved([0.0, -8000.0, 0.0]) },
             ToClient::DoorState { portal: "Down Gate".into(), state: DoorState::Restricted(crate::travel::Restriction::Party) },
+            ToClient::FarTile { key: [-1, 0, 3], depth: 6, bytes: vec![0xff, 3, 0, 1] },
         ];
         for m in msgs {
             let back: ToClient = decode(&encode(&m)).unwrap();
@@ -295,6 +344,7 @@ mod tests {
             ToServer::Remove { id: 3, entity: EntityId(3), expect: None },
             ToServer::Build { id: 4, node: EntityId(9) },
             ToServer::Unbuild { id: 5, build: 4 },
+            ToServer::View(View { centre: ChunkKey([-3, 0, 12]), radius: 16, rings: 3, budget_kbps: 4000 }),
         ];
         for m in msgs {
             assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
@@ -385,6 +435,8 @@ mod tests {
         assert_eq!(encode(&ToClient::EntityDone { id: 0, entity: EntityId(0), seq: 0 })[0], 16);
         assert_eq!(encode(&ToClient::Prepare { url: String::new(), ticket: None, frame: Frame::SAME })[0], 17);
         assert_eq!(encode(&ToClient::DoorState { portal: String::new(), state: DoorState::Unknown })[0], 18);
+        assert_eq!(encode(&ToClient::FarTile { key: [0; 3], depth: 0, bytes: vec![] })[0], 19);
+        assert_eq!(encode(&ToServer::View(View { centre: ChunkKey([0; 3]), radius: 0, rings: 0, budget_kbps: 0 }))[0], 11);
     }
 
     #[test]
@@ -414,5 +466,19 @@ mod tests {
         let back: ToServer = decode(&bytes).unwrap();
         assert_eq!(back, ToServer::Voice(p.clone()));
         assert!(!p.valid());
+    }
+
+    #[test]
+    fn a_view_and_a_far_tile_from_the_network_are_held_to_limits() {
+        let huge = View { centre: ChunkKey([1, 2, 3]), radius: u16::MAX, rings: u8::MAX, budget_kbps: u32::MAX };
+        let v = huge.sane();
+        assert_eq!((v.radius, v.rings), (MAX_VIEW_RADIUS, MAX_VIEW_RINGS));
+        assert_eq!(v.centre, huge.centre);
+        let fine = View { centre: ChunkKey([0; 3]), radius: 8, rings: 2, budget_kbps: 2000 };
+        assert_eq!(fine.sane(), fine);
+        assert!(far_tile_ok(MAX_FAR_DEPTH, &[0; 16]));
+        assert!(!far_tile_ok(MAX_FAR_DEPTH + 1, &[]));
+        assert!(!far_tile_ok(4, &vec![0; MAX_MESSAGE + 1]));
+        assert_eq!(FAR_TILE, 1024, "256 m of quarter-metre blocks");
     }
 }
