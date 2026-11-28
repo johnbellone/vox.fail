@@ -10,7 +10,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use vox_core::world::{Bounds, CHUNK, ChunkKey};
-use vox_core::wire::View;
+use vox_core::wire::{Applied, View};
 
 /// Chunks past the radius a held chunk may be before it counts as dropped (the client drops it
 /// there too).
@@ -73,7 +73,8 @@ impl Interest {
 
     /// A new view (the player moved or changed their radius): what is wanted is worked out again;
     /// chunks held past the radius and [`KEEP_BEYOND`] are forgotten (the client drops them too).
-    pub fn set_view(&mut self, view: View, limits: Limits, bounds: Bounds) {
+    /// Returns whether anything changed but the budget (so there may be new chunks to queue).
+    pub fn set_view(&mut self, view: View, limits: Limits, bounds: Bounds) -> bool {
         let v = view.sane();
         let budget = if v.budget_kbps == 0 { DEFAULT_KBPS } else { v.budget_kbps.min(MOST_KBPS) };
         let r = v.radius.clamp(1, limits.radius);
@@ -88,7 +89,7 @@ impl Interest {
         let same = self.view.centre == v.centre && self.view.radius == v.radius && self.view.rings == v.rings && !self.wanted.is_empty();
         self.view = v;
         if same {
-            return;
+            return false;
         }
         let r = v.radius as i32;
         let c = v.centre.0;
@@ -109,6 +110,7 @@ impl Interest {
         self.sent.retain(|k| dist2(*k, v.centre) <= keep);
         self.pending.retain(|k| self.wanted.contains(k));
         self.queued.retain(|k| self.wanted.contains(k));
+        true
     }
 
     /// Queue the chunks with blocks (`existing`) that are wanted and not yet held, nearest first.
@@ -158,6 +160,24 @@ impl Interest {
     /// The radius granted, in chunks.
     pub fn radius(&self) -> u16 {
         self.view.radius
+    }
+
+    /// Of `applied`, the edits player `me` is sent: those in chunks they see, and always their own
+    /// (their client waits for each to confirm it). Only the first kind marks a chunk as held: an
+    /// edit into a chunk with no blocks yet is how it arrives, but their own edit into a chunk
+    /// still queued (or out of view) must not stop the whole chunk coming.
+    pub fn edits_for(&mut self, applied: &[Applied], me: u32) -> Vec<Applied> {
+        let mut out = Vec::new();
+        for a in applied {
+            let k = ChunkKey::of(a.cell);
+            if self.wants_edit(k) {
+                self.mark_sent(k);
+                out.push(*a);
+            } else if a.player == me {
+                out.push(*a);
+            }
+        }
+        out
     }
 
     /// Whether anything waits to be sent.
@@ -289,5 +309,23 @@ mod tests {
             let i = Interest::new(view(c, 16), LIMITS, bounds());
             assert!(i.view().centre.0.iter().all(|v| v.abs() < 1000), "{:?}", i.view().centre);
         }
+    }
+
+    #[test]
+    fn your_own_edit_in_a_queued_chunk_comes_back_and_the_chunk_still_comes() {
+        let mut i = Interest::new(view([0, 0, 0], 4), LIMITS, bounds());
+        i.queue([ChunkKey([1, 0, 0])]);
+        let mine = Applied { seq: 1, player: 7, id: 1, cell: [40, 0, 0], block: 2 };
+        let theirs = Applied { seq: 2, player: 8, id: 1, cell: [41, 0, 0], block: 2 };
+        let far = Applied { seq: 3, player: 7, id: 2, cell: [4000, 0, 0], block: 2 };
+        // chunk [1, 0, 0] is queued: someone else's edit there waits for it; mine comes back
+        assert_eq!(i.edits_for(&[mine, theirs, far], 7), vec![mine, far]);
+        assert!(!i.holds(ChunkKey([1, 0, 0])), "not held: the whole chunk still comes");
+        assert_eq!(i.take_all(), vec![ChunkKey([1, 0, 0])]);
+        assert!(!i.holds(ChunkKey([125, 0, 0])), "far off: not held either");
+        // in view and not queued: the edit is how the chunk arrives
+        let near = Applied { seq: 4, player: 8, id: 1, cell: [64, 0, 0], block: 2 };
+        assert_eq!(i.edits_for(&[near], 7), vec![near]);
+        assert!(i.holds(ChunkKey([2, 0, 0])));
     }
 }

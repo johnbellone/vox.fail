@@ -929,15 +929,7 @@ impl WorldState {
             return self.broadcast(&ToClient::Edits(applied), None);
         }
         let mut gone = Vec::new();
-        // a player always hears their own edits (their client waits for each to confirm it)
-        let for_view = |i: &mut Interest, me: u32| -> Vec<Applied> {
-            let mine: Vec<Applied> = applied.iter().filter(|a| a.player == me || i.wants_edit(ChunkKey::of(a.cell))).copied().collect();
-            // an edit into a chunk they don't hold yet is how it arrives: they hold it now
-            for a in &mine {
-                i.mark_sent(ChunkKey::of(a.cell));
-            }
-            mine
-        };
+        let for_view = |i: &mut Interest, me: u32| -> Vec<Applied> { i.edits_for(&applied, me) };
         for (conn, p) in self.players.iter_mut() {
             let mine = match p.interest.as_mut() {
                 None => applied.clone(),
@@ -1859,11 +1851,15 @@ impl WorldState {
             ToServer::View(v) => {
                 let (limits, bounds) = (self.limits(), self.cfg.bounds);
                 let Some(p) = self.players.get_mut(&conn) else { return };
-                match p.interest.as_mut() {
+                let changed = match p.interest.as_mut() {
                     Some(i) => i.set_view(v, limits, bounds),
-                    None => p.interest = Some(Interest::new(v, limits, bounds)),
-                }
-                if let Some(i) = p.interest.as_mut() {
+                    None => {
+                        p.interest = Some(Interest::new(v, limits, bounds));
+                        true
+                    }
+                };
+                // the same view again: nothing new to queue
+                if changed && let Some(i) = p.interest.as_mut() {
                     i.queue(self.world.chunk_keys());
                 }
             }
