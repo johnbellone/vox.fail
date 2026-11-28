@@ -83,6 +83,10 @@ struct Me {
     graph: Option<Handle<AnimationGraph>>,
     idle: Option<AnimationNodeIndex>,
     walk: Option<AnimationNodeIndex>,
+    /// every clip of the character, by name, in its animation graph (the emotes play these)
+    clips: std::collections::HashMap<String, AnimationNodeIndex>,
+    /// the emote playing, if one is
+    emoting: Option<AnimationNodeIndex>,
     player: Option<Entity>,
     walking: bool,
     gltf: Option<Handle<Gltf>>,
@@ -129,7 +133,7 @@ pub fn app(start: Start, assets: String) -> App {
         MaterialPlugin::<outdoors::RainMaterial>::default(),
         MaterialPlugin::<portals::PortalMaterial>::default(),
     ))
-    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::voice::plugin::VoicePlugin, vox_world::hud::HudPlugin, vox_world::menu::MenuPlugin, vox_world::props::PropPlugin, vox_world::fluid::FluidPlugin))
+    .add_plugins((FrameTimeDiagnosticsPlugin::default(), vox_world::input::InputPlugin, vox_world::voice::plugin::VoicePlugin, vox_world::hud::HudPlugin, vox_world::wheel::WheelPlugin, vox_world::menu::MenuPlugin, vox_world::props::PropPlugin, vox_world::fluid::FluidPlugin))
     .insert_resource(ClearColor(Color::srgb(0.93, 0.94, 0.96)))
     .insert_resource(start.detail.as_deref().and_then(vox_world::detail::Profile::parse).unwrap_or_else(vox_world::detail::Profile::native).detail())
     .insert_resource(
@@ -201,7 +205,7 @@ fn screenshot(
     mut ready_at: Local<Option<f64>>,
     mut exit: MessageWriter<AppExit>,
     mut menus: ResMut<vox_world::menu::Menus>,
-    mut wheel: ResMut<vox_world::hud::QuickWheel>,
+    mut wheels: ResMut<vox_world::wheel::Wheels>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     use vox_world::menu::Screen;
@@ -222,15 +226,20 @@ fn screenshot(
         if let Ok(list) = std::env::var("VOX_SCREENSHOT_DO") {
             w.cmds.extend(list.split(';').map(str::trim).filter(|c| !c.is_empty()).map(String::from));
         }
-        // VOX_SCREENSHOT_MENU=pause|blocks|controls|settings|wheel: with that menu open
-        if std::env::var("VOX_SCREENSHOT_MENU").as_deref() == Ok("wheel") {
-            wheel.scripted = Some(Vec2::new(70.0, 70.0));
+        // VOX_SCREENSHOT_MENU=pause|blocks|controls|settings|emotes-screen|wheel|emotes: with that
+        // menu or wheel open
+        use vox_world::wheel::WheelKind;
+        match std::env::var("VOX_SCREENSHOT_MENU").as_deref() {
+            Ok("wheel") => wheels.scripted = Some((WheelKind::Blocks, Vec2::new(70.0, 70.0))),
+            Ok("emotes") => wheels.scripted = Some((WheelKind::Emotes, Vec2::new(70.0, 70.0))),
+            _ => {}
         }
         let screen = match std::env::var("VOX_SCREENSHOT_MENU").as_deref() {
             Ok("pause") => Some(Screen::Pause),
             Ok("blocks") => Some(Screen::Inventory),
             Ok("controls") => Some(Screen::Controls),
             Ok("settings") => Some(Screen::Settings),
+            Ok("emotes-screen") => Some(Screen::Emotes),
             _ => None,
         };
         if let Some(s) = screen {
@@ -318,13 +327,19 @@ fn load_me(
     let h = me.gltf.get_or_insert_with(|| assets.load::<Gltf>(local.model.clone())).clone();
     let Some(gltf) = gltfs.get(&h) else { return };
     let Some(scene) = gltf.default_scene.clone().or_else(|| gltf.scenes.first().cloned()) else { return };
+    // every clip in one graph: standing, walking, and the emotes, which the wheel picks by name
     let mut graph = AnimationGraph::new();
-    let clip = |name: &str, graph: &mut AnimationGraph| {
-        gltf.named_animations.get(name).map(|c| graph.add_clip(c.clone(), 1.0, graph.root))
-    };
-    me.idle = clip("Idle", &mut graph);
-    me.walk = clip("Walk", &mut graph);
+    let mut names: Vec<&str> = gltf.named_animations.keys().map(|n| n.as_ref()).collect();
+    names.sort();
+    for name in &names {
+        let c = gltf.named_animations[*name].clone();
+        let node = graph.add_clip(c, 1.0, graph.root);
+        me.clips.insert(name.to_string(), node);
+    }
+    me.idle = me.clips.get("Idle").copied();
+    me.walk = me.clips.get("Walk").copied();
     me.graph = Some(graphs.add(graph));
+    local.clips = names.iter().filter(|n| vox_world::emote::is_emote(n)).map(|n| n.to_string()).collect();
     let root = commands.spawn((WorldAssetRoot(scene), Transform::default(), Name::new("me"))).observe(on_ready).id();
     local.root = Some(root);
     local.gltf = Some(h);
@@ -360,17 +375,33 @@ fn on_ready(
     local.ready = me.player.is_some();
 }
 
-/// Walk or stand, as the world says.
+/// Walk or stand, as the world says; play an emote once when the wheel asks, until it ends or
+/// you walk.
 fn walk(
     mut me: ResMut<Me>,
-    local: Res<LocalAvatar>,
+    mut local: ResMut<LocalAvatar>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
 ) {
-    if local.walking == me.walking {
-        return;
-    }
+    // an emote asked for before the character is there is dropped, not played late
+    let asked = local.emote.take();
     let Some(e) = me.player else { return };
     let Ok((mut p, mut t)) = players.get_mut(e) else { return };
+    if let Some(name) = asked {
+        match me.clips.get(&name).copied() {
+            Some(c) => {
+                t.play(&mut p, c, Duration::from_millis(180));
+                me.emoting = Some(c);
+            }
+            None => vox_world::note!("[emote] this character has no clip named {name:?}"),
+        }
+        return;
+    }
+    // an emote that has played out goes back to standing (or walking)
+    let ended = me.emoting.is_some_and(|c| p.animation(c).is_none_or(|a| a.is_finished()));
+    if local.walking == me.walking && !ended {
+        return;
+    }
+    me.emoting = None;
     me.walking = local.walking;
     let clip = if me.walking { me.walk } else { me.idle };
     if let Some(c) = clip {

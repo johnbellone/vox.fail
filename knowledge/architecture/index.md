@@ -12,7 +12,7 @@
 * [vox-server: One Persistent World](vox-server.md) - A single-world game server: WebSocket in, one thread owns the blocks and the edit order, SQLite for persistence, optional directory reporting.
 * [vox-directory: Accounts, Characters, Economy and Web Pages](vox-directory.md) - The account service and website: sign-in, characters, signed tokens, the world list, the economy and social API, and the static pages.
 * [vox-client and the Web Front End](vox-client-and-web.md) - The player client (desktop and WebAssembly) and the plain HTML/JS pages that the directory serves around it.
-* [World Wire Protocol (PROTOCOL = 10)](wire-protocol.md) - The message set between a world server and its players, how it is encoded, and what each protocol version added (10: quarter-metre blocks).
+* [World Wire Protocol (PROTOCOL = 12)](wire-protocol.md) - The message set between a world server and its players, how it is encoded, and what each protocol version added (12: streaming by view, View before Hello and FarTile).
 * [Identity, Sessions and Signed Launch Tokens](identity-and-tokens.md) - How people sign in, how the directory proves who they are to world servers without a call-back, and what secrets exist.
 * [Authority, World Currencies, Feats, Plots, Portals and Raids](economy-and-social.md) - The player economy and social graph in the directory: the shared Authority currency, what it buys, world coins, the ledger, friends, groups and raid parties.
 * [Weather Simulation](weather-simulation.md) - A small server-side atmosphere model whose keyframes drive haze, fog, clouds, rain, wind and the water standing on the ground in every client.

@@ -78,7 +78,7 @@ tools/dev/play-local.sh --name Sam --model models/dog.glb  # your name and chara
 That builds in release mode (the first build compiles Bevy and takes several minutes), starts
 the Void, the yard, the islands, the Dark Sea and orbit locally with guests allowed, and opens the
 client in the Void. Click to look round, WASD to walk, left click breaks, right click places, E
-for every block, hold Tab for the quick wheel, Esc for the menu; a controller works too, with its
+for every block, hold Tab for the block wheel and G for emotes, Esc for the menu; a controller works too, with its
 own button hints. Walk into a doorway to cross to another world. If a port is taken by a leftover
 server, `pkill vox-server`.
 

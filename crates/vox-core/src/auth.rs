@@ -87,6 +87,11 @@ pub struct Ticket {
     pub arrive: [f32; 3],
     /// a number used once: a world lets a ticket in only once
     pub nonce: u64,
+    /// how they were moving as they crossed, already turned into the arriving world's frame and
+    /// held sane by the world they left and the directory (ADR 0004). Signed in so the world
+    /// they arrive in can trust it once it reads it (the client is told its motion in
+    /// `Travel`; the arriving world doesn't use this yet)
+    pub motion: crate::travel::Motion,
 }
 
 /// Make a ticket.
@@ -186,7 +191,7 @@ mod tests {
     fn ticket(now: u64) -> Ticket {
         let mut c = claims(now);
         c.expires = now + TICKET_LIFETIME;
-        Ticket { claims: c, world: "yard".into(), arrive: [1.5, 0.0, -3.0], nonce: 42 }
+        Ticket { claims: c, world: "yard".into(), arrive: [1.5, 0.0, -3.0], nonce: 42, motion: crate::travel::Motion { velocity: [0.0, -12.0, 2.0], yaw: 1.0 } }
     }
 
     #[test]

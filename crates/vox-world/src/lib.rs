@@ -11,6 +11,7 @@
 //! - [`pose`] and [`proto`]: avatars over the network (the pose format and playing it back).
 //! - [`files`]: reading the game's files from disk, or (in the browser) from what was fetched.
 //! - [`detail`]: how much a desktop, a browser or a phone draws and keeps.
+//! - [`wheel`] and [`emote`]: the block wheel and the emote wheel, held open by the bumpers.
 //!
 //! What the host app provides: a camera marked [`WorldCamera`], a [`LocalAvatar`] describing
 //! the player's own character (and acting on its `walking`), and a [`WorldRender`] with the
@@ -20,6 +21,7 @@ pub mod blocks;
 pub mod client;
 pub mod detail;
 pub mod editor;
+pub mod emote;
 pub mod entities;
 pub mod files;
 pub mod fluid;
@@ -32,6 +34,7 @@ pub mod pose;
 pub mod props;
 pub mod proto;
 pub mod voice;
+pub mod wheel;
 
 use bevy::{gltf::Gltf, prelude::*};
 
@@ -118,4 +121,8 @@ pub struct LocalAvatar {
     pub can_walk: bool,
     /// set by the world: walking (play Walk) or standing
     pub walking: bool,
+    /// set by the emote wheel: play this clip once (the host takes it); walking stops it
+    pub emote: Option<String>,
+    /// the character's clips by name, as the host has them: the Emotes screen offers these
+    pub clips: Vec<String>,
 }

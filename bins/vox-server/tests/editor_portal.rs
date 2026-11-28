@@ -21,6 +21,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use vox_core::travel::Motion;
 use vox_core::{
     auth::{self, Character, Claims, SigningKey},
     entity::{Axis, Component, Dest, EntityWhy, Portal},
@@ -570,7 +571,7 @@ async fn editor_portal_walking_into_a_world_portal_travels_to_its_rows_url() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mut a = join(&url, "Di", 7).await;
     send(&mut a.ws, &pose([3.5, 0.0, 2.5])).await;
-    send(&mut a.ws, &ToServer::Through { portal: "yard (42)".into(), side: 1 }).await;
+    send(&mut a.ws, &ToServer::Through { portal: "yard (42)".into(), side: 1, motion: Motion::default() }).await;
     let (to, arrive) = until(&mut a.ws, |m| match m {
         ToClient::Travel { url, arrive, .. } => Some((url, arrive)),
         _ => None,
@@ -588,7 +589,7 @@ async fn editor_portal_walking_into_a_pair_travels_to_the_other_end() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mut a = join(&url, "Di", 7).await;
     send(&mut a.ws, &pose([3.5, 0.0, 2.5])).await;
-    send(&mut a.ws, &ToServer::Through { portal: "yard (42)".into(), side: 1 }).await;
+    send(&mut a.ws, &ToServer::Through { portal: "yard (42)".into(), side: 1, motion: Motion::default() }).await;
     let arrive = until(&mut a.ws, |m| match m {
         ToClient::Travel { arrive, .. } => Some(arrive),
         _ => None,
@@ -644,7 +645,7 @@ async fn editor_portal_a_new_portal_is_walkable_once_the_directory_has_it() {
     wait_until("the rules to be fetched again, at once", || st.fetched() >= 2).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     send(&mut a.ws, &pose([3.5, 0.0, 2.5])).await;
-    send(&mut a.ws, &ToServer::Through { portal: name, side: 1 }).await;
+    send(&mut a.ws, &ToServer::Through { portal: name, side: 1, motion: Motion::default() }).await;
     let to = until(&mut a.ws, |m| match m {
         ToClient::Travel { url, .. } => Some(url),
         _ => None,
@@ -672,7 +673,7 @@ async fn editor_portal_a_repointed_portal_travels_to_its_new_pair_at_once() {
     wait_until("the rules to be fetched again, at once", || st.fetched() >= 2).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     send(&mut a.ws, &pose([3.5, 0.0, 2.5])).await;
-    send(&mut a.ws, &ToServer::Through { portal: "yard (42)".into(), side: 1 }).await;
+    send(&mut a.ws, &ToServer::Through { portal: "yard (42)".into(), side: 1, motion: Motion::default() }).await;
     let (to, arrive) = until(&mut a.ws, |m| match m {
         ToClient::Travel { url, arrive, .. } => Some((url, arrive)),
         _ => None,

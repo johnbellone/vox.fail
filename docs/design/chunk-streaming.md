@@ -259,7 +259,7 @@ server and chunk keys:
   Prediction (`vox-core::predict`) only touches cells within reach, which is always inside the
   radius.
 - **Watchers** (the front page) ask for a small radius round the spawn.
-- Protocol 11. Until a client sends `View`, a world sends everything, as today. That helps
+- Protocol 12 (11 went to ADR 0004's crossings). Until a client sends `View`, a world sends everything, as today. That helps
   tests and the avatar app, which shares `vox-world`.
 
 ### 4. Draw distance

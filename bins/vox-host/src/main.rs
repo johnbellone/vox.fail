@@ -74,6 +74,7 @@ async fn main() {
         }
         cfg.level = seed.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         vox_server::flags::apply(&mut cfg, &args).unwrap_or_else(|e| panic!("{e}"));
+        vox_server::flags::listening(&mut cfg, &listen, true);
         let keep = keep.contains(&id);
         specs.push(Spec { id, aliases: alias.into_iter().collect(), cfg, keep });
     }
@@ -87,6 +88,7 @@ async fn main() {
         let mut base = vox_server::Config::new(":memory:", palette.clone());
         base.block_size = vox_core::block_size(&blocks).unwrap_or_else(|e| panic!("{e}"));
         vox_server::flags::apply(&mut base, &args).unwrap_or_else(|e| panic!("{e}"));
+        vox_server::flags::listening(&mut base, &listen, true);
         let minutes = |k: &str, d: f64| arg(k).map_or(d, |v| v.parse().ok().filter(|m: &f64| m.is_finite() && *m >= 1.0).unwrap_or_else(|| panic!("{k} takes minutes, at least 1")));
         let count = |k: &str, d: usize| arg(k).map_or(d, |v| v.parse().ok().filter(|n| *n > 0).unwrap_or_else(|| panic!("{k} takes a number")));
         Instances {
@@ -110,6 +112,7 @@ async fn main() {
             let mut base = vox_server::Config::new(data_dir.join(format!("atlas-{name}.db")), palette.clone());
             base.block_size = vox_core::block_size(&blocks).unwrap_or_else(|e| panic!("{e}"));
             vox_server::flags::apply(&mut base, &args).unwrap_or_else(|e| panic!("{e}"));
+            vox_server::flags::listening(&mut base, &listen, true);
             let snapshots = base.snapshots.is_some();
             Atlas { name: name.into(), seed: seed.parse().unwrap_or_else(|_| bad_atlas(a)), size: [n(wd), n(ht)], base, data: data_dir.clone(), snapshots }
         })

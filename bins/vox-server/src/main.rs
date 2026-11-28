@@ -46,6 +46,7 @@ async fn main() {
     if let Err(e) = vox_server::flags::apply(&mut cfg, &args) {
         panic!("{e}");
     }
+    vox_server::flags::listening(&mut cfg, &listen, false);
     // one world alone may put its snapshots anywhere
     if let (Some(dir), Some(_)) = (arg("--snapshots"), &cfg.snapshots) {
         cfg.snapshots = Some(PathBuf::from(dir));

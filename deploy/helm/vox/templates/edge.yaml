@@ -1,7 +1,8 @@
 {{- /* The edge: nginx in front of the directory and the worlds. It caches the game's files
        (the directory marks /pkg/, /assets/ and /data/ cacheable for five minutes; the browser
        client alone is about 11 MB compressed), carries /w/<port>/ WebSockets to each world,
-       and refuses /api/world/ (the worlds' own endpoints, used inside the cluster only). */ -}}
+       and refuses /api/world/ and /w/<id>/link (the worlds' own endpoints, used inside the
+       cluster only). */ -}}
 {{- $name := include "vox.edge" . }}
 {{- $e := .Values.edge }}
 {{- $dir := include "vox.directory" . }}
@@ -61,6 +62,12 @@ data:
 
         # the worlds' reports and fetches: inside the cluster only
         location /api/world/ {
+          return 404;
+        }
+
+        # worlds' links to their neighbours (ADR 0005): inside the cluster only (a regular
+        # expression, so it is matched before the worlds' /w/<port>/ prefixes)
+        location ~ ^/w/[^/]+/link/?$ {
           return 404;
         }
 

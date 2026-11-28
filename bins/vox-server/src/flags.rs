@@ -5,7 +5,8 @@
 //! `--trust-moves`, `--voice-radius <blocks>`, `--directory-key <hex or file>` with `--guests`, `--no-snapshots`,
 //! `--oxen [<binary>]` (or `VOX_OXEN`), `--snapshot-every <seconds>`, `--props <folder>`, and `--editors-all` (local play and tests
 //! only, refused with a directory: every signed-in player may make advanced edits, with no question to the
-//! directory). Snapshots go next to the world's database (`<db>.snapshots/`) unless turned off or the world is in
+//! directory), `--link-base <ws url>` (where this host answers, for links to neighbouring worlds; by default
+//! its `--listen`, see [`listening`]). Snapshots go next to the world's database (`<db>.snapshots/`) unless turned off or the world is in
 //! memory.
 
 use std::{path::PathBuf, time::Duration};
@@ -70,11 +71,28 @@ pub fn apply(cfg: &mut Config, args: &[String]) -> Result<(), String> {
     if let Some(n) = arg("--snapshot-every").and_then(|v| v.parse().ok()) {
         cfg.snapshot_every = Duration::from_secs(n);
     }
+    // where neighbours are dialled from (a host behind a proxy may need to say); else `listening`
+    cfg.link_base = arg("--link-base");
     // the accepted props (a folder with catalogue.json; see props.rs)
     if let Some(dir) = arg("--props") {
         cfg.props = PathBuf::from(dir);
     }
     Ok(())
+}
+
+/// After [`apply`]: this world listens on `listen` (`0.0.0.0:7780`), in a `vox-host` if `hosted`.
+/// Without `--link-base`, its neighbours are dialled there, as `ws://127.0.0.1:7780`: a world
+/// on all addresses is reached on this machine's own.
+pub fn listening(cfg: &mut Config, listen: &str, hosted: bool) {
+    cfg.link_hosted = hosted;
+    if cfg.link_base.is_none() {
+        let local = match listen.rsplit_once(':') {
+            Some(("0.0.0.0", port)) => format!("127.0.0.1:{port}"),
+            Some(("[::]", port)) => format!("[::1]:{port}"),
+            _ => listen.to_string(),
+        };
+        cfg.link_base = Some(format!("ws://{local}"));
+    }
 }
 
 #[cfg(test)]
@@ -110,6 +128,19 @@ mod tests {
         assert_eq!(c.snapshots, None);
         let mut c = Config::new("a.db", vec![]);
         assert!(apply(&mut c, &args("x --directory-key abc")).is_err());
+    }
+
+    #[test]
+    fn link_base() {
+        let mut c = Config::new("a.db", vec![]);
+        apply(&mut c, &args("x")).unwrap();
+        listening(&mut c, "0.0.0.0:7781", false);
+        assert_eq!(c.link_base.as_deref(), Some("ws://127.0.0.1:7781"));
+        assert!(!c.link_hosted);
+        apply(&mut c, &args("x --link-base ws://10.0.0.2:7790")).unwrap();
+        listening(&mut c, "127.0.0.1:7790", true);
+        assert_eq!(c.link_base.as_deref(), Some("ws://10.0.0.2:7790"));
+        assert!(c.link_hosted);
     }
 
     #[test]

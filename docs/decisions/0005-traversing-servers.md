@@ -65,6 +65,15 @@ within a **margin** of their shared border (32 m to start):
   the line through their one connection.
 - **Weather cells** along the edge, every step, so the air has no seam.
 
+*As built (vox-7jh.1):* the link's handshake proves both ends know the world secret (keyed
+BLAKE3 over both nonces and both ids; the secret never crosses), and links are only made to
+worlds on the same host (`link_base`), never to an address from a doorway on another host. The
+handshake has no channel binding: something that can sit in the middle of the transport could
+relay it and keep the link. On localhost or inside the container that can't happen; a link
+that ever crosses a network needs TLS or a session key derived from the handshake before the
+margin (vox-7jh.2) sends anything over it. `/w/<id>/link` is refused at the edge (the Worker,
+the tunnel, the Helm nginx), and unproved handshakes are capped at 32 at once.
+
 Every block, cell and entity has **one owner**, the server whose area it lies in (world-scaling's
 zones are the unit). A player's edit across the line goes to their own server, which forwards it
 to the owner. The owner decides and answers both servers, and the result reaches both sides'
@@ -150,7 +159,8 @@ it. This waits until a world needs more than one machine.
 3. `vox-7jh.3` One owner per cell; cross-border edits forwarded to the owner.
 4. `vox-7jh.4` Review of the three above.
 5. `vox-7jh.5` One socket, several worlds, in `vox-host`.
-6. `vox-7jh.6` Design: the gateway for worlds on several hosts.
+6. `vox-7jh.6` Design: the gateway for worlds on several hosts (written:
+   [gateway.md](../design/gateway.md)).
 7. `vox-7jh.7` Decision: federation between directories.
 
 Step 1 is ADR 0004's epic (`vox-81l`, with `vox-81l.7` for preparing by time, waking the

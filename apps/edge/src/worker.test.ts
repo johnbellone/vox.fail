@@ -174,7 +174,7 @@ describe("the servers", () => {
 
   test("the internal routes never reach them", async () => {
     const seen = servers(200);
-    for (const path of ["/api/world/report", "/api/world/void/rules", "/api/host/instance"]) {
+    for (const path of ["/api/world/report", "/api/world/void/rules", "/api/host/instance", "/w/void/link", "/w/7781/link/", "/link"]) {
       const r = await worker.fetch(new Request(`https://vox.fail${path}`, { method: "POST" }), env);
       expect(r.status).toBe(404);
     }

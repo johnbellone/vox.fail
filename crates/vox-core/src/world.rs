@@ -46,33 +46,135 @@ fn index(c: Cell) -> usize {
 }
 
 /// CHUNK³ block ids (0 = air) and a version that goes up with every change.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Stored paletted (docs/design/chunk-streaming.md): a chunk of one block throughout (all air, all
+/// stone) is just that id; otherwise a palette of the ids it holds and, for each block, an index
+/// into it packed into 1, 2, 4, 8 or 16 bits. Most chunks hold a handful of kinds, so most take 4
+/// to 16 KB instead of the 64 KB of one `u16` each. The encoding on the wire and on disk is the same
+/// run-length form as before.
+#[derive(Clone, Debug)]
 pub struct Chunk {
-    blocks: Vec<u16>,
+    store: Store,
     pub version: u32,
     solid: u32,
 }
 
+#[derive(Clone, Debug)]
+enum Store {
+    /// every block is this one
+    Uniform(u16),
+    /// `palette[i]` is the id of index `i`; each block's index is `bits` wide, packed low bits
+    /// first into `words`, `64 / bits` to a word (no index straddles two words)
+    Packed { palette: Vec<u16>, bits: u32, words: Vec<u64> },
+}
+
+/// The narrowest packing that holds `n` palette entries.
+fn bits_for(n: usize) -> u32 {
+    match n {
+        0..=2 => 1,
+        3..=4 => 2,
+        5..=16 => 4,
+        17..=256 => 8,
+        _ => 16,
+    }
+}
+
+/// Words that hold every block's index at `bits` each.
+fn words_for(bits: u32) -> usize {
+    VOL.div_ceil((64 / bits) as usize)
+}
+
+/// Where block `i`'s index is: (word, shift).
+fn slot(i: usize, bits: u32) -> (usize, u32) {
+    let per = (64 / bits) as usize;
+    (i / per, (i % per) as u32 * bits)
+}
+
+impl Store {
+    fn get(&self, i: usize) -> u16 {
+        match self {
+            Store::Uniform(b) => *b,
+            Store::Packed { palette, bits, words } => {
+                let (w, shift) = slot(i, *bits);
+                let mask = (1u64 << *bits) - 1;
+                palette[((words[w] >> shift) & mask) as usize]
+            }
+        }
+    }
+
+    /// Set block `i` to `b`, growing the palette (and widening the packing) when `b` is new.
+    fn set(&mut self, i: usize, b: u16) {
+        if let Store::Uniform(u) = *self {
+            if u == b {
+                return;
+            }
+            // two kinds now: index 0 is the old block everywhere
+            *self = Store::Packed { palette: vec![u], bits: 1, words: vec![0; words_for(1)] };
+        }
+        let Store::Packed { palette, bits, words } = self else { unreachable!("made packed above") };
+        let p = match palette.iter().position(|&x| x == b) {
+            Some(p) => p,
+            None => {
+                palette.push(b);
+                let want = bits_for(palette.len());
+                if want != *bits {
+                    *words = repack(words, *bits, want);
+                    *bits = want;
+                }
+                palette.len() - 1
+            }
+        };
+        let (w, shift) = slot(i, *bits);
+        let mask = (1u64 << *bits) - 1;
+        words[w] = (words[w] & !(mask << shift)) | ((p as u64) << shift);
+    }
+}
+
+/// Every index in `words` (packed at `from` bits) packed again at `to` bits.
+fn repack(words: &[u64], from: u32, to: u32) -> Vec<u64> {
+    let mut out = vec![0u64; words_for(to)];
+    let mask = (1u64 << from) - 1;
+    for i in 0..VOL {
+        let (w, shift) = slot(i, from);
+        let v = (words[w] >> shift) & mask;
+        let (w2, shift2) = slot(i, to);
+        out[w2] |= v << shift2;
+    }
+    out
+}
+
 impl Default for Chunk {
     fn default() -> Self {
-        Chunk { blocks: vec![0; VOL], version: 0, solid: 0 }
+        Chunk { store: Store::Uniform(0), version: 0, solid: 0 }
+    }
+}
+
+/// Two chunks are equal when they hold the same blocks at the same version, however each is stored.
+impl PartialEq for Chunk {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version && self.solid == other.solid && (0..VOL).all(|i| self.store.get(i) == other.store.get(i))
     }
 }
 
 impl Chunk {
     pub fn get(&self, c: Cell) -> u16 {
-        self.blocks[index(c)]
+        self.store.get(index(c))
     }
     /// Set a block; returns the old one.
     pub fn set(&mut self, c: Cell, b: u16) -> u16 {
         let i = index(c);
-        let old = std::mem::replace(&mut self.blocks[i], b);
+        let old = self.store.get(i);
         if old != b {
+            self.store.set(i, b);
             self.version += 1;
             match (old == 0, b == 0) {
                 (true, false) => self.solid += 1,
                 (false, true) => self.solid -= 1,
                 _ => {}
+            }
+            // emptied: nothing left to keep but air
+            if self.solid == 0 {
+                self.store = Store::Uniform(0);
             }
         }
         old
@@ -80,14 +182,26 @@ impl Chunk {
     pub fn is_empty(&self) -> bool {
         self.solid == 0
     }
+    /// Bytes this chunk's blocks take in memory (for measuring; not the encoded size).
+    pub fn heap_bytes(&self) -> usize {
+        match &self.store {
+            Store::Uniform(_) => 0,
+            Store::Packed { palette, words, .. } => palette.len() * 2 + words.len() * 8,
+        }
+    }
     /// Run-length encoded: pairs of varint(run length) varint(id).
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
+        if let Store::Uniform(b) = self.store {
+            varint(&mut out, VOL as u32);
+            varint(&mut out, b as u32);
+            return out;
+        }
         let mut i = 0;
         while i < VOL {
-            let b = self.blocks[i];
+            let b = self.store.get(i);
             let mut n = 1;
-            while i + n < VOL && self.blocks[i + n] == b {
+            while i + n < VOL && self.store.get(i + n) == b {
                 n += 1;
             }
             varint(&mut out, n as u32);
@@ -97,7 +211,8 @@ impl Chunk {
         out
     }
     pub fn decode(data: &[u8], version: u32) -> Result<Chunk, String> {
-        let mut c = Chunk { version, ..Default::default() };
+        // read the runs first, checked, so a bad chunk is refused before anything is built
+        let mut runs: Vec<(usize, u16)> = Vec::new();
         let mut at = 0;
         let mut pos = 0;
         while pos < data.len() {
@@ -107,16 +222,39 @@ impl Chunk {
             if n == 0 || n > VOL - at {
                 return Err("chunk data has the wrong length".into());
             }
-            c.blocks[at..at + n].fill(b);
-            if b != 0 {
-                c.solid += n as u32;
-            }
+            runs.push((n, b));
             at += n;
         }
         if at != VOL {
             return Err("chunk data is short".into());
         }
-        Ok(c)
+        let solid = runs.iter().filter(|(_, b)| *b != 0).map(|(n, _)| *n as u32).sum();
+        // one kind throughout: nothing to store but the id
+        if runs.iter().all(|(_, b)| *b == runs[0].1) {
+            return Ok(Chunk { store: Store::Uniform(runs[0].1), version, solid });
+        }
+        // ids to palette indices through a map, so a hostile chunk of many kinds costs no more
+        // than a plain one
+        let mut palette: Vec<u16> = Vec::new();
+        let mut index_of: HashMap<u16, u64> = HashMap::new();
+        for (_, b) in &runs {
+            index_of.entry(*b).or_insert_with(|| {
+                palette.push(*b);
+                (palette.len() - 1) as u64
+            });
+        }
+        let bits = bits_for(palette.len());
+        let mut words = vec![0u64; words_for(bits)];
+        let mut i = 0;
+        for (n, b) in runs {
+            let p = index_of[&b];
+            for j in i..i + n {
+                let (w, shift) = slot(j, bits);
+                words[w] |= p << shift;
+            }
+            i += n;
+        }
+        Ok(Chunk { store: Store::Packed { palette, bits, words }, version, solid })
     }
 }
 
@@ -252,6 +390,23 @@ impl World {
     pub fn put_chunk(&mut self, k: ChunkKey, c: Chunk) {
         self.chunks.insert(k, c);
     }
+    /// Forget every chunk `keep` says no to (streaming drops what is far off); returns their keys.
+    pub fn drop_chunks(&mut self, mut keep: impl FnMut(ChunkKey) -> bool) -> Vec<ChunkKey> {
+        let gone: Vec<ChunkKey> = self.chunks.keys().copied().filter(|k| !keep(*k)).collect();
+        for k in &gone {
+            self.chunks.remove(k);
+        }
+        gone
+    }
+    /// How many chunks are held, empty ones too.
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
+    /// Chunks with any blocks in, in no order (cheaper than [`World::keys`] when the order doesn't
+    /// matter).
+    pub fn chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.chunks.iter().filter(|(_, c)| !c.is_empty()).map(|(k, _)| *k)
+    }
     /// Chunks with any blocks in, sorted (so they go out in the same order every time).
     pub fn keys(&self) -> Vec<ChunkKey> {
         let mut v: Vec<_> = self.chunks.iter().filter(|(_, c)| !c.is_empty()).map(|(k, _)| *k).collect();
@@ -299,6 +454,126 @@ impl Bucket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every cell of a chunk at `origin`, in a fixed order.
+    fn cells(origin: Cell) -> impl Iterator<Item = Cell> {
+        (0..CHUNK).flat_map(move |y| (0..CHUNK).flat_map(move |z| (0..CHUNK).map(move |x| [origin[0] + x, origin[1] + y, origin[2] + z])))
+    }
+
+    #[test]
+    fn a_chunk_holds_what_was_set_at_every_packing_width() {
+        // 2, 3, 5, 17 and 257 kinds cross each width: 1, 2, 4, 8 and 16 bits
+        for kinds in [2u16, 3, 5, 17, 257, 1000] {
+            let origin = [-64, -32, 96];
+            let mut c = Chunk::default();
+            let mut want = Vec::new();
+            for (i, cell) in cells(origin).enumerate() {
+                let b = (i as u16).wrapping_mul(7919) % kinds;
+                c.set(cell, b);
+                want.push(b);
+            }
+            for (cell, b) in cells(origin).zip(&want) {
+                assert_eq!(c.get(cell), *b, "{kinds} kinds at {cell:?}");
+            }
+            let solid = want.iter().filter(|b| **b != 0).count();
+            assert_eq!(c.solid as usize, solid);
+            // the encoding round-trips, and a decoded chunk is the same chunk
+            let back = Chunk::decode(&c.encode(), c.version).unwrap();
+            assert_eq!(back, c, "{kinds} kinds");
+            for (cell, b) in cells(origin).zip(&want) {
+                assert_eq!(back.get(cell), *b);
+            }
+        }
+    }
+
+    #[test]
+    fn negative_coordinates_land_in_their_own_chunk_cells() {
+        let mut c = Chunk::default();
+        c.set([-1, -1, -1], 5);
+        c.set([-32, -32, -32], 6);
+        assert_eq!(c.get([-1, -1, -1]), 5);
+        assert_eq!(c.get([31, 31, 31]), 5, "the same cell of a chunk, one chunk over");
+        assert_eq!(c.get([-32, -32, -32]), 6);
+        assert_eq!(c.get([0, 0, 0]), 6);
+        assert_eq!(c.get([-2, -1, -1]), 0);
+    }
+
+    #[test]
+    fn one_kind_throughout_takes_nothing_and_an_emptied_chunk_goes_back_to_that() {
+        let empty = Chunk::default();
+        assert_eq!(empty.heap_bytes(), 0);
+        // a solid chunk of stone from the wire stays uniform
+        let stone = Chunk::decode(&[0x80, 0x80, 0x02, 3], 1).unwrap();
+        assert_eq!(stone.heap_bytes(), 0);
+        assert_eq!(stone.get([5, 6, 7]), 3);
+        assert_eq!(stone.solid as usize, VOL);
+        assert_eq!(stone.encode(), vec![0x80, 0x80, 0x02, 3]);
+        // two kinds: one bit a block, 4 KB
+        let mut c = Chunk::default();
+        c.set([1, 2, 3], 9);
+        assert_eq!(c.heap_bytes(), 4 + VOL / 8);
+        // cleared again: back to nothing
+        c.set([1, 2, 3], 0);
+        assert!(c.is_empty());
+        assert_eq!(c.heap_bytes(), 0);
+        assert_eq!(c.get([1, 2, 3]), 0);
+        assert_eq!(c.version, 2, "each change counts");
+    }
+
+    #[test]
+    fn a_few_kinds_take_a_fraction_of_the_dense_size() {
+        let mut c = Chunk::default();
+        for cell in cells([0, 0, 0]) {
+            let b = match cell[1] {
+                0..8 => 1,
+                8..10 => 2,
+                10 => 3,
+                _ => 0,
+            };
+            c.set(cell, b);
+        }
+        // four kinds: two bits a block, 8 KB instead of 64 KB
+        assert!(c.heap_bytes() <= VOL / 4 + 16, "{}", c.heap_bytes());
+    }
+
+    #[test]
+    #[ignore = "a timing, run by hand: cargo test -p vox-core --release -- --ignored chunk_speed --nocapture"]
+    fn chunk_speed_against_dense() {
+        let mut c = Chunk::default();
+        let mut dense = vec![0u16; VOL];
+        let t = std::time::Instant::now();
+        for round in 0..20u16 {
+            for (i, cell) in cells([0, 0, 0]).enumerate() {
+                c.set(cell, (i as u16 ^ round) % 12);
+            }
+        }
+        let set_paletted = t.elapsed();
+        let t = std::time::Instant::now();
+        for round in 0..20u16 {
+            for (i, cell) in cells([0, 0, 0]).enumerate() {
+                dense[index(cell)] = (i as u16 ^ round) % 12;
+            }
+        }
+        let set_dense = t.elapsed();
+        let t = std::time::Instant::now();
+        let mut sum = 0u64;
+        for _ in 0..20 {
+            for cell in cells([0, 0, 0]) {
+                sum += c.get(cell) as u64;
+            }
+        }
+        let get_paletted = t.elapsed();
+        let t = std::time::Instant::now();
+        let mut sum2 = 0u64;
+        for _ in 0..20 {
+            for cell in cells([0, 0, 0]) {
+                sum2 += dense[index(cell)] as u64;
+            }
+        }
+        let get_dense = t.elapsed();
+        assert_eq!(sum, sum2);
+        println!("set: paletted {set_paletted:?}, dense {set_dense:?}; get: paletted {get_paletted:?}, dense {get_dense:?}");
+    }
 
     #[test]
     fn chunk_decode_rejects_runs_past_the_end_without_overflowing() {
