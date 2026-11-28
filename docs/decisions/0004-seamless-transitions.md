@@ -1,6 +1,7 @@
 # ADR 0004: Seamless transitions between worlds: falling from orbit into the sea
 
-- **Status:** proposed
+- **Status:** proposed; amended 2026-11-28 (preparing by time, waking the destination, the live
+  echo); traversing servers in general is [ADR 0005](0005-traversing-servers.md)
 - **Date:** 2026-11-28
 - **Decider:** the owner
 - **Builds on:** [world-network.md](../design/world-network.md) (tickets, atlas edges);
@@ -42,15 +43,29 @@ fall has to be a designed experience, not a simulation.
 Every crossing between worlds (doorways, atlas edges, and the new vertical edges below) becomes
 **seamless**, built from four parts:
 
-1. **Prepare early.** When a player is close to a crossing (near a doorway or an edge, or falling
-   towards one within a few seconds), the server asks for the ticket at once and sends
-   `ToClient::Prepare { url, ticket, frame }`. `frame` says how the two worlds' coordinates
-   meet: an offset in blocks, and later a turn.
+1. **Prepare early, by time.** The server prepares a crossing when a player would reach it
+   within the time a crossing takes to set up: speed × (connection setup + join + first chunks)
+   + a margin. A walker at 3.2 m/s is prepared 10 to 20 m out; a faller or a vehicle much
+   further. It asks for the ticket at once and sends `ToClient::Prepare { url, ticket, frame }`.
+   `frame` says how the two worlds' coordinates meet: an offset in blocks, and later a turn.
+   - **Wake the destination.** Preparing also starts the destination world if `vox-host` has
+     stopped it (`--idle-stop`), so its start-up hides behind the approach. A whole container
+     waking from sleep (up to two minutes on vox.fail) can't be hidden. It happens only when
+     the site is empty, so never in the middle of a crossing.
+   - Opening a WebSocket costs about three round trips (TCP, TLS, the upgrade): 150 to 300 ms
+     on a home connection, before the join. The prepare distance covers it.
 2. **Connect and stream before crossing.** The client opens the second connection in the
    background as an *arriving* player: not yet in that world, no avatar. It asks for chunks and
    far tiles round the expected arrival point (streaming, `View`). It draws them **in the
    current scene**, placed through `frame`, as part of the world below or beyond. They are not
    an echo on a quad.
+   - **A live echo.** The arriving connection joins as a *watcher* first, the read-only mode the
+     front page already uses. So a doorway shows the far side as it is now, with its players
+     moving, its weather and its edits, instead of its level file. Nothing changes the moment
+     you step through.
+   - **Same host, one socket.** Between worlds on the same `vox-host`, the second connection
+     can be a second world on the same WebSocket. The crossing is then a switch, with no new
+     handshake (ADR 0005 step 3).
 3. **Cross with state.** The crossing itself is decided by the origin world as now (`Through`,
    or `edge:down`). The ticket gains **velocity** and **facing**, so the destination starts you
    moving as you were. The client switches its poses to the new world, which already has its
@@ -132,13 +147,20 @@ for a minute.
   - What other players see: a falling player shows in the sea's sky only after their crossing,
     unless the sea also gets their poses while they're prepared.
 
+## Beyond one crossing
+
+Seeing and reaching across a border before crossing it is ADR 0005's: neighbouring servers share
+their borders, each cell has one owner, and a gateway holds each player's single connection. This
+ADR's crossing is its first step.
+
 ## Follow-up beads (epic `vox-81l`)
 
 1. `vox-81l.1` Per-world falling settings: gravity, terminal velocity, and the fastest fall the
    server accepts.
 2. `vox-81l.2` Tickets and travel carry velocity, facing and a frame; `Prepare` (protocol bump).
 3. `vox-81l.3` Client: make-before-break crossings, doorways and atlas edges first (after
-   streaming, vox-cti.8).
+   streaming, vox-cti.8). Prepare by time, wake the destination, and the live echo through a
+   watcher (`vox-81l.7`).
 4. `vox-81l.4` The planet frame, the sea's tall sky, orbit's compressed descent, and `edge:down`.
 5. `vox-81l.5` The sky at any altitude, and the re-entry glow.
 6. `vox-81l.6` Review, and a recorded playtest of the fall from the station.
