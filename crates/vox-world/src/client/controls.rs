@@ -35,7 +35,10 @@ pub fn controls(
 ) {
     let (wheels, props) = overlay;
     // a wheel open has the mouse and the right stick, and you stand still while you choose
-    let wheel_open = wheels.is_some_and(|q| q.is_open());
+    let wheel_open = wheels.as_ref().is_some_and(|q| q.is_open());
+    // in the emote wheel the left stick looks round, to aim at what to lock on to (the right
+    // stick is picking the emote)
+    let emote_aim = wheels.as_ref().is_some_and(|q| q.open == Some(crate::wheel::WheelKind::Emotes));
     // this frame's click is not known to be a pick until the mouse is looked at below
     if let Some(e) = editor.as_mut() {
         e.pointer_claimed = false;
@@ -131,7 +134,17 @@ pub fn controls(
         w.cam_yaw -= actions.mouse_delta.x * settings.mouse_look;
         w.cam_pitch -= actions.mouse_delta.y * settings.mouse_look;
     }
-    let look = if wheel_open { Vec2::ZERO } else { actions.look_stick };
+    // (a pad's left stick only: on the keyboard WASD would turn it, and the view stays put; from
+    // above, the stick turns the view but doesn't zoom; the look setting's inversion applies)
+    let look = if emote_aim && pad_active {
+        let m = actions.movement;
+        let y = if diablo { 0.0 } else if settings.invert_y { -m.y } else { m.y };
+        Vec2::new(m.x, y)
+    } else if wheel_open {
+        Vec2::ZERO
+    } else {
+        actions.look_stick
+    };
     if look != Vec2::ZERO {
         w.cam_yaw -= look.x * settings.stick_look * dt;
         if diablo {

@@ -18,6 +18,7 @@ them in the controls menu (press Esc to open the menu).
 | Next or previous quick block | Mouse wheel |
 | Block wheel (hold, point with the mouse, let go to take a block or prop) | Tab |
 | Emote wheel (hold, point with the mouse, let go to play the emote) | G |
+| Lock on, in the emote wheel | Right mouse button |
 | Fly | F |
 | Inventory | E |
 | Change view (first person, behind the shoulder, from above) | F5 or V |
@@ -56,6 +57,7 @@ Nintendo (B, A, Y, X; L, R, ZL, ZR), and Steam (A, B, X, Y). Other pads use the 
 | Pick block | West (left face button) |
 | Block wheel (hold, point with the right stick, let go to take a block or prop) | Left bumper (LB) |
 | Emote wheel (hold, point with the right stick, let go to play the emote) | Right bumper (RB) |
+| Lock on, in the emote wheel (the left stick looks) | Left trigger (LT) |
 | Fly | D-pad down |
 | Change view | D-pad up |
 | Inventory | North (top face button) |
@@ -89,10 +91,15 @@ swap: South and East, West and North. Then the right-hand button confirms and th
 Hold the right bumper (or **G**) for the emote wheel: eight emotes in a circle.
 
 1. Point at an emote with the right stick or the mouse.
-2. On a controller, push the left stick toward someone or something to face: the nearest
-   player, prop or doorway that way, up to 16 m off, is named in the middle of the wheel. With
-   the keyboard and mouse, it is the one nearest the middle of your view.
-3. Let go. You turn to face it and play the emote. Walking stops it.
+2. To face someone or something, aim and lock on, as in a third-person action game:
+   - On a controller, look round with the **left stick** while the wheel is open. Whoever or
+     whatever is in the middle of your view (a player, a prop or a doorway, up to 16 m off) is
+     named in the middle of the wheel. Press the **left trigger** (L2, LT or ZL) to lock on.
+   - With the keyboard and mouse, the view stays put: **right click** locks on to what is in
+     the middle of it.
+   - The lock follows them as they move. Press again to let go.
+3. Let go of the wheel. You turn to face what you locked on to and play the emote. With no
+   lock, you play it where you face. Walking stops it.
 
 Everyone nearby sees it. Choose the eight on the **Emotes** screen of the menu (Esc, then
 Emotes): **<** and **>** step each one through your character's animations. They are kept on

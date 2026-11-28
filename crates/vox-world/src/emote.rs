@@ -1,8 +1,10 @@
 //! The emote wheel (docs/design/controls-and-hud.md, "Wheels instead of a hotbar"): held open by
 //! the right bumper (or G), eight emotes round it, chosen with the right stick or the mouse.
-//! The left stick snaps a target (the nearest player, prop or doorway that way, within
-//! [`TARGET_M`]); on the keyboard the target is the one nearest the middle of the view. Letting
-//! go turns you to the target and plays the emote; walking stops it.
+//! Targets work as aiming does in a third-person action game: the left stick looks round (on the
+//! keyboard, the view stays where it was), the player, prop or doorway nearest the middle of
+//! the view within [`TARGET_M`] is aimed at, and the left trigger (right click) locks on to it;
+//! pressing it again lets go. Letting go of the wheel turns you to the locked target, if any,
+//! and plays the emote; walking stops it.
 //!
 //! The emotes are clips of the shared rig, chosen on the Emotes screen and kept on this device
 //! ([`EmoteSettings`]). Others see them with no message of their own: your pose is streamed.
@@ -28,10 +30,8 @@ pub const DEFAULT_EMOTES: [&str; EMOTE_SLOTS] =
 const NAME_MAX: usize = 40;
 /// How far a target may be, metres.
 pub const TARGET_M: f32 = 16.0;
-/// How far off the stick's direction a target may be (degrees); on the keyboard, off the middle
-/// of the view.
-const STICK_CONE_DEG: f32 = 50.0;
-const VIEW_CONE_DEG: f32 = 15.0;
+/// How far off the middle of the view a target may be to be aimed at, degrees.
+const AIM_CONE_DEG: f32 = 15.0;
 /// Clips that are how you move, not emotes: not offered on the Emotes screen.
 const NOT_EMOTES: [&str; 6] = ["Idle", "Walk", "Run", "Sprint", "Respawn", "Enter door"];
 
@@ -200,7 +200,37 @@ fn candidates(w: &WorldClient, entities: Option<&WorldEntities>) -> Vec<Target> 
 pub struct EmoteWheel {
     pointer: Vec2,
     choice: Option<usize>,
-    target: Option<Target>,
+    /// what the view is on
+    aim: Option<Target>,
+    /// what lock-on holds, kept where it is as it moves
+    locked: Option<Target>,
+}
+
+/// Lock-on pressed: lock on to what is aimed at, or, aimed at nothing or at what is already
+/// held, let go.
+pub fn toggle_lock(locked: Option<Target>, aim: Option<Target>) -> Option<Target> {
+    match (locked, aim) {
+        (Some(l), Some(a)) if same(&l, &a) => None,
+        (_, Some(a)) => Some(a),
+        (_, None) => None,
+    }
+}
+
+/// How far a prop or doorway may seem to move and still be the same one, blocks. They don't
+/// move, but two copies of one prop share a kind (its hash), so where it is tells them apart.
+const SAME_SPOT: f32 = vox_core::in_blocks(0.5);
+
+/// Whether two targets are the same thing: a player by number; a prop or doorway by kind and
+/// place.
+fn same(a: &Target, b: &Target) -> bool {
+    a.kind == b.kind && (matches!(a.kind, TargetKind::Player(_)) || a.at.distance(b.at) <= SAME_SPOT)
+}
+
+/// The locked target as it is now (a player moves): the same player, or the same prop or
+/// doorway; nothing once it is gone or out of reach.
+fn follow(locked: &Target, from: Vec3, candidates: &[Target]) -> Option<Target> {
+    let reach = vox_core::in_blocks(TARGET_M) * 1.25;
+    candidates.iter().find(|t| same(t, locked) && t.at.distance(from) <= reach).cloned()
 }
 
 /// The emote wheel: open while its button is held; letting go plays what is pointed at.
@@ -208,7 +238,6 @@ pub struct EmoteWheel {
 pub fn emote_wheel(
     actions: Res<Actions>,
     mode: Res<UiMode>,
-    active: Res<ActiveDevice>,
     settings: Res<EmoteSettings>,
     entities: Option<Res<WorldEntities>>,
     mut wheels: ResMut<Wheels>,
@@ -243,23 +272,21 @@ pub fn emote_wheel(
         if let Some(c) = wheel_choice(st.pointer, EMOTE_SLOTS) {
             st.choice = Some(c);
         }
-        // the target: the left stick points (and a target stays once snapped); without a pad,
-        // the middle of the view
+        // aim at what is in the middle of the view (the left stick turns it: client::controls),
+        // and lock on with the lock-on button
         let from = Vec3::from(w.body.pos);
         let all = candidates(&w, entities.as_deref());
-        if active.is_gamepad() {
-            if actions.movement.length() > 0.5 {
-                st.target = snap_target(from, w.ground_dir(actions.movement), STICK_CONE_DEG, &all);
-            }
-        } else {
-            st.target = snap_target(from, w.ground_dir(Vec2::Y), VIEW_CONE_DEG, &all);
+        st.aim = snap_target(from, w.ground_dir(Vec2::Y), AIM_CONE_DEG, &all);
+        st.locked = st.locked.as_ref().and_then(|l| follow(l, from, &all));
+        if actions.just_pressed(Action::LockOn) {
+            st.locked = toggle_lock(st.locked.take(), st.aim.clone());
         }
         return;
     }
-    // let go: face the target, play the emote
+    // let go: face what is locked on, play the emote
     wheels.open = None;
     let Some(clip) = st.choice.and_then(|c| settings.slots.get(c)).cloned() else { return };
-    if let Some(t) = st.target.take() {
+    if let Some(t) = st.locked.take() {
         w.face(t.at);
     }
     av.emote = Some(clip);
@@ -297,11 +324,18 @@ pub fn emote_wheel_view(
         v.slots.push(SlotView { at: wheel_spot(i, EMOTE_SLOTS, MAIN_RADIUS), icon: None, label: name.clone(), picked: st.choice == Some(i) });
     }
     let name = st.choice.and_then(|c| settings.slots.get(c)).cloned().unwrap_or_default();
-    v.centre = match &st.target {
-        Some(t) => format!("{name}\nto {}", target_name(t, &w, props.as_deref())),
-        None => name,
+    let target = match (&st.locked, &st.aim) {
+        (Some(l), _) => format!("\nlocked on {}", target_name(l, &w, props.as_deref())),
+        (None, Some(a)) => format!("\n({})", target_name(a, &w, props.as_deref())),
+        (None, None) => String::new(),
     };
-    v.hint = if active.is_gamepad() { "Left stick: pick who or what to face".into() } else { "Face who or what to emote at".into() };
+    v.centre = format!("{name}{target}");
+    v.hint = match (active.is_gamepad(), st.locked.is_some()) {
+        (true, false) => "Left stick to look, left trigger to lock on".into(),
+        (true, true) => "Left trigger again to let go".into(),
+        (false, false) => "Right click locks on to what is in the middle of the view".into(),
+        (false, true) => "Right click again to let go".into(),
+    };
     if *view != v {
         *view = v;
     }
@@ -326,28 +360,55 @@ mod tests {
     }
 
     #[test]
-    fn the_stick_snaps_to_what_is_that_way_and_near() {
+    fn aiming_takes_what_is_in_view_and_near() {
         let m = vox_core::in_blocks(1.0);
         let ahead = at(TargetKind::Player(1), 0.0, 4.0 * m);
         let right = at(TargetKind::Doorway("yard".into()), 4.0 * m, 0.0);
         let far = at(TargetKind::Player(2), 0.0, (TARGET_M + 1.0) * m);
         let all = vec![ahead.clone(), right.clone(), far];
-        assert_eq!(snap_target(Vec3::ZERO, Vec3::Z, STICK_CONE_DEG, &all), Some(ahead.clone()));
-        assert_eq!(snap_target(Vec3::ZERO, Vec3::X, STICK_CONE_DEG, &all), Some(right));
-        assert_eq!(snap_target(Vec3::ZERO, Vec3::NEG_Z, STICK_CONE_DEG, &all), None, "nothing behind");
-        assert_eq!(snap_target(Vec3::ZERO, Vec3::ZERO, STICK_CONE_DEG, &all), None, "no direction");
+        assert_eq!(snap_target(Vec3::ZERO, Vec3::Z, AIM_CONE_DEG, &all), Some(ahead.clone()));
+        assert_eq!(snap_target(Vec3::ZERO, Vec3::X, AIM_CONE_DEG, &all), Some(right));
+        assert_eq!(snap_target(Vec3::ZERO, Vec3::NEG_Z, AIM_CONE_DEG, &all), None, "nothing behind");
+        assert_eq!(snap_target(Vec3::ZERO, Vec3::ZERO, AIM_CONE_DEG, &all), None, "no direction");
         // two in line: the nearer
         let nearer = at(TargetKind::Prop([1; 16]), 0.0, 2.0 * m);
-        assert_eq!(snap_target(Vec3::ZERO, Vec3::Z, STICK_CONE_DEG, &[ahead, nearer.clone()]), Some(nearer));
+        assert_eq!(snap_target(Vec3::ZERO, Vec3::Z, AIM_CONE_DEG, &[ahead, nearer.clone()]), Some(nearer));
+        // 30 degrees off the middle of the view is not aimed at
+        let off = at(TargetKind::Player(3), 30f32.to_radians().sin() * 5.0 * m, 30f32.to_radians().cos() * 5.0 * m);
+        assert!(snap_target(Vec3::ZERO, Vec3::Z, AIM_CONE_DEG, &[off]).is_none());
     }
 
     #[test]
-    fn the_view_cone_is_narrower_than_the_stick() {
+    fn lock_on_takes_the_aim_and_lets_go_the_second_time() {
+        let sam = at(TargetKind::Player(1), 0.0, 4.0);
+        let door = at(TargetKind::Doorway("yard".into()), 4.0, 0.0);
+        assert_eq!(toggle_lock(None, Some(sam.clone())), Some(sam.clone()));
+        assert_eq!(toggle_lock(Some(sam.clone()), Some(sam.clone())), None, "the same again lets go");
+        assert_eq!(toggle_lock(Some(sam.clone()), Some(door.clone())), Some(door), "aimed at another: switch to it");
+        assert_eq!(toggle_lock(Some(sam), None), None, "aimed at nothing lets go");
+        assert_eq!(toggle_lock(None, None), None);
+    }
+
+    #[test]
+    fn a_lock_follows_its_target_until_it_is_gone() {
         let m = vox_core::in_blocks(1.0);
-        // 30 degrees off: the stick takes it, the view does not
-        let off = at(TargetKind::Player(1), 30f32.to_radians().sin() * 5.0 * m, 30f32.to_radians().cos() * 5.0 * m);
-        assert!(snap_target(Vec3::ZERO, Vec3::Z, STICK_CONE_DEG, std::slice::from_ref(&off)).is_some());
-        assert!(snap_target(Vec3::ZERO, Vec3::Z, VIEW_CONE_DEG, &[off]).is_none());
+        let sam = at(TargetKind::Player(1), 0.0, 4.0 * m);
+        let moved = at(TargetKind::Player(1), 2.0 * m, 6.0 * m);
+        assert_eq!(follow(&sam, Vec3::ZERO, std::slice::from_ref(&moved)), Some(moved));
+        assert_eq!(follow(&sam, Vec3::ZERO, &[]), None, "gone");
+        let away = at(TargetKind::Player(1), 0.0, (TARGET_M * 2.0) * m);
+        assert_eq!(follow(&sam, Vec3::ZERO, &[away]), None, "out of reach");
+    }
+
+    #[test]
+    fn two_copies_of_one_prop_are_told_apart_by_where_they_are() {
+        let m = vox_core::in_blocks(1.0);
+        let lamp = at(TargetKind::Prop([3; 16]), 0.0, 4.0 * m);
+        let other = at(TargetKind::Prop([3; 16]), 3.0 * m, 4.0 * m);
+        assert_eq!(follow(&lamp, Vec3::ZERO, &[other.clone(), lamp.clone()]), Some(lamp.clone()), "not the first copy found");
+        assert_eq!(follow(&lamp, Vec3::ZERO, std::slice::from_ref(&other)), None);
+        assert_eq!(toggle_lock(Some(lamp.clone()), Some(other.clone())), Some(other), "aimed at the other copy: switch to it");
+        assert_eq!(toggle_lock(Some(lamp.clone()), Some(lamp)), None);
     }
 
     #[test]

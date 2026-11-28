@@ -76,10 +76,14 @@ pub enum Action {
     /// go to play it. (Added last: saved controls name actions, so the order is free, but the
     /// list below keeps the order of the controls screen.)
     EmoteWheel,
+    /// in the emote wheel: lock on to what the view is on (press again to let go), as aiming
+    /// locks on in a third-person action game. It shares the place button: while a wheel is
+    /// open nothing is built.
+    LockOn,
 }
 
 impl Action {
-    pub const ALL: [Action; 26] = [
+    pub const ALL: [Action; 27] = [
         Action::Forward,
         Action::Backward,
         Action::Left,
@@ -104,6 +108,7 @@ impl Action {
         Action::Alternate,
         Action::QuickWheel,
         Action::EmoteWheel,
+        Action::LockOn,
         Action::PushToTalk,
         Action::VoiceChannel,
     ];
@@ -135,6 +140,7 @@ impl Action {
             Action::Alternate => "More",
             Action::QuickWheel => "Block wheel",
             Action::EmoteWheel => "Emotes",
+            Action::LockOn => "Lock on (emotes)",
             Action::PushToTalk => "Push to talk",
             Action::VoiceChannel => "Voice channel",
         }
@@ -143,6 +149,16 @@ impl Action {
     /// Played in the world (shown on the controls screen as such), rather than in menus.
     pub fn in_game(self) -> bool {
         !matches!(self, Action::Confirm | Action::Back | Action::TabNext | Action::TabPrev | Action::Alternate)
+    }
+
+    /// Actions in different layers may share a button, since only one layer reads it at a time:
+    /// menus (0), the game (1), and the emote wheel while it is open (2).
+    pub fn layer(self) -> u8 {
+        match self {
+            Action::LockOn => 2,
+            a if a.in_game() => 1,
+            _ => 0,
+        }
     }
 }
 

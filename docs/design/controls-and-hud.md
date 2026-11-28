@@ -124,10 +124,17 @@ The owner's decision: the hotbar goes; two wheels held open by the bumpers repla
   - Eight emotes round the wheel, chosen by the player from their character's animations and
     saved on this device, like the controls.
   - **The right stick** (or the mouse) picks the emote.
-  - **The left stick** points at a target: the nearest player, prop or doorway that way, within
-    16 m, is snapped to and named in the middle of the wheel. On the keyboard, it is the one
-    nearest the middle of the view.
-  - **Letting go** plays the emote, turning you to face the target first. Moving stops it.
+  - **Targets work like aiming in a third-person action game** (the owner's call, 2026-11-28,
+    after the first cut snapped to wherever the left stick pointed). While the wheel is open the
+    **left stick looks round** (the right stick is busy picking the emote). The player, prop or
+    doorway nearest the middle of the view, within 16 m and 15 degrees, is aimed at. The **left
+    trigger** (L2; right click on the keyboard, the `LockOn` action) **locks on** to it, and the
+    lock follows it as it moves. Pressing again lets go, or locks on to something else if the
+    view is on it. The wheel's middle names the emote and what is aimed at or locked.
+  - `LockOn` shares its button with Place: actions have layers (menus, the game, the emote
+    wheel), and only one layer reads a button at a time.
+  - **Letting go** plays the emote, turning you to face what is locked on first (with no lock,
+    you stay facing where you were). Moving stops it.
     Others see it through the pose stream; nothing new goes over the network.
 - **What's on screen instead of the bar**: what is in your hand, small, bottom right: a block's
   picture (a prop's name), with its name beside it for two seconds after it changes.

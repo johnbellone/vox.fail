@@ -54,6 +54,7 @@ impl Default for Bindings {
             (Alternate, &[K(KeyCode::KeyX)]),
             (QuickWheel, &[K(KeyCode::Tab)]),
             (EmoteWheel, &[K(KeyCode::KeyG)]),
+            (LockOn, &[M(MouseButton::Right)]),
             (PushToTalk, &[K(KeyCode::KeyB)]),
             (VoiceChannel, &[K(KeyCode::KeyN)]),
         ];
@@ -69,6 +70,7 @@ impl Default for Bindings {
             (HotbarPrev, &[]),
             (QuickWheel, &[G::LeftTrigger]),
             (EmoteWheel, &[G::RightTrigger]),
+            (LockOn, &[G::LeftTrigger2]),
             (Inventory, &[G::North]),
             (Menu, &[G::Start]),
             (Chat, &[G::Select]),
@@ -97,10 +99,10 @@ impl Bindings {
         self.pad.get(&a).map_or(&[], |v| v.as_slice())
     }
     /// Bind `input` to `a`, replacing that device's bindings for it. Anything else that used
-    /// the same input loses it (one input, one action), except menu actions, which share
-    /// buttons with the game on purpose.
+    /// the same input loses it (one input, one action), except actions of another layer (menus,
+    /// the emote wheel's lock-on), which share buttons with the game on purpose.
     pub fn set(&mut self, a: Action, input: Input) {
-        let clash = |b: Action| b != a && b.in_game() == a.in_game();
+        let clash = |b: Action| b != a && b.layer() == a.layer();
         match input {
             Input::Pad(b) => {
                 for (k, v) in self.pad.iter_mut() {
@@ -339,11 +341,11 @@ impl Bindings {
             if self.pad(Action::EmoteWheel).is_empty() {
                 self.set(Action::EmoteWheel, Input::Pad(G::RightTrigger));
             }
-            let taken = |b: &Bindings, btn: G| Action::ALL.iter().any(|a| a.in_game() && b.pad(*a).contains(&btn));
+            let taken = |b: &Bindings, btn: G| Action::ALL.iter().any(|a| a.layer() == 1 && b.pad(*a).contains(&btn));
             if self.pad(Action::VoiceChannel).is_empty() && !taken(self, G::DPadLeft) {
                 self.set(Action::VoiceChannel, Input::Pad(G::DPadLeft));
             }
-            let key_taken = Action::ALL.iter().any(|a| a.in_game() && self.kbm(*a).contains(&Input::Key(KeyCode::KeyG)));
+            let key_taken = Action::ALL.iter().any(|a| a.layer() == 1 && self.kbm(*a).contains(&Input::Key(KeyCode::KeyG)));
             if self.kbm(Action::EmoteWheel).is_empty() && !key_taken {
                 self.kbm.insert(Action::EmoteWheel, vec![Input::Key(KeyCode::KeyG)]);
             }
