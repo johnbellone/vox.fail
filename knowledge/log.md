@@ -1,4 +1,6 @@
 ## 2026-11-28
+* **Relate** [2026-11-28T05:28:24Z]: Linked `architecture/asset-pipeline.md` to `decisions/fine-voxel-parts-and-jar-fluid.md` (Finer-than-5 cm avatar parts and the VoxelFluid material).
+* **Creation** [2026-11-28T05:28:19Z]: Documented concept `decisions/fine-voxel-parts-and-jar-fluid.md` (Decision: Finer Voxel Parts and a Sloshing Fluid Material for Avatars). — The Brain: finer head, plaid flannel, sloshing jar fluid (commit 4ac49e5).
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/asset-pipeline.md`. — Level builders write through rescale_level.py at quarter-metre blocks.
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/vox-client-and-web.md`. — Device profiles: Start.detail, vox-client --detail, the page's deviceDetail; editor portal limits and prop units at quarter-metre blocks.
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/weather-simulation.md`. — The luminous Void is a haze now (humidity 0.98, no fog bank), with a thinner fog volume and 450 m visibility.
