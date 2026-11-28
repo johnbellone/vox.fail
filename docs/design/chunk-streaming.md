@@ -21,9 +21,13 @@ as world-scaling.md has them.
 - **Stream by view radius.** The client asks for the chunks within a radius it chooses. The
   server sends the nearest first, within a byte budget, and sends edits only to the players who
   can see them. A join then costs what is near you, not the whole world.
-- **Full detail to 64 m in the browser and 128 m on the desktop.** Past that, coarser copies of
-  the same chunks (0.5 m, 1 m and 2 m blocks) carry the view to the fog: 450 m in the Void.
-  They use the same chunk format and the same mesher.
+- **Full detail to 64 m in the browser and 128 m on the desktop.** Past that, a **sparse voxel
+  octree** holds the world at coarser and coarser sizes (0.5 m, 1 m, 2 m and up). Rings of it
+  are meshed with the same mesher out to the fog: 450 m in the Void.
+- **Then try ray-marching that octree instead of meshing it**, first on the desktop: the GPU
+  traces each far pixel through the tree. That costs per pixel rather than per block, which is
+  what a 25 km Void full of builds needs. A prototype measured against the mesh rings decides
+  it for each device profile.
 - **Then make meshing faster and drawing smarter**, guided by measurements: the binary
   greedy mesher, meshing off the main thread on the desktop, and culling chunks you can't see.
 
@@ -132,13 +136,26 @@ hosting guides, generated wikis or blog analyses rather than the developers.
   texture holding one byte per voxel (a palette index), so its cost follows screen pixels, not
   the voxel count *(unverified: from analyses, not the developer)*
   ([frame teardown](https://acko.net/blog/teardown-frame-teardown/)).
+- **Sparse voxel octrees.** Laine and Karras's *Efficient Sparse Voxel Octrees* gives a compact
+  layout and a GPU ray cast through it, and reports ray casting competitive with triangles
+  ([paper](https://research.nvidia.com/publication/efficient-sparse-voxel-octrees),
+  [technical report](https://research.nvidia.com/sites/default/files/publications/laine2010tr1_paper.pdf)).
+- **Wider trees trace faster.** A tree with 4 × 4 × 4 children per node keeps each node's
+  occupancy in one 64-bit mask. One write-up reports hierarchical grids like this beating a
+  state-of-the-art octree traversal by as much as 60%
+  ([sparse 64-trees](https://dubiousconst282.github.io/2024/10/03/voxel-ray-tracing)). A Rust
+  crate splits the mask into two 32-bit halves for the GPU
+  ([Sparse-Voxel-64Tree](https://docs.rs/crate/Sparse-Voxel-64Tree/latest/source/src/lib.rs)),
+  which WGSL needs, having no 64-bit integers.
 - **Sparse voxel DAGs** merge identical subtrees of an octree, often by orders of magnitude, and
   can be traced without decompressing; editing them is harder
   ([Kämpe et al.](https://www.cse.chalmers.se/~uffe/HighResolutionSparseVoxelDAGs.pdf),
   [symmetry-aware DAGs](https://www.crs4.it/vic/data/papers/i3d2016-symmetry-dags.pdf)).
 - **The browser.** WebGPU's multi-draw indirect is still experimental in Chrome, behind the
   "Unsafe WebGPU Support" flag ([Chrome: new in WebGPU 131](https://developer.chrome.com/blog/new-in-webgpu-131)).
-  We can't count on it there.
+  We can't count on it there. By default, one storage buffer binding is limited to 128 MiB
+  and a buffer to 256 MiB; a page must ask for more, and the adapter may not have it
+  ([MDN: GPUSupportedLimits](https://developer.mozilla.org/en-US/docs/Web/API/GPUSupportedLimits)).
 
 ### What fits Vox
 
@@ -149,13 +166,16 @@ hosting guides, generated wikis or blog analyses rather than the developers.
 | Block storage | palette, 0 to ~8 bits | dense, 16 bits | palette, 0 to 8 bits (16 rare) |
 | Sent on join | within view distance | the whole world | within your radius, nearest first |
 | Full detail | 10 chunks: ~160 m | everything loaded | 64 m browser, 128 m desktop |
-| Far terrain | none (mods add it) | none | coarser chunks to the fog |
+| Far terrain | none (mods add it) | none | sparse octree: meshed rings, then ray-marched |
 | Culling | frustum, cave culling | frustum | frustum, then cave culling |
 
-Ray marching and voxel DAGs suit static or GPU-resident scenes. They are a big step away from
-our mesh renderer, Bevy's materials and the browser's limits, so they are left for later. A
-palette, streaming and mip-mapped chunks give most of the gain at a fraction of the work, and
-keep one chunk format everywhere.
+Near the player, a palette and meshes are right. Edits, the move check and the mesher read
+single blocks all the time, and a tree would make every read a walk down it. Far away the
+other way round is true. Nobody edits there, a coarse copy is all that shows, and an octree's
+levels *are* the coarse copies, with empty space left out for free. So the far field is a
+sparse octree (§5). It is first drawn by meshing rings of it, and then, if a prototype earns
+it, by ray-marching it (§6). Voxel DAGs, which share identical subtrees, compress more, but are
+hard to edit; they wait until parts of a world stop changing.
 
 ## Design
 
@@ -168,7 +188,7 @@ keep one chunk format everywhere.
 - `vox-world`'s `load_level` and `mesh_level` take a `World`, so an echo is held as chunks.
 - **An echo shows only what's near its arrival point**: the chunks within 48 m of `arrive`,
   plus whatever the echo camera looks at inside that. It is meshed at full detail near the
-  doorway and from LOD chunks beyond (§5) once those exist. The far side is a picture through a
+  doorway and from the far-field octree beyond (§5) once that exists. The far side is a picture through a
   doorway, not a second world.
 - Acceptance: seeding the sea peaks under 400 MB on the server, and the Void with the Tide Door
   in view stays under 300 MB of wasm memory in Chrome.
@@ -261,30 +281,86 @@ server and chunk keys:
 
   Mesh memory is the bigger unknown and is measured in phase 0 (see *Plan*).
 
-### 5. Far terrain: mip-mapped chunks
+### 5. Far terrain: a sparse voxel octree
 
-The clipmap idea, done with our own chunks:
+Beyond full detail, the world is held as a sparse voxel octree. Each level halves the detail of
+the one below, so the levels are the coarse copies the rings need (the clipmap idea).
 
-- **LOD level L** has blocks 2^L times larger: 0.5 m, 1 m, 2 m for L = 1 to 3. A level-L chunk
-  is still 32³ cells, so it covers 2^L × 8 m on a side. The format, the palette, the wire
-  message (with `lod` added to the key) and the mesher are all the same.
-- **Downsampling** is done on the server and cached. A coarse cell is solid when at least
-  four of its eight finer cells are solid, and takes the commonest solid block among them.
-  Ties go to the lowest id, so every machine gets the same result. Water and glass are counted
-  as non-solid unless all eight are. A level-L chunk is rebuilt from its eight level-(L-1)
-  chunks when one of them changes, at most once every few seconds.
-- **Rings**: level L is drawn from R·2^(L-1) to R·2^L, where R is the full-detail radius. Each
-  ring holds about three quarters as many chunks as the full-detail disc. Three rings from
-  64 m reach 512 m, which covers the Void's 450 m haze, for about 3.25 times the chunks of the
-  full-detail disc: some 2,000 chunks and 13 MB in the browser.
-- **Seams**: a coarse chunk is not drawn where the finer ring covers it. When meshing a coarse
-  chunk, cells outside it count as air, so its sides are closed. Those side faces act as
-  skirts, and no cracks show where it meets a finer chunk. Finer chunks load before coarser
-  ones unload.
-- Generated ground (atlas tiles) could downsample on the client without the network. That
-  waits for zones and the generator (world-scaling.md).
+- **Tiles.** The far field is cut into **far tiles** 256 m on a side (1,024 blocks, 32 by 32
+  chunks), each the root of an octree tall enough for the whole world's height. Its levels
+  run from 256 m at the root down to 0.5 m at the bottom: nine levels. There is no 0.25 m level,
+  since full detail is the chunks' job.
+- **What a node holds**: which of its eight children exist (one byte), and one block standing
+  for the whole node: what it looks like from far away. A missing child is all air. A node
+  whose children would all be the same solid block has none: it is that block throughout,
+  which prunes solid ground as well as air.
+- **Coarser from finer.** A 0.5 m cell comes from its eight blocks, and each level above from
+  the level below. A cell is solid when at least four of its eight are, and takes the
+  commonest solid block among them; ties go to the lowest id, so every machine gets the same
+  tree. Water and glass count as non-solid unless all eight are.
+- **Built and kept on the server.** The server keeps each far tile's octree as a node array
+  with child indices, built from the chunks. An edit changes at most one node per level
+  (nine), along the path to the root, so updates are cheap. That is unlike a DAG, where shared
+  subtrees would have to be unshared first. A tile's wire form is rebuilt from it at most every
+  few seconds while edits come in.
+- **On the wire and in the client**: breadth-first, level by level. Each node is its child
+  byte plus an index into the tile's palette: about 2 bytes a node. A child's position comes
+  from counting the set bits before it, with a running count every 64 nodes for fast lookup.
+  A client asks for each tile only as deep as its distance needs, coarse levels first, and
+  refines as it gets nearer. `ToClient::FarTile { key, depth, bytes }` joins the chunk messages,
+  under the same `View` and byte budget.
+- **Size**, an estimate to check against the sea and islands: nodes follow surface area. A flat
+  256 m tile has 512 × 512 surface cells at 0.5 m, so about 350,000 nodes with the levels above,
+  or about 700 KB. At 1 m it is about 175 KB, and every level up is a quarter of that.
+- **Rings from the tree.** The client fills a 32³ grid from the octree at the ring's level
+  (level L: blocks 2^L × 0.25 m, so a ring chunk covers 2^L × 8 m) and meshes it with the same
+  mesher as a chunk. Level L is drawn from R·2^(L-1) to R·2^L, where R is the full-detail
+  radius. Each ring holds about three quarters as many ring chunks as the full-detail disc has
+  chunks. Three rings from 64 m reach 512 m, enough for the Void's 450 m haze.
+- **Seams**: a coarse ring chunk is not drawn where the finer ring covers it. Cells outside a
+  ring chunk count as air when it is meshed, so its sides are closed. Those side faces act as
+  skirts, and no cracks show where it meets a finer chunk. Finer data arrives before coarser
+  is dropped.
+- Generated ground (atlas tiles) could build its octree on the client without the network.
+  That waits for zones and the generator (world-scaling.md).
 
-### 6. Meshing and drawing (after measuring)
+### 6. Ray-marching the far field (a prototype, desktop first)
+
+The same octree, traced per pixel on the GPU instead of meshed:
+
+- **Split by distance.** Chunks within the full-detail radius are drawn as meshes, as now. A
+  full-screen pass after them marches each pixel's ray through the far field, starting a
+  little inside the full-detail radius. It writes a colour and a depth (`@builtin(frag_depth)`)
+  with the depth test on, so a near mesh in front always wins and the overlap shows no seam.
+- **The GPU's form is a 64-tree**: nodes with 4 × 4 × 4 children, each node's occupancy a 64-bit
+  mask held as two `u32`s, the layout reported to trace faster than an octree. It is built on
+  the client from the far tiles it receives, so the wire carries one format. Its levels step
+  by four, not two: from a 512 m root (four far tiles) they run 128 m, 32 m, 8 m, 2 m and
+  0.5 m, so its leaves match the octree's finest level. Each node keeps the octree's
+  representative block for its size.
+- **Level of detail by footprint.** A ray stops descending once a node is smaller than its
+  pixel at that distance. That keeps distant terrain from shimmering (the tree is its own mip
+  chain), and bounds the steps per ray.
+- **Shading kept simple.** Each block's colour is the average of its tiles, worked out once from
+  the texture atlas. The hit face gives the normal. The sky's sun and ambient light come from
+  `SkyLook`, and the haze uses the same visibility as `DistanceFog`, so near meshes and far
+  pixels fade the same way. There are no shadows or corner shading that far out.
+- **Into Bevy.** A render graph node after the main opaque pass that reads the depth texture.
+  The details of Bevy 0.20's render graph are to be confirmed by the prototype; this is its
+  main risk.
+- **Limits.** The tree lives in one storage buffer. Kept under 64 MB, it stays inside WebGPU's
+  default 128 MiB binding limit, so no page has to ask for more.
+- **Why bother.** Meshing cost grows with the blocks in view; ray-marching cost grows with the
+  pixels that show far terrain. Past a few hundred metres there are far more blocks than
+  pixels. It also lets the desktop see farther than the mesh rings could afford: 1 to 4 km in
+  clear weather, which a filled 25 km Void would want.
+- **The decision.** Build it behind a setting, on the desktop. Measure it against the mesh rings
+  at the same distances in the Void, the islands and the sea: GPU frame time, memory, CPU time
+  saved on meshing, and the look (popping, shimmer, the seam at the handover). Then decide for
+  each profile. A computer's browser follows only if it wins there too. Phones keep the mesh
+  rings: their GPUs are weakest at long per-pixel loops.
+
+### 7. Meshing and drawing (after measuring)
 
 - **Benchmark our mesher** against binary greedy meshing on real chunks (sea, islands) and
   adopt it if it is several times faster. Our 32-block chunks plus a border fit 64-bit masks.
@@ -299,7 +375,7 @@ The clipmap idea, done with our own chunks:
   of coarse chunks into one mesh per material. Multi-draw indirect can't be relied on in
   browsers yet.
 
-### 7. Server memory
+### 8. Server memory
 
 The server gains the same palette (it uses `vox_core::World`), and loading levels straight into
 chunks fixes the seeding peak. Loading zones on demand and evicting idle ones stays as
@@ -319,9 +395,12 @@ vox-cti.3 block shipping the quarter-metre branch.
 3. **Streaming by view radius**: `View`, interest sets, nearest-first sending, hysteresis,
    watchers. Protocol 11.
 4. **Draw distance setting and matched fog.**
-5. **Mip-mapped chunks**: server downsampling, LOD keys on the wire, client rings and seams.
-6. **Meshing**: benchmark binary greedy, adopt if faster; desktop meshing off the main thread.
-7. **Cave culling**, then draw-call batching if measurements call for it.
+5. **The far-field octree**: built and kept on the server, far tiles on the wire, rings meshed
+   from it on the client, with seams closed.
+6. **Ray-marching prototype** on the desktop: the 64-tree, the far-field pass, and measurements
+   against the rings. Then a decision for each profile.
+7. **Meshing**: benchmark binary greedy, adopt if faster; desktop meshing off the main thread.
+8. **Cave culling**, then draw-call batching if measurements call for it.
 
 ## Budgets (first targets)
 
@@ -335,6 +414,7 @@ Per device profile (see §1, *Device profiles*, for mobile):
 | wasm memory in the Void, sea echo in view | under 300 MB | n/a |
 | Meshing per frame | 5 ms | 8 ms, or off-thread |
 | Join to first view (sea) | under 3 s on a home connection | under 2 s |
+| Far-field octree held | under 16 MB | under 64 MB (the ray-march buffer too) |
 
 ## Open questions
 
@@ -342,6 +422,9 @@ Per device profile (see §1, *Device profiles*, for mobile):
   This needs the frame capture from phase 0.
 - Water and glass at coarse levels: drop them, or keep a thin surface? Decide from screenshots.
 - Should the world's limit on view radius depend on how many players are in it?
+- Ray-marching: is footprint-based level of detail enough against shimmer, or does the far pass
+  need temporal anti-aliasing? Can Bevy 0.20 take a custom pass with depth in and out?
+- When does part of a world stop changing enough to be worth a DAG (shared subtrees)?
 
 ## Sources
 
@@ -361,5 +444,8 @@ Per device profile (see §1, *Device profiles*, for mobile):
 - [Clipmap](https://en.wikipedia.org/wiki/Clipmap), [engine overview with clipmap-style octree LOD](https://ngildea.blogspot.com/2015/03/engine-overview.html)
 - [Aokana: GPU-driven voxel rendering](https://arxiv.org/html/2505.02017v1)
 - [Teardown frame teardown](https://acko.net/blog/teardown-frame-teardown/)
+- [Efficient Sparse Voxel Octrees (Laine and Karras)](https://research.nvidia.com/publication/efficient-sparse-voxel-octrees), [technical report](https://research.nvidia.com/sites/default/files/publications/laine2010tr1_paper.pdf)
+- [A guide to fast voxel ray tracing using sparse 64-trees](https://dubiousconst282.github.io/2024/10/03/voxel-ray-tracing), [Sparse-Voxel-64Tree crate](https://docs.rs/crate/Sparse-Voxel-64Tree/latest/source/src/lib.rs)
+- [MDN: GPUSupportedLimits](https://developer.mozilla.org/en-US/docs/Web/API/GPUSupportedLimits)
 - [High resolution sparse voxel DAGs](https://www.cse.chalmers.se/~uffe/HighResolutionSparseVoxelDAGs.pdf), [symmetry-aware sparse voxel DAGs](https://www.crs4.it/vic/data/papers/i3d2016-symmetry-dags.pdf)
 - [Chrome: new in WebGPU 131 (multi-draw indirect)](https://developer.chrome.com/blog/new-in-webgpu-131)
