@@ -34,7 +34,7 @@ ABOUT = {"scene_all": "The original lead, no longer the main character: red cap,
          "roasted_medic": "Roasted peanut as a medic: teal scrubs, white vest with a green first-aid cross front and back, stethoscope, headband, blue gloves.",
          "roasted_miami": "Roasted peanut as a 1980s Miami detective: pastel teal jacket with pushed-up sleeves over a pink tee, white pants, loafers without socks, aviator shades.",
          "roasted_riot": "Roasted peanut as a riot officer: black helmet with a clear visor and neck guard, chest and back plates, shoulder and knee pads; clear shield, baton, radio.",
-         "brain": "The Brain, from the comic From the Brain of Michael Collins: Michael's brain in a jar, pink with round glasses, on a professor in a tweed jacket and bow tie. Computer scientist, dungeon master, lore expert; fact-checks everything.",
+         "brain": "The Brain, from the comic From the Brain of Michael Collins: Michael's brain in a jar, pink with round glasses, floating in sloshing fluid, on a professor in a red plaid flannel shirt. Computer scientist, dungeon master, lore expert; fact-checks everything.",
          "capybara": "Yuzu, a calm capybara: warm brown barrel body, big blunt muzzle, small round ears. Chills, soaks in the hot spring with a towel on its head, balances a yuzu, snacks on watermelon and nods off.",
          "blue": "Vox's main character: an American pit bull terrier with a blue nose, a blue-grey coat, white blaze, chest and paws, rose ears and an orange collar."}
 

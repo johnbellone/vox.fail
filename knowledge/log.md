@@ -1,4 +1,6 @@
 ## 2026-11-28
+* **Relate** [2026-11-28T05:28:24Z]: Linked `architecture/asset-pipeline.md` to `decisions/fine-voxel-parts-and-jar-fluid.md` (Finer-than-5 cm avatar parts and the VoxelFluid material).
+* **Creation** [2026-11-28T05:28:19Z]: Documented concept `decisions/fine-voxel-parts-and-jar-fluid.md` (Decision: Finer Voxel Parts and a Sloshing Fluid Material for Avatars). — The Brain: finer head, plaid flannel, sloshing jar fluid (commit 4ac49e5).
 * **Update** [2026-11-28T13:54:52Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 12: View and FarTile (vox-cti.6), View before Hello (vox-cti.7).
 * **Creation** [2026-11-28T13:54:24Z]: Documented concept `decisions/streaming-by-view-as-built.md` (Streaming by View Radius, as Built (Paletted Chunks, Protocol 12)). — Recorded streaming as built (vox-cti.4, .6, .7, .8).
 * **Update** [2026-11-28T07:04:06Z]: Updated concept `decisions/seamless-transitions.md`. — Built: crossings carry motion and a frame (vox-81l.2), doorway states (vox-81l.8).

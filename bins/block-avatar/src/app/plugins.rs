@@ -130,7 +130,7 @@ impl Plugin for Motion {
                 .after(AnimationSystems)
                 .before(TransformSystems::Propagate),
         )
-        .add_systems(PostUpdate, bevel::apply)
+        .add_systems(PostUpdate, bevel::apply.after(vox_world::fluid::adopt))
         .add_systems(PostUpdate, lighting::blur.after(TransformSystems::Propagate))
         .add_systems(
             PostUpdate,

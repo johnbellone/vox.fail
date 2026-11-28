@@ -3,7 +3,7 @@ type: Process
 title: "Asset Pipeline: MagicaVoxel to glTF"
 description: "How characters, props, sets, levels and textures are authored and generated, and which script rebuilds what."
 tags: [process, assets, python, tools, glb]
-generated: { by: agent/mcp, at: "2026-11-28T03:25:04Z" }
+generated: { by: agent/mcp, at: "2026-11-28T05:28:24Z" }
 status: stable
 code_refs: [tools/, source/vox/, data/]
 ---
@@ -65,3 +65,4 @@ All assets must satisfy `convention/hard-constraints`. Sound effects stay real C
 - [Design (proposed): Props and the Prop Pipeline](prop-pipeline-design.md): the design behind the Rust prop builder
 - [Decision: The World Editor](../decisions/world-editor.md): the editor that places these props
 - [Quarter-metre blocks](quarter-metre-blocks-decision.md): why levels are written through the rescaler
+- [Decision: Finer Voxel Parts and a Sloshing Fluid Material for Avatars](../decisions/fine-voxel-parts-and-jar-fluid.md): Finer-than-5 cm avatar parts and the VoxelFluid material

@@ -374,6 +374,7 @@ fn main() {
                 }),
         )
         .add_plugins(sim::SimPlugin)
+        .add_plugins(vox_world::fluid::FluidPlugin)
         .add_plugins((
             MaterialPlugin::<blocks::BlockMaterial>::default(),
             MaterialPlugin::<blocks::WaterMaterial>::default(),
@@ -396,6 +397,7 @@ fn main() {
         let mut snap = snapshot::Snapshot::new(out.into(), set, fx);
         snap.act = args.snapshot_do.clone();
         snap.at = args.snapshot_at.unwrap_or(0.5);
+        snap.film = args.snapshot_film;
         app.insert_resource(snap);
     }
     app.run();
