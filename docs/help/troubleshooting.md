@@ -68,7 +68,7 @@ virtual camera.
   The party rules are read from the directory about every 30 seconds, so a new party can take
   that long to count.
 - Push to talk is on and you are not holding B (or D-pad right on a controller).
-- You are too far away. On the nearby channel, the default distance is 32 blocks.
+- You are too far away. On the nearby channel, the default distance is 64 blocks (16 m).
 - The other player is muted on your Voice screen, or has muted you (you cannot tell).
 
 **Fix:** press Esc, choose **Voice**, and check these in order: **Enable voice** says **On**;

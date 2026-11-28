@@ -27,7 +27,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungsten
 use vox_art::{PropDef, VoxelGrid};
 use vox_core::{
     auth::{self, Character, Claims, SigningKey},
-    entity::{Component, EntityId, EntityWhy, Prop},
+    entity::{Component, EntityId, EntityWhy, PROP_UNITS_PER_BLOCK, PROP_UNITS_PER_CELL, Prop},
     wire::{self, EntityChange, PROTOCOL, ToClient, ToServer},
     world::Why,
 };
@@ -189,6 +189,25 @@ fn pose(at: [f32; 3]) -> ToServer {
 /// A prop of `hash` at `at` (5 cm units) owned by `owner`.
 fn prop(hash: [u8; 16], at: [i32; 3], yaw: u8, owner: u64) -> Component {
     Component::Prop(Prop { prop: hash, at, yaw, variant: 0, state: 0, channel: None, text: None, owner: Some(owner) })
+}
+
+/// A prop's position (5 cm units) at the corner of `block`, which is the block its pivot is in.
+fn in_block(block: [i32; 3]) -> [i32; 3] {
+    block.map(|c| c * PROP_UNITS_PER_BLOCK)
+}
+
+/// The place of the `i`th crate in a plot: a row of eight half-metre cells, row after row, from
+/// the plot's corner (a crate covers one such cell, 2 x 2 blocks); the 65th goes in a ninth
+/// column of the first row.
+fn plot_crate_at(i: u32) -> [i32; 3] {
+    let (x, z) = if i < 64 { ((i % 8) as i32, (i / 8) as i32) } else { (8, 0) };
+    [x * PROP_UNITS_PER_CELL, 0, z * PROP_UNITS_PER_CELL]
+}
+
+/// A plot for builder 8 with room for 64 crates side by side and one more (see `plot_crate_at`):
+/// 18 blocks along x and 16 along z.
+fn roomy_plot() -> serde_json::Value {
+    json!([{ "id": 1, "x0": 0, "z0": 0, "x1": 18, "z1": 16, "builders": [8] }])
 }
 
 /// A prop's blob and the name it is kept under, from its definition and its voxels.
@@ -383,7 +402,7 @@ async fn editor_prop_a_corrupt_blob_is_left_out_and_the_rest_load() {
 async fn editor_prop_a_plot_holds_64_props_and_no_more() {
     let f = folder("plot", false);
     let fetches = Arc::new(AtomicUsize::new(0));
-    let dir = directory(fetches.clone()).await;
+    let dir = directory_with(fetches.clone(), roomy_plot()).await;
     let mut cfg = config(&f.dir);
     cfg.directory_url = Some(dir);
     cfg.world_secret = Some("s3cret".into());
@@ -396,8 +415,7 @@ async fn editor_prop_a_plot_holds_64_props_and_no_more() {
     send(&mut c.ws, &pose([5.0, 0.0, 5.0])).await;
     // a builder's edits are rate-limited to ten a second; one every 110 ms keeps under it
     for i in 0..65u32 {
-        let (x, z) = ((i % 9) as i32, (i / 9) as i32);
-        let at = [x * 10 + 5, 0, z * 10 + 5];
+        let at = plot_crate_at(i);
         send(&mut c.ws, &ToServer::Put { id: i + 1, entity: None, expect: None, component: prop(f.crate_box, at, 0, 8) }).await;
         tokio::time::sleep(Duration::from_millis(110)).await;
     }
@@ -413,12 +431,13 @@ async fn editor_prop_a_block_may_not_go_where_a_colliding_prop_stands() {
     let (_server, url) = world(&f, Arc::default()).await;
     let mut a = join(&url, "Ann", token(7, "Ann")).await;
     // Stand outside the directory's plot (0..10, builder 8 only), so the only reason for a
-    // refusal here is the prop. The crate's pivot is block (-3, 0, -3) on the grass; it is two high.
+    // refusal here is the prop. The crate's pivot is block (-6, 0, -6) on the grass; it covers
+    // blocks -6 and -5 along x and z, and is a metre high: four blocks.
     send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
-    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-25, 0, -25], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, in_block([-6, 0, -6]), 0, 7) }).await;
     assert_eq!(next_done(&mut a.ws).await.0, 1);
-    // a block into the crate's upper cell is refused
-    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-3, 1, -3], block: 3 }).await;
+    // a block into the crate's top layer is refused
+    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-5, 3, -6], block: 3 }).await;
     let refused = until(&mut a.ws, |m| match m {
         ToClient::Refused { id, why } => Some((id, why)),
         _ => None,
@@ -426,9 +445,9 @@ async fn editor_prop_a_block_may_not_go_where_a_colliding_prop_stands() {
     .await;
     assert_eq!(refused, (2, Why::Blocked));
     // the same block beside the crate is made
-    send(&mut a.ws, &ToServer::Edit { id: 3, cell: [-2, 0, -3], block: 3 }).await;
+    send(&mut a.ws, &ToServer::Edit { id: 3, cell: [-4, 0, -6], block: 3 }).await;
     until(&mut a.ws, |m| match m {
-        ToClient::Edits(v) if v.iter().any(|e| e.cell == [-2, 0, -3]) => Some(()),
+        ToClient::Edits(v) if v.iter().any(|e| e.cell == [-4, 0, -6]) => Some(()),
         _ => None,
     })
     .await;
@@ -519,7 +538,7 @@ async fn editor_prop_a_builder_may_not_move_into_a_full_plot_but_may_move_within
     let dir = directory_with(
         fetches.clone(),
         json!([
-            { "id": 1, "x0": 0, "z0": 0, "x1": 10, "z1": 10, "builders": [8] },
+            { "id": 1, "x0": 0, "z0": 0, "x1": 18, "z1": 16, "builders": [8] },
             { "id": 2, "x0": 20, "z0": 0, "x1": 30, "z1": 10, "builders": [8] },
         ]),
     )
@@ -532,10 +551,9 @@ async fn editor_prop_a_builder_may_not_move_into_a_full_plot_but_may_move_within
 
     let mut c = join(&url, "Cy", token(8, "Cy")).await;
     send(&mut c.ws, &pose([8.0, 0.0, 5.0])).await;
-    // fill plot 1 with 64 crates, one a cell, one every 110 ms to stay under the builder's rate
+    // fill plot 1 with 64 crates, one a half-metre cell, one every 110 ms to stay under the builder's rate
     for i in 0..64u32 {
-        let (x, z) = ((i % 9) as i32, (i / 9) as i32);
-        let at = [x * 10 + 5, 0, z * 10 + 5];
+        let at = plot_crate_at(i);
         send(&mut c.ws, &ToServer::Put { id: i + 1, entity: None, expect: None, component: prop(f.crate_box, at, 0, 8) }).await;
         tokio::time::sleep(Duration::from_millis(110)).await;
     }
@@ -547,16 +565,16 @@ async fn editor_prop_a_builder_may_not_move_into_a_full_plot_but_may_move_within
     }
     // a crate in plot 2, which has room
     tokio::time::sleep(Duration::from_millis(110)).await;
-    send(&mut c.ws, &ToServer::Put { id: 65, entity: None, expect: None, component: prop(f.crate_box, [215, 0, 25], 0, 8) }).await;
+    send(&mut c.ws, &ToServer::Put { id: 65, entity: None, expect: None, component: prop(f.crate_box, in_block([22, 0, 4]), 0, 8) }).await;
     let (_, moved, moved_seq) = next_done(&mut c.ws).await;
     // moving it into full plot 1 is refused, though the cell is free
     tokio::time::sleep(Duration::from_millis(110)).await;
-    send(&mut c.ws, &ToServer::Put { id: 66, entity: Some(moved), expect: Some(moved_seq), component: prop(f.crate_box, [95, 0, 95], 0, 8) }).await;
+    send(&mut c.ws, &ToServer::Put { id: 66, entity: Some(moved), expect: Some(moved_seq), component: prop(f.crate_box, plot_crate_at(64), 0, 8) }).await;
     assert_eq!(next_refusal(&mut c.ws).await, (66, EntityWhy::TooMany));
     // but a move within full plot 1 is allowed
     tokio::time::sleep(Duration::from_millis(110)).await;
     let (first, first_seq) = placed[0];
-    send(&mut c.ws, &ToServer::Put { id: 67, entity: Some(first), expect: Some(first_seq), component: prop(f.crate_box, [95, 0, 95], 0, 8) }).await;
+    send(&mut c.ws, &ToServer::Put { id: 67, entity: Some(first), expect: Some(first_seq), component: prop(f.crate_box, plot_crate_at(64), 0, 8) }).await;
     assert_eq!(next_done(&mut c.ws).await.0, 67);
 }
 
@@ -655,14 +673,19 @@ async fn editor_prop_a_floor_prop_over_air_is_refused_and_over_a_block_is_made()
     let mut a = join(&url, "Ann", token(7, "Ann")).await;
     // outside the directory's plot (0..10), where only its builder may edit
     send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
-    // the grass is block y = -1: a floor cell at y = 1 has air (y = 0) under it
-    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-25, 10, -25], 0, 7) }).await;
+    // the grass is block y = -1: a crate whose blocks start at y = 1 has air (y = 0) under it
+    let floating = in_block([-6, 1, -6]);
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, floating, 0, 7) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NoSupport));
-    // the same spot over a block of planks is accepted
-    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-3, 0, -3], block: 3 }).await;
-    next_edit_at(&mut a.ws, [-3, 0, -3]).await;
-    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: prop(f.crate_box, [-25, 10, -25], 0, 7) }).await;
-    assert_eq!(next_done(&mut a.ws).await.0, 3);
+    // the same spot over blocks of planks is accepted, once every block it stands on is there
+    let mut id = 2;
+    for cell in [[-6, 0, -6], [-5, 0, -6], [-6, 0, -5], [-5, 0, -5]] {
+        send(&mut a.ws, &ToServer::Edit { id, cell, block: 3 }).await;
+        next_edit_at(&mut a.ws, cell).await;
+        id += 1;
+    }
+    send(&mut a.ws, &ToServer::Put { id, entity: None, expect: None, component: prop(f.crate_box, floating, 0, 7) }).await;
+    assert_eq!(next_done(&mut a.ws).await.0, id);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -673,23 +696,23 @@ async fn editor_prop_breaking_the_block_under_a_prop_removes_it_for_everyone() {
     let mut b = join(&url, "Bob", token(8, "Bob")).await;
     // outside the directory's plot (0..10), as the other block tests stand
     send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
-    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-25, 0, -25], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, in_block([-6, 0, -6]), 0, 7) }).await;
     let (_, under, _) = next_done(&mut a.ws).await;
-    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.crate_box, [-45, 0, -25], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.crate_box, in_block([-8, 0, -6]), 0, 7) }).await;
     let (_, beside, _) = next_done(&mut a.ws).await;
     // Bob has been told of both
     assert_eq!(next_entities(&mut b.ws).await.len(), 1);
     assert_eq!(next_entities(&mut b.ws).await.len(), 1);
 
-    // the grass under the first crate (block (-3, -1, -3)) is broken
-    send(&mut a.ws, &ToServer::Edit { id: 3, cell: [-3, -1, -3], block: 0 }).await;
-    next_edit_at(&mut b.ws, [-3, -1, -3]).await;
+    // one of the four blocks of grass under the first crate (block (-6, -1, -6)) is broken
+    send(&mut a.ws, &ToServer::Edit { id: 3, cell: [-6, -1, -6], block: 0 }).await;
+    next_edit_at(&mut b.ws, [-6, -1, -6]).await;
     let gone = next_entities(&mut b.ws).await;
     assert_eq!(gone.len(), 1, "only the crate that lost its floor goes");
     assert_eq!((gone[0].entity, gone[0].component.clone()), (under, None));
     assert_ne!(under, beside);
     // the one that kept its floor stays, and nothing is left to stand on where the first stood
-    send(&mut a.ws, &ToServer::Put { id: 4, entity: None, expect: None, component: prop(f.crate_box, [-25, 0, -25], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 4, entity: None, expect: None, component: prop(f.crate_box, in_block([-6, 0, -6]), 0, 7) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (4, EntityWhy::NoSupport));
 }
 
@@ -699,19 +722,21 @@ async fn editor_prop_a_wall_prop_needs_a_wall_behind_it() {
     let (_server, url) = world(&f, Arc::default()).await;
     let mut a = join(&url, "Ann", token(7, "Ann")).await;
     send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
-    // yaw 0 has its back to +z: the sign's pivot cell is (-3, 0, -3), so the wall is (-3, 0, -2)
-    let sign = prop(f.sign, [-25, 0, -25], 0, 7);
+    // yaw 0 has its back to +z: the sign's pivot block is (-6, 0, -5), the last along z of the
+    // half-metre cell it covers (blocks -6 and -5), so the wall is the block (-6, 0, -4)
+    let at = in_block([-6, 0, -5]);
+    let sign = prop(f.sign, at, 0, 7);
     send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: sign.clone() }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NoSupport));
-    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-3, 0, -2], block: 3 }).await;
-    next_edit_at(&mut a.ws, [-3, 0, -2]).await;
+    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-6, 0, -4], block: 3 }).await;
+    next_edit_at(&mut a.ws, [-6, 0, -4]).await;
     send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: sign }).await;
     let (_, entity, seq) = next_done(&mut a.ws).await;
     // turned to face the other way, it has no wall behind it
-    send(&mut a.ws, &ToServer::Put { id: 4, entity: Some(entity), expect: Some(seq), component: prop(f.sign, [-25, 0, -25], 12, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 4, entity: Some(entity), expect: Some(seq), component: prop(f.sign, at, 12, 7) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (4, EntityWhy::NoSupport));
     // and breaking the wall takes the sign down
-    send(&mut a.ws, &ToServer::Edit { id: 5, cell: [-3, 0, -2], block: 0 }).await;
+    send(&mut a.ws, &ToServer::Edit { id: 5, cell: [-6, 0, -4], block: 0 }).await;
     let gone = next_entities(&mut a.ws).await;
     assert_eq!((gone[0].entity, gone[0].component.clone()), (entity, None));
 }
@@ -728,10 +753,10 @@ async fn editor_prop_the_endless_floor_holds_a_floor_prop_up() {
     let mut a = join(&url, "Ann", token(7, "Ann")).await;
     send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
     // a floor cell at y = 0 has the floor (y < 0) under it
-    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, [-30, 0, -30], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.crate_box, in_block([-6, 0, -6]), 0, 7) }).await;
     assert_eq!(next_done(&mut a.ws).await.0, 1);
     // one block up has air under it
-    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.crate_box, [-60, 10, -30], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.crate_box, in_block([-12, 1, -6]), 0, 7) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (2, EntityWhy::NoSupport));
 }
 
@@ -742,12 +767,14 @@ async fn editor_prop_removing_a_table_takes_what_stood_on_it_for_everyone() {
     let mut a = join(&url, "Ann", token(7, "Ann")).await;
     let mut b = join(&url, "Bob", token(8, "Bob")).await;
     send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
-    // a cup has nothing to stand on until there is a table (cells: the table at y 0, the cup at y 1)
-    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.cup, [-30, 10, -30], 0, 7) }).await;
+    // a cup has nothing to stand on until there is a table (blocks: the table's at y 0 and 1, a
+    // half-metre high, and the cup at y 2)
+    let cup_at = in_block([-6, 2, -6]);
+    send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: prop(f.cup, cup_at, 0, 7) }).await;
     assert_eq!(next_refusal(&mut a.ws).await, (1, EntityWhy::NoSupport));
-    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.table, [-30, 0, -30], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 2, entity: None, expect: None, component: prop(f.table, in_block([-6, 0, -6]), 0, 7) }).await;
     let (_, table, seq) = next_done(&mut a.ws).await;
-    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: prop(f.cup, [-30, 10, -30], 0, 7) }).await;
+    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: prop(f.cup, cup_at, 0, 7) }).await;
     let (_, cup, _) = next_done(&mut a.ws).await;
     assert_eq!(next_entities(&mut b.ws).await.len(), 1);
     assert_eq!(next_entities(&mut b.ws).await.len(), 1);
@@ -765,14 +792,22 @@ async fn editor_prop_a_water_prop_needs_water_under_it() {
     let (_server, url) = world(&f, Arc::default()).await;
     let mut a = join(&url, "Ann", token(7, "Ann")).await;
     send(&mut a.ws, &pose([-1.0, 0.0, -1.0])).await;
-    // water is block 4 in this palette; stone is 2
-    send(&mut a.ws, &ToServer::Edit { id: 1, cell: [-3, 0, -3], block: 4 }).await;
-    next_edit_at(&mut a.ws, [-3, 0, -3]).await;
-    send(&mut a.ws, &ToServer::Edit { id: 2, cell: [-6, 0, -3], block: 2 }).await;
-    next_edit_at(&mut a.ws, [-6, 0, -3]).await;
-    // a buoy on cell y = 1 over the water is made, over the stone it is refused
-    send(&mut a.ws, &ToServer::Put { id: 3, entity: None, expect: None, component: prop(f.buoy, [-30, 10, -30], 0, 7) }).await;
-    assert_eq!(next_done(&mut a.ws).await.0, 3);
-    send(&mut a.ws, &ToServer::Put { id: 4, entity: None, expect: None, component: prop(f.buoy, [-60, 10, -30], 0, 7) }).await;
-    assert_eq!(next_refusal(&mut a.ws).await, (4, EntityWhy::NoSupport));
+    // water is block 4 in this palette; stone is 2; a buoy needs water under all four blocks it covers
+    let mut id = 1;
+    for (block, cells) in [
+        (4, [[-6, 0, -6], [-5, 0, -6], [-6, 0, -5], [-5, 0, -5]]),
+        (2, [[-8, 0, -6], [-7, 0, -6], [-8, 0, -5], [-7, 0, -5]]),
+    ] {
+        for cell in cells {
+            send(&mut a.ws, &ToServer::Edit { id, cell, block }).await;
+            next_edit_at(&mut a.ws, cell).await;
+            id += 1;
+        }
+    }
+    // a buoy on block y = 1 over the water is made, over the stone it is refused
+    send(&mut a.ws, &ToServer::Put { id, entity: None, expect: None, component: prop(f.buoy, in_block([-6, 1, -6]), 0, 7) }).await;
+    assert_eq!(next_done(&mut a.ws).await.0, id);
+    id += 1;
+    send(&mut a.ws, &ToServer::Put { id, entity: None, expect: None, component: prop(f.buoy, in_block([-8, 1, -6]), 0, 7) }).await;
+    assert_eq!(next_refusal(&mut a.ws).await, (id, EntityWhy::NoSupport));
 }

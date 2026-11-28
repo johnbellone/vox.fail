@@ -328,14 +328,14 @@ describe("bounds checked before sending", () => {
   const built = (over: Partial<PortalForm>, advanced: boolean) =>
     portalOf({ ...base, name: "gate", dest: world, ...over }, { level: "yard", key: null }, advanced).ok;
 
-  test("in Basic a size is 4 to 8 wide and 6 to 16 tall; Advanced leaves it to the world", () => {
-    expect(built({ size: ["4", "6"] }, false)).toBe(true);
-    expect(built({ size: ["8", "16"] }, false)).toBe(true);
-    expect(built({ size: ["3", "6"] }, false)).toBe(false);
-    expect(built({ size: ["9", "6"] }, false)).toBe(false);
-    expect(built({ size: ["4", "5"] }, false)).toBe(false);
-    expect(built({ size: ["4", "17"] }, false)).toBe(false);
-    expect(built({ size: ["3", "6"] }, true)).toBe(true);
+  test("in Basic a size is 8 to 16 wide and 12 to 32 tall (blocks); Advanced leaves it to the world", () => {
+    expect(built({ size: ["8", "12"] }, false)).toBe(true);
+    expect(built({ size: ["16", "32"] }, false)).toBe(true);
+    expect(built({ size: ["7", "12"] }, false)).toBe(false);
+    expect(built({ size: ["17", "12"] }, false)).toBe(false);
+    expect(built({ size: ["8", "11"] }, false)).toBe(false);
+    expect(built({ size: ["8", "33"] }, false)).toBe(false);
+    expect(built({ size: ["7", "12"] }, true)).toBe(true);
   });
 
   test("a name is 1 to 32 characters", () => {

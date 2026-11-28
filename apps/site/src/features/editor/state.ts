@@ -277,9 +277,10 @@ const DUNGEON_NAME = /^[a-z0-9_-]{1,64}$/;
 /** The longest portal name, in characters (`vox-core::entity::MAX_NAME`). */
 export const MAX_PORTAL_NAME = 32;
 
-/** The size a Basic builder may give a portal: width and height, each a range (inclusive). */
-export const BASIC_WIDTH: readonly [number, number] = [4, 8];
-export const BASIC_HEIGHT: readonly [number, number] = [6, 16];
+/** The size a Basic builder may give a portal, in blocks: width and height, each a range
+ * (inclusive). 2 to 4 m wide and 3 to 8 m tall at quarter-metre blocks (the directory's limits). */
+export const BASIC_WIDTH: readonly [number, number] = [8, 16];
+export const BASIC_HEIGHT: readonly [number, number] = [12, 32];
 
 /** The size bounds as a hint for the form. */
 export const BASIC_SIZE_HINT = `${BASIC_WIDTH[0]} to ${BASIC_WIDTH[1]} wide, ${BASIC_HEIGHT[0]} to ${BASIC_HEIGHT[1]} tall`;
@@ -448,7 +449,10 @@ export const removeEntity = (entity: number, expect: number, ref: number): Comma
 /** A Settings entity's JSON, at most this many bytes (`vox-core::entity::MAX_SETTINGS`). */
 export const MAX_SETTINGS_BYTES = 16 * 1024;
 /** An objective's radius, in blocks, at most this (`vox-core::entity::MAX_RADIUS`). */
-export const MAX_RADIUS = 256;
+export const MAX_RADIUS = 512;
+/** A prop's position is in 5 cm units: this many to a quarter-metre block
+ * (`vox-core::entity::PROP_UNITS_PER_BLOCK`). */
+export const UNITS_PER_BLOCK = 5;
 /** The hotbar holds this many blocks at most. */
 export const MAX_HOTBAR = 9;
 /** The weather value that means "an object written in the text field". */

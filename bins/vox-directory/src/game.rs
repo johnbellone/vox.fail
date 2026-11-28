@@ -7,7 +7,7 @@
 //!   you spend on feats.
 //! - **World currencies**: a world's owner can issue one coin for it (a feat), with a fixed
 //!   supply, all minted to them. World coins can be sent between players.
-//! - **Feats** cost authority: claim a plot (16 × 16 blocks where you last stood, which only
+//! - **Feats** cost authority: claim a plot (16 × 16 m, 64 × 64 blocks, where you last stood, which only
 //!   you, or a group you share it with, can build in), open a portal (in your plot, to another
 //!   world), issue a world currency, start a raid (your party's, on another world).
 //! - Every movement of every currency is a row in the ledger: minted (no source), spent (no
@@ -48,9 +48,12 @@ pub const COST_PORTAL: i64 = 30;
 pub const COST_CURRENCY: i64 = 100;
 pub const COST_RAID: i64 = 10;
 /// Earning: one authority per this many minutes in a world, and per this many blocks placed,
-/// up to `DAILY` a day.
+/// up to `DAILY` a day. A wall the same size in metres takes four times the quarter-metre
+/// blocks it took in half-metre ones, so the blocks per authority went up four times too.
 pub const MINUTES_PER: i64 = 10;
-pub const EDITS_PER: i64 = 50;
+pub const EDITS_PER: i64 = 200;
+/// The most blocks placed a world may report for one player in one report (a minute).
+const EDITS_REPORTED_MOST: i64 = 4_800;
 pub const DAILY: i64 = 60;
 /// A raid: how long it lasts, how many minutes at least two of the party must spend in the
 /// target world together, and what each of them gets for it.
@@ -60,10 +63,12 @@ pub const RAID_REWARD: i64 = 15;
 /// Raids pay out at most this many times per account per day (a throwaway pair of accounts
 /// could otherwise raid in a loop for authority).
 pub const RAID_REWARDS_PER_DAY: i64 = 2;
-/// A plot is twice this across, and keeps this far from the world's spawn.
-pub const PLOT_HALF: i32 = 8;
-pub const SPAWN_CLEAR: f32 = 24.0;
-const PLOTS_EACH: i64 = 3;
+/// A plot is twice this across (16 m), and keeps this far from the world's spawn (12 m); both
+/// in blocks.
+pub const PLOT_HALF: i32 = vox_core::whole_blocks(8.0);
+pub const SPAWN_CLEAR: f32 = vox_core::in_blocks(12.0);
+/// Plots one account may hold in each world.
+const PLOTS_EACH: i64 = 6;
 const PORTALS_PER_PLOT: i64 = 2;
 /// A world's portal request id is remembered this long (a repeat after that charges again).
 const REQUESTS_KEPT: u64 = 24 * 3600;
@@ -584,14 +589,18 @@ fn idem_ok(s: &str) -> bool {
     (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
 }
 
-/// A player portal's doorway as the rules show it when a request gives none: 4 wide, 6 high,
-/// facing along the wall's own direction (yaw 0).
-const DEFAULT_SIZE: [f64; 2] = [4.0, 6.0];
+/// A player portal's doorway as the rules show it when a request gives none, in blocks: 2 m
+/// wide, 3 m high (vox-core's default doorway), facing along the wall's own direction (yaw 0).
+const DEFAULT_SIZE: [f64; 2] =
+    [vox_core::portal::DEFAULT_SIZE[0] as f64, vox_core::portal::DEFAULT_SIZE[1] as f64];
 const DEFAULT_YAW: f64 = 0.0;
 
-/// A doorway's size is 4 to 8 wide and 6 to 16 high (the editor's limits), with finite numbers.
+/// A doorway's size is 2 to 4 m wide and 3 to 8 m high (the editor's limits), in blocks, with
+/// finite numbers.
 fn size_ok(s: [f32; 2]) -> bool {
-    s.iter().all(|v| v.is_finite()) && (4.0..=8.0).contains(&s[0]) && (6.0..=16.0).contains(&s[1])
+    use vox_core::in_blocks;
+    let (wide, high) = (in_blocks(2.0)..=in_blocks(4.0), in_blocks(3.0)..=in_blocks(8.0));
+    s.iter().all(|v| v.is_finite()) && wide.contains(&s[0]) && high.contains(&s[1])
 }
 
 /// Where a player portal goes: its plot (already checked to be the account's), the world, the
@@ -644,7 +653,7 @@ pub(crate) struct WorldPortal {
     account: u64,
     at: [f32; 3],
     axis: String,
-    /// the doorway's width and height (4 to 8, 6 to 16); 4 by 6 when the caller gives none
+    /// the doorway's width and height in blocks (8 to 16, 12 to 32); 8 by 12 when the caller gives none
     #[serde(default)]
     size: Option<[f32; 2]>,
     /// the doorway's turn in degrees; 0 when the caller gives none
@@ -831,7 +840,7 @@ pub(crate) async fn world_portal(State(d): State<Directory>, h: HeaderMap, Json(
     }
     let size = p.size.unwrap_or([DEFAULT_SIZE[0] as f32, DEFAULT_SIZE[1] as f32]);
     if !size_ok(size) {
-        return Err(bad("a portal is 4 to 8 wide and 6 to 16 high"));
+        return Err(bad("a portal is 2 to 4 m wide and 3 to 8 m high (8 to 16 blocks wide, 12 to 32 high)"));
     }
     let yaw = p.yaw.unwrap_or(DEFAULT_YAW as f32);
     if !yaw.is_finite() {
@@ -916,7 +925,7 @@ pub(crate) async fn update_portal(State(d): State<Directory>, h: HeaderMap, Json
         return Err(bad("a portal's wall is along x or z"));
     }
     if !size_ok(u.size) {
-        return Err(bad("a portal is 4 to 8 wide and 6 to 16 high"));
+        return Err(bad("a portal is 2 to 4 m wide and 3 to 8 m high (8 to 16 blocks wide, 12 to 32 high)"));
     }
     if !u.yaw.is_finite() {
         return Err(bad("a portal's turn is a finite number of degrees"));
@@ -1140,7 +1149,7 @@ pub(crate) async fn report(State(d): State<Directory>, h: HeaderMap, Json(r): Js
             )
             .map_err(oops)?;
         }
-        earned_total += earn(&tx, p.account, p.edits.clamp(0, 1200), &wname)?;
+        earned_total += earn(&tx, p.account, p.edits.clamp(0, EDITS_REPORTED_MOST), &wname)?;
     }
     let finished = raids(&tx, &r.world, &wname, &here)?;
     tx.commit().map_err(oops)?;
@@ -1325,14 +1334,14 @@ pub(crate) async fn rules(State(d): State<Directory>, h: HeaderMap, Path(world):
     let mut st = db
         .prepare(
             "SELECT p.id, p.x, p.y, p.z, p.axis, p.dest, s.level, s.spawn, p.dest_key, o.x, o.y, o.z,
-                    COALESCE(p.size_w, 4.0), COALESCE(p.size_h, 6.0), COALESCE(p.yaw, 0.0)
+                    COALESCE(p.size_w, ?2), COALESCE(p.size_h, ?3), COALESCE(p.yaw, 0.0)
              FROM portals p JOIN world_state s ON s.world = p.dest
              LEFT JOIN portals o ON o.id = p.dest_key AND o.world = p.dest
              WHERE p.world = ?1",
         )
         .map_err(oops)?;
     let portals: Vec<Value> = st
-        .query_map(params![world], |r| {
+        .query_map(params![world, DEFAULT_SIZE[0], DEFAULT_SIZE[1]], |r| {
             let other: Option<[f64; 3]> = match (r.get::<_, Option<f64>>(9)?, r.get::<_, Option<f64>>(10)?, r.get::<_, Option<f64>>(11)?) {
                 (Some(x), Some(y), Some(z)) => Some([x, y, z]),
                 _ => None,

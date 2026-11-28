@@ -1,4 +1,4 @@
-//! A region: 32 × 32 [`crate::zone`]s (8,192 m across, the size of an atlas tile), stored as a
+//! A region: 32 × 32 [`crate::zone`]s (16,384 blocks, 4,096 m across), stored as a
 //! small blob listing the hash of each of its zones that has blocks.
 //!
 //! ```text

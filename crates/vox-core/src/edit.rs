@@ -8,7 +8,7 @@
 //! [`Component::validate`] checks the values; this module checks rights, destinations, place
 //! and caps. Each refusal is a distinct [`EntityWhy`] so a client can say why.
 
-use crate::body::prop_footprint_cells;
+use crate::body::{prop_base_cells, prop_behind_cell};
 use crate::entity::{Component, Dest, EntityWhy, Prop, prop_cell};
 use crate::world::{Bounds, Cell};
 
@@ -18,13 +18,12 @@ pub const MAX_ZONE_ENTITIES: usize = 4_000;
 pub const PORTALS_PER_PLOT: usize = 2;
 /// Most props one plot holds (docs/design/props.md, "Placing").
 pub const PROPS_PER_PLOT: usize = 64;
-/// How far, in blocks from the eyes, a player may edit. The same value as vox-server's REACH
-/// until the server switches to this module; its own copy is then removed.
-pub const REACH: f32 = 16.0;
-/// Eye height above the feet, in blocks. The same value as vox-server's EYES.
-pub const EYES: f32 = 3.2;
+/// How far, in blocks from the eyes, a player may edit: 8 m (the client stops a little short).
+pub const REACH: f32 = crate::in_blocks(8.0);
+/// Eye height above the feet, in blocks.
+pub use crate::body::EYES;
 /// A character's height, in blocks (vox-core::body's player box).
-const CHARACTER_HEIGHT: f32 = 3.6;
+const CHARACTER_HEIGHT: f32 = crate::body::PLAYER_HEIGHT;
 
 /// What a player may do in a world: a plot's builder (basic) or the world's owner or one of
 /// its editors (advanced).
@@ -125,20 +124,16 @@ pub struct Around<'a> {
 /// turns it as [`prop_footprint_cells`] turns its footprint. A wall prop's pivot is its back, so
 /// the wall is the cell behind the pivot's cell.
 pub fn support_cells(surface: Support, at: [i32; 3], yaw: u8, footprint: &[[i16; 2]], height: u8) -> Vec<Cell> {
-    let bottom = prop_footprint_cells(at, yaw, footprint, 1);
+    let bottom = prop_base_cells(at, yaw, footprint);
+    // the height is in half-metres (a prop's cells), the blocks above its top that far up
+    let top = i32::from(height) * crate::entity::PROP_CELL_BLOCKS;
     match surface {
         Support::Floor | Support::Table | Support::Water => {
             bottom.into_iter().filter_map(|[x, y, z]| Some([x, y.checked_sub(1)?, z])).collect()
         }
-        Support::Ceiling => bottom
-            .into_iter()
-            .filter_map(|[x, y, z]| Some([x, y.checked_add(i32::from(height))?, z]))
-            .collect(),
-        Support::Wall => {
-            // the footprint's own turn gives the cell behind the pivot
-            let behind = prop_footprint_cells(at, yaw, &[[0, 1]], 1);
-            behind.into_iter().take(1).collect()
-        }
+        Support::Ceiling => bottom.into_iter().filter_map(|[x, y, z]| Some([x, y.checked_add(top)?, z])).collect(),
+        // the block behind the pivot's, turned with the prop
+        Support::Wall => prop_behind_cell(at, yaw).into_iter().collect(),
     }
 }
 
@@ -478,7 +473,7 @@ pub fn check_remove(ctx: &Ctx, old: &Component) -> Result<(), EntityWhy> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entity::{Axis, Objective, Portal, Prop, Settings, Spawn};
+    use crate::entity::{Axis, Objective, PROP_UNITS_PER_BLOCK, Portal, Prop, Settings, Spawn};
 
     /// The prop every test places: a catalogue name nobody's world refuses by default.
     const HASH: [u8; 16] = [9; 16];
@@ -547,6 +542,11 @@ mod tests {
             known_prop: &any_prop,
             prop_supported: &supported,
         }
+    }
+
+    /// The 5 cm position in the middle of `block`, so a prop there is in that block at any block size.
+    fn mid(block: i32) -> i32 {
+        block * PROP_UNITS_PER_BLOCK + PROP_UNITS_PER_BLOCK / 2
     }
 
     /// A prop at `at` (5 cm units) owned by `owner`.
@@ -671,8 +671,8 @@ mod tests {
     #[test]
     fn position_outside_bounds_is_outside() {
         let plots: [PlotArea; 0] = [];
-        let c = ctx(Role::Editor, Some(1), Some([299.0, 0.0, 0.0]), &plots, &floor);
-        let p = Component::Portal(portal([300.5, 0.0, 0.5], world_dest()));
+        let c = ctx(Role::Editor, Some(1), Some([599.0, 0.0, 0.0]), &plots, &floor);
+        let p = Component::Portal(portal([600.5, 0.0, 0.5], world_dest()));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Outside));
     }
 
@@ -758,8 +758,8 @@ mod tests {
     #[test]
     fn objective_outside_bounds_is_outside() {
         let plots: [PlotArea; 0] = [];
-        let c = ctx(Role::Editor, Some(1), Some([255.0, 0.0, 0.0]), &plots, &floor);
-        let o = Component::Objective(Objective { name: "altar".into(), at: [-300.5, 0.0, 0.5], radius: 3.0 });
+        let c = ctx(Role::Editor, Some(1), Some([511.0, 0.0, 0.0]), &plots, &floor);
+        let o = Component::Objective(Objective { name: "altar".into(), at: [-600.5, 0.0, 0.5], radius: 3.0 });
         assert_eq!(check_put(&c, None, &o), Err(EntityWhy::Outside));
     }
 
@@ -1000,14 +1000,14 @@ mod tests {
     }
 
     // Props: a builder's plot is x and z in 0..10 (blocks), and the reach point is (5, 0, 5).
-    // A prop at 5 cm units [55, 0, 55] is in block [5, 0, 5].
+    // A prop at 5 cm units [mid(5), 0, mid(5)] is in block [5, 0, 5].
 
     #[test]
     fn unknown_prop_is_no_such_prop() {
         let plots: [PlotArea; 0] = [];
         let unknown = |_: &[u8; 16]| false;
         let c = Ctx { known_prop: &unknown, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
-        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(1)));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NoSuchProp));
     }
 
@@ -1015,7 +1015,7 @@ mod tests {
     fn builder_places_own_prop_in_own_plot() {
         let plots = [plot(&[7])];
         let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let p = Component::Prop(prop([55, 0, 55], Some(7)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(7)));
         assert_eq!(check_put(&c, None, &p), Ok(()));
     }
 
@@ -1023,9 +1023,9 @@ mod tests {
     fn new_prop_owned_by_someone_else_is_not_yours() {
         let plots = [plot(&[7])];
         let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let p = Component::Prop(prop([55, 0, 55], Some(8)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(8)));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NotYours));
-        let unowned = Component::Prop(prop([55, 0, 55], None));
+        let unowned = Component::Prop(prop([mid(5), 0, mid(5)], None));
         assert_eq!(check_put(&c, None, &unowned), Err(EntityWhy::NotYours));
     }
 
@@ -1041,11 +1041,11 @@ mod tests {
     fn builder_cannot_move_someone_elses_prop() {
         let plots = [plot(&[7])];
         let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let old = Component::Prop(prop([55, 0, 55], Some(8)));
-        let moved = Component::Prop(Prop { yaw: 1, ..prop([55, 0, 55], Some(8)) });
+        let old = Component::Prop(prop([mid(5), 0, mid(5)], Some(8)));
+        let moved = Component::Prop(Prop { yaw: 1, ..prop([mid(5), 0, mid(5)], Some(8)) });
         assert_eq!(check_put(&c, Some(&old), &moved), Err(EntityWhy::NotYours));
         // a level file's prop (no owner) is not a builder's to move either
-        let level = Component::Prop(prop([55, 0, 55], None));
+        let level = Component::Prop(prop([mid(5), 0, mid(5)], None));
         assert_eq!(check_put(&c, Some(&level), &moved), Err(EntityWhy::NotYours));
     }
 
@@ -1053,8 +1053,8 @@ mod tests {
     fn builder_moves_own_prop_within_plot() {
         let plots = [plot(&[7])];
         let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let old = Component::Prop(prop([55, 0, 55], Some(7)));
-        let moved = Component::Prop(prop([65, 0, 55], Some(7)));
+        let old = Component::Prop(prop([mid(5), 0, mid(5)], Some(7)));
+        let moved = Component::Prop(prop([mid(6), 0, mid(5)], Some(7)));
         assert_eq!(check_put(&c, Some(&old), &moved), Ok(()));
     }
 
@@ -1062,8 +1062,8 @@ mod tests {
     fn prop_owner_cannot_be_handed_over() {
         let plots: [PlotArea; 0] = [];
         let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let old = Component::Prop(prop([55, 0, 55], Some(1)));
-        let handed = Component::Prop(prop([55, 0, 55], Some(2)));
+        let old = Component::Prop(prop([mid(5), 0, mid(5)], Some(1)));
+        let handed = Component::Prop(prop([mid(5), 0, mid(5)], Some(2)));
         assert_eq!(check_put(&c, Some(&old), &handed), Err(EntityWhy::NotYours));
     }
 
@@ -1071,7 +1071,7 @@ mod tests {
     fn editor_places_prop_in_reach_outside_plots() {
         let plots: [PlotArea; 0] = [];
         let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(1)));
         assert_eq!(check_put(&c, None, &p), Ok(()));
         let far = Component::Prop(prop([1000, 0, 55], Some(1)));
         assert_eq!(check_put(&c, None, &far), Err(EntityWhy::TooFar));
@@ -1081,7 +1081,7 @@ mod tests {
     fn sixty_fifth_prop_in_a_plot_is_too_many() {
         let plots = [plot(&[7])];
         let mut c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let p = Component::Prop(prop([55, 0, 55], Some(7)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(7)));
         c.props_in_plot = PROPS_PER_PLOT - 1;
         assert_eq!(check_put(&c, None, &p), Ok(()));
         c.props_in_plot = PROPS_PER_PLOT;
@@ -1093,8 +1093,8 @@ mod tests {
         let plots = [plot(&[7])];
         let mut c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
         c.props_in_plot = PROPS_PER_PLOT;
-        let old = Component::Prop(prop([55, 0, 55], Some(7)));
-        let moved = Component::Prop(prop([65, 0, 55], Some(7)));
+        let old = Component::Prop(prop([mid(5), 0, mid(5)], Some(7)));
+        let moved = Component::Prop(prop([mid(6), 0, mid(5)], Some(7)));
         assert_eq!(check_put(&c, Some(&old), &moved), Ok(()));
     }
 
@@ -1103,7 +1103,7 @@ mod tests {
         let plots: [PlotArea; 0] = [];
         let taken = |_: &Prop| false;
         let c = Ctx { prop_footprint_free: &taken, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
-        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(1)));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Blocked));
     }
 
@@ -1112,12 +1112,12 @@ mod tests {
         let plots: [PlotArea; 0] = [];
         let taken = |_: &Prop| false;
         let c = Ctx { prop_footprint_free: &taken, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
-        let old = Component::Prop(prop([55, 0, 55], Some(1)));
-        let mut text = prop([55, 0, 55], Some(1));
+        let old = Component::Prop(prop([mid(5), 0, mid(5)], Some(1)));
+        let mut text = prop([mid(5), 0, mid(5)], Some(1));
         text.text = Some("open".into());
         assert_eq!(check_put(&c, Some(&old), &Component::Prop(text)), Ok(()));
         // turning it is a placement change, so the footprint is checked again
-        let turned = Component::Prop(Prop { yaw: 3, ..prop([55, 0, 55], Some(1)) });
+        let turned = Component::Prop(Prop { yaw: 3, ..prop([mid(5), 0, mid(5)], Some(1)) });
         assert_eq!(check_put(&c, Some(&old), &turned), Err(EntityWhy::Blocked));
     }
 
@@ -1125,7 +1125,7 @@ mod tests {
     fn prop_yaw_24_is_invalid() {
         let plots: [PlotArea; 0] = [];
         let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let p = Component::Prop(Prop { yaw: 24, ..prop([55, 0, 55], Some(1)) });
+        let p = Component::Prop(Prop { yaw: 24, ..prop([mid(5), 0, mid(5)], Some(1)) });
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Invalid));
     }
 
@@ -1133,9 +1133,9 @@ mod tests {
     fn prop_text_over_140_is_too_big_and_control_characters_are_invalid() {
         let plots: [PlotArea; 0] = [];
         let c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let long = Component::Prop(Prop { text: Some("a".repeat(141)), ..prop([55, 0, 55], Some(1)) });
+        let long = Component::Prop(Prop { text: Some("a".repeat(141)), ..prop([mid(5), 0, mid(5)], Some(1)) });
         assert_eq!(check_put(&c, None, &long), Err(EntityWhy::TooBig));
-        let ctl = Component::Prop(Prop { text: Some("hi\u{7}".into()), ..prop([55, 0, 55], Some(1)) });
+        let ctl = Component::Prop(Prop { text: Some("hi\u{7}".into()), ..prop([mid(5), 0, mid(5)], Some(1)) });
         assert_eq!(check_put(&c, None, &ctl), Err(EntityWhy::Invalid));
     }
 
@@ -1144,7 +1144,7 @@ mod tests {
         let plots: [PlotArea; 0] = [];
         let mut c = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
         c.zone_entities = MAX_ZONE_ENTITIES;
-        let p = Component::Prop(prop([55, 0, 55], Some(1)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(1)));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::TooMany));
     }
 
@@ -1152,11 +1152,11 @@ mod tests {
     fn remove_prop_by_role() {
         let plots = [plot(&[7])];
         let builder = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let own = Component::Prop(prop([55, 0, 55], Some(7)));
+        let own = Component::Prop(prop([mid(5), 0, mid(5)], Some(7)));
         assert_eq!(check_remove(&builder, &own), Ok(()));
-        let theirs = Component::Prop(prop([55, 0, 55], Some(8)));
+        let theirs = Component::Prop(prop([mid(5), 0, mid(5)], Some(8)));
         assert_eq!(check_remove(&builder, &theirs), Err(EntityWhy::NotYours));
-        let level = Component::Prop(prop([55, 0, 55], None));
+        let level = Component::Prop(prop([mid(5), 0, mid(5)], None));
         assert_eq!(check_remove(&builder, &level), Err(EntityWhy::NotYours));
 
         let editor = ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor);
@@ -1171,7 +1171,7 @@ mod tests {
         // the pivot is in plot 0..10, the second cell (10, 0, 5) is not
         let plots = [plot(&[7])];
         let c = Ctx { prop_cells: &two_long, ..ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor) };
-        let p = Component::Prop(prop([95, 0, 55], Some(7)));
+        let p = Component::Prop(prop([mid(9), 0, mid(5)], Some(7)));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NotYours));
         // the same prop from an editor may overhang, as it is in reach
         let e = Ctx { prop_cells: &two_long, ..ctx(Role::Editor, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor) };
@@ -1184,7 +1184,7 @@ mod tests {
         let bounds = Bounds { lo: [0, 0, 0], hi: [10, 10, 10] };
         // pivot (9, 0, 5) is inside the world, the second cell (10, 0, 5) is not
         let c = Ctx { bounds, prop_cells: &two_long, ..ctx(Role::Editor, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
-        let p = Component::Prop(prop([95, 0, 55], Some(1)));
+        let p = Component::Prop(prop([mid(9), 0, mid(5)], Some(1)));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::Outside));
         let plots = [plot(&[1])];
         let b = Ctx { bounds, prop_cells: &two_long, ..ctx(Role::Builder, Some(1), Some([5.0, 0.0, 5.0]), &plots, &floor) };
@@ -1195,26 +1195,27 @@ mod tests {
     fn builder_may_keep_a_prop_channel_but_not_choose_one() {
         let plots = [plot(&[7])];
         let c = ctx(Role::Builder, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
-        let wired = |ch: Option<u16>| Component::Prop(Prop { channel: ch, ..prop([55, 0, 55], Some(7)) });
+        let wired = |ch: Option<u16>| Component::Prop(Prop { channel: ch, ..prop([mid(5), 0, mid(5)], Some(7)) });
         assert_eq!(check_put(&c, None, &wired(Some(3))), Err(EntityWhy::NotYours));
         assert_eq!(check_put(&c, None, &wired(None)), Ok(()));
         // an edit that leaves the channel as it was is fine
         let old = wired(Some(3));
-        let turned = Component::Prop(Prop { yaw: 1, channel: Some(3), ..prop([55, 0, 55], Some(7)) });
+        let turned = Component::Prop(Prop { yaw: 1, channel: Some(3), ..prop([mid(5), 0, mid(5)], Some(7)) });
         assert_eq!(check_put(&c, Some(&old), &turned), Ok(()));
         // changing it is not
-        let rewired = Component::Prop(Prop { channel: Some(4), ..prop([55, 0, 55], Some(7)) });
+        let rewired = Component::Prop(Prop { channel: Some(4), ..prop([mid(5), 0, mid(5)], Some(7)) });
         assert_eq!(check_put(&c, Some(&old), &rewired), Err(EntityWhy::NotYours));
         // an editor may set one
         let e = ctx(Role::Editor, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor);
         assert_eq!(check_put(&e, None, &wired(Some(3))), Ok(()));
     }
 
-    /// Surfaces for a one-cell prop two high, in a world with a floor at y = -1 and a wall of
+    /// Surfaces for a one-cell prop (half a metre square) one metre high, in a world with a floor at y = -1 and a wall of
     /// solid blocks at z = 3 (and water at y = -1 for x >= 20).
     fn stands(on: &[Support], at: [i32; 3], yaw: u8, solid: &dyn Fn(Cell) -> bool) -> bool {
         let water = |c: Cell| c[1] == -1 && c[0] >= 20;
-        let table = |c: Cell| c == [7, 0, 7];
+        // a table under the prop's whole half-metre cell: the 2 x 2 blocks of block (7, 7)'s cell
+        let table = |c: Cell| c[1] == 0 && (6..8).contains(&c[0]) && (6..8).contains(&c[2]);
         let around = Around { solid, water: &water, table: &table };
         prop_stands(on, at, yaw, &[[0, 0]], 2, &around)
     }
@@ -1222,30 +1223,30 @@ mod tests {
     #[test]
     fn a_floor_prop_needs_a_block_under_it() {
         let blocks = |c: Cell| c[1] == -1;
-        assert!(stands(&[Support::Floor], [25, 0, 25], 0, &blocks));
-        assert!(!stands(&[Support::Floor], [25, 10, 25], 0, &blocks), "over air");
+        assert!(stands(&[Support::Floor], [mid(5), 0, mid(5)], 0, &blocks));
+        assert!(!stands(&[Support::Floor], [mid(5), PROP_UNITS_PER_BLOCK, mid(5)], 0, &blocks), "over air");
         // any one surface is enough
-        assert!(stands(&[Support::Ceiling, Support::Floor], [25, 0, 25], 0, &blocks));
+        assert!(stands(&[Support::Ceiling, Support::Floor], [mid(5), 0, mid(5)], 0, &blocks));
     }
 
     #[test]
     fn a_ceiling_prop_needs_a_block_over_its_top() {
-        // two high, on floor cell y = 0: the cell over it is y = 2
-        let blocks = |c: Cell| c[1] == 2;
-        assert!(stands(&[Support::Ceiling], [25, 0, 25], 0, &blocks));
-        assert!(!stands(&[Support::Ceiling], [25, 10, 25], 0, &blocks));
+        // a metre high is four blocks: on floor cell y = 0 the cell over it is y = 4
+        let blocks = |c: Cell| c[1] == 4;
+        assert!(stands(&[Support::Ceiling], [mid(5), 0, mid(5)], 0, &blocks));
+        assert!(!stands(&[Support::Ceiling], [mid(5), PROP_UNITS_PER_BLOCK, mid(5)], 0, &blocks));
     }
 
     #[test]
     fn a_wall_prop_needs_a_block_behind_its_pivot_whichever_way_it_faces() {
         // yaw 0: the back is +z; each quarter turn (6 steps) moves it on: +x, then -z, then -x
-        let at = [25, 0, 25];
+        let at = [mid(5), 0, mid(5)];
         let back = |yaw: u8| support_cells(Support::Wall, at, yaw, &[[0, 0]], 2);
-        assert_eq!(back(0), vec![[2, 0, 3]]);
-        assert_eq!(back(6), vec![[3, 0, 2]]);
-        assert_eq!(back(12), vec![[2, 0, 1]]);
-        assert_eq!(back(18), vec![[1, 0, 2]]);
-        let wall = |c: Cell| c == [2, 0, 3];
+        assert_eq!(back(0), vec![[5, 0, 6]]);
+        assert_eq!(back(6), vec![[6, 0, 5]]);
+        assert_eq!(back(12), vec![[5, 0, 4]]);
+        assert_eq!(back(18), vec![[4, 0, 5]]);
+        let wall = |c: Cell| c == [5, 0, 6];
         assert!(stands(&[Support::Wall], at, 0, &wall));
         assert!(!stands(&[Support::Wall], at, 12, &wall), "turned to the other side");
     }
@@ -1253,10 +1254,10 @@ mod tests {
     #[test]
     fn a_water_prop_needs_water_and_a_table_prop_a_table() {
         let none = |_: Cell| false;
-        assert!(stands(&[Support::Water], [205, 0, 25], 0, &none));
-        assert!(!stands(&[Support::Water], [25, 0, 25], 0, &none), "no water there");
-        assert!(stands(&[Support::Table], [75, 10, 75], 0, &none));
-        assert!(!stands(&[Support::Table], [75, 0, 75], 0, &none), "not on the table's cell");
+        assert!(stands(&[Support::Water], [mid(20), 0, mid(5)], 0, &none));
+        assert!(!stands(&[Support::Water], [mid(5), 0, mid(5)], 0, &none), "no water there");
+        assert!(stands(&[Support::Table], [mid(7), PROP_UNITS_PER_BLOCK, mid(7)], 0, &none));
+        assert!(!stands(&[Support::Table], [mid(7), 0, mid(7)], 0, &none), "not on the table's cell");
     }
 
     #[test]
@@ -1264,18 +1265,18 @@ mod tests {
         let plots = [];
         let nothing = |_: &Prop| false;
         let c = Ctx { prop_supported: &nothing, ..ctx(Role::Editor, Some(7), Some([5.0, 0.0, 5.0]), &plots, &floor) };
-        let p = Component::Prop(prop([55, 0, 55], Some(7)));
+        let p = Component::Prop(prop([mid(5), 0, mid(5)], Some(7)));
         assert_eq!(check_put(&c, None, &p), Err(EntityWhy::NoSupport));
         // the same prop with new text keeps its place, and what it stood on
-        let words = Component::Prop(Prop { text: Some("hi".into()), ..prop([55, 0, 55], Some(7)) });
+        let words = Component::Prop(Prop { text: Some("hi".into()), ..prop([mid(5), 0, mid(5)], Some(7)) });
         assert_eq!(check_put(&c, Some(&p), &words), Ok(()));
         // a move needs a surface again
-        let moved = Component::Prop(prop([65, 0, 55], Some(7)));
+        let moved = Component::Prop(prop([mid(6), 0, mid(5)], Some(7)));
         assert_eq!(check_put(&c, Some(&p), &moved), Err(EntityWhy::NoSupport));
     }
 
     #[test]
     fn prop_cell_is_the_block_for_a_negative_position() {
-        assert_eq!(prop_cell([-1, -10, -11]), [-1, -1, -2]);
+        assert_eq!(prop_cell([-1, -PROP_UNITS_PER_BLOCK, -PROP_UNITS_PER_BLOCK - 1]), [-1, -1, -2]);
     }
 }

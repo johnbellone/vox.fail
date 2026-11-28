@@ -230,7 +230,7 @@ async fn bad_edits_are_refused_to_their_sender_only() {
         (2, [40, 0, 0], 0, Why::TooFar),
         (3, [0, -1, 0], 1, Why::NoChange),
         (4, [0, 0, 0], 9, Why::NoSuchBlock),
-        (5, [0, -40, 0], 1, Why::Outside),
+        (5, [0, -70, 0], 1, Why::Outside),
     ];
     for (id, cell, block, why) in cases {
         send(&mut a.ws, &ToServer::Edit { id, cell, block }).await;

@@ -153,9 +153,9 @@ pub struct Bounds {
 }
 
 impl Default for Bounds {
-    /// 512 × 128 × 512 blocks (256 × 64 × 256 m at half-metre blocks), a quarter of it below 0.
+    /// 1024 × 256 × 1024 blocks (256 × 64 × 256 m), a quarter of it below 0.
     fn default() -> Self {
-        Bounds { lo: [-256, -32, -256], hi: [256, 96, 256] }
+        Bounds { lo: [-512, -64, -512], hi: [512, 192, 512] }
     }
 }
 
@@ -386,9 +386,9 @@ mod tests {
         assert_eq!(w.edit([0, 0, 0], 3), Ok(0));
         assert_eq!(w.edit([0, 0, 0], 3), Err(Why::NoChange));
         assert_eq!(w.edit([0, 0, 0], 17), Err(Why::NoSuchBlock));
-        assert_eq!(w.edit([256, 0, 0], 1), Err(Why::Outside));
-        assert_eq!(w.edit([0, -33, 0], 1), Err(Why::Outside));
-        assert_eq!(w.edit([-256, -32, 255], 1), Ok(0));
+        assert_eq!(w.edit([512, 0, 0], 1), Err(Why::Outside));
+        assert_eq!(w.edit([0, -65, 0], 1), Err(Why::Outside));
+        assert_eq!(w.edit([-512, -64, 511], 1), Ok(0));
         assert_eq!(w.edit([0, 0, 0], 0), Ok(3));
     }
 

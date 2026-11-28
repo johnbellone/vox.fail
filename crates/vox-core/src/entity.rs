@@ -21,8 +21,8 @@ pub const MAX_SETTINGS: usize = 16 * 1024;
 pub const MAX_URL: usize = 128;
 /// Longest world id, dungeon name or level name, in characters.
 pub const MAX_ID: usize = 64;
-/// Largest objective radius, in blocks.
-pub const MAX_RADIUS: f32 = 256.0;
+/// Largest objective radius, in blocks (128 m).
+pub const MAX_RADIUS: f32 = crate::in_blocks(128.0);
 
 /// An entity's number within its world.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -128,8 +128,15 @@ pub const MAX_PROP_TEXT: usize = 140;
 pub const PROP_YAWS: u8 = 24;
 /// Largest variant or state number a prop may carry.
 pub const MAX_PROP_CODE: u8 = 7;
-/// Five-centimetre units in one 0.5 m block.
-pub const PROP_UNITS_PER_BLOCK: i32 = 10;
+/// A prop's position is in units of this many metres (5 cm).
+pub const PROP_UNIT_M: f32 = 0.05;
+/// Five-centimetre units in one block.
+pub const PROP_UNITS_PER_BLOCK: i32 = (crate::BLOCK_M / PROP_UNIT_M + 0.5) as i32;
+/// Props are drawn on a half-metre grid (`vox-art`): their footprints list half-metre cells
+/// and their heights count half-metres. One such cell is this many blocks along each side.
+pub const PROP_CELL_BLOCKS: i32 = crate::whole_blocks(0.5);
+/// Five-centimetre units along one side of a prop's half-metre cell.
+pub const PROP_UNITS_PER_CELL: i32 = PROP_UNITS_PER_BLOCK * PROP_CELL_BLOCKS;
 
 /// A prop placed in a world: a catalogue prop (or a player's own) at a position. Its shape,
 /// footprint and behaviour come from its definition, which the server looks up by `prop`.
@@ -159,8 +166,8 @@ impl Prop {
 }
 
 /// The block a prop's position falls in. It is floored, so a negative position lands in the
-/// block below it: -1 is block -1, -10 is block -1, -11 is block -2. Dividing by the constant
-/// ten cannot overflow.
+/// block below it: -1 is block -1, -5 is block -1, -6 is block -2. Dividing by a constant
+/// cannot overflow.
 pub fn prop_cell(at: [i32; 3]) -> [i32; 3] {
     at.map(|c| c.div_euclid(PROP_UNITS_PER_BLOCK))
 }
@@ -256,7 +263,7 @@ impl Component {
                     Dest::Dungeon { name, .. } => *name = strip_control(name),
                     Dest::Url { url, .. } => *url = strip_control(url),
                 }
-                p.size = [tidy_size(p.size[0], 4.0), tidy_size(p.size[1], 6.0)];
+                p.size = [tidy_size(p.size[0], crate::portal::DEFAULT_SIZE[0]), tidy_size(p.size[1], crate::portal::DEFAULT_SIZE[1])];
             }
             Component::Objective(o) => o.name = strip_control(&o.name),
             Component::Prop(p) => {
@@ -286,7 +293,7 @@ impl Component {
         match self {
             Component::Portal(p) => {
                 finite(&p.at)?;
-                if !p.size.iter().all(|c| (1.0..=64.0).contains(c)) {
+                if !p.size.iter().all(|c| (crate::portal::MIN_SIDE..=crate::portal::MAX_SIDE).contains(c)) {
                     return Err(EntityWhy::Invalid);
                 }
                 finite(&[p.yaw])?;
@@ -430,7 +437,7 @@ fn text(s: &str, max: usize) -> Result<(), EntityWhy> {
 /// then it is clamped. Clamping first would leave NaN as NaN.
 fn tidy_size(c: f32, default: f32) -> f32 {
     let c = if c.is_finite() { c } else { default };
-    c.clamp(1.0, 64.0)
+    crate::portal::clamp_side(c)
 }
 
 fn strip_control(s: &str) -> String {
@@ -570,10 +577,11 @@ mod tests {
 
     #[test]
     fn prop_cell_floors_negative_positions() {
-        assert_eq!(prop_cell([0, 9, 10]), [0, 0, 1]);
-        assert_eq!(prop_cell([-1, -10, -11]), [-1, -1, -2]);
-        assert_eq!(prop_cell([19, 20, -20]), [1, 2, -2]);
-        assert_eq!(prop_cell([i32::MIN, i32::MAX, 0]), [i32::MIN / 10 - 1, i32::MAX / 10, 0]);
+        assert_eq!(PROP_UNITS_PER_BLOCK, 5);
+        assert_eq!(prop_cell([0, 4, 5]), [0, 0, 1]);
+        assert_eq!(prop_cell([-1, -5, -6]), [-1, -1, -2]);
+        assert_eq!(prop_cell([9, 10, -10]), [1, 2, -2]);
+        assert_eq!(prop_cell([i32::MIN, i32::MAX, 0]), [i32::MIN / 5 - 1, i32::MAX / 5, 0]);
     }
 
     #[test]
@@ -674,12 +682,12 @@ mod tests {
     fn tidy_strips_control_characters_and_clamps_size() {
         let mut p = portal(Dest::Here { arrive: [0.0; 3] });
         p.name = "ya\u{7}rd\n".into();
-        p.size = [0.0, 200.0];
+        p.size = [0.0, 900.0];
         let mut c = Component::Portal(p);
         c.tidy();
         let Component::Portal(p) = c else { panic!("still a portal") };
         assert_eq!(p.name, "yard");
-        assert_eq!(p.size, [1.0, 64.0]);
+        assert_eq!(p.size, [crate::portal::MIN_SIDE, crate::portal::MAX_SIDE]);
 
         let mut o = Component::Objective(Objective { name: "\u{1b}altar".into(), at: [0.0; 3], radius: 3.0 });
         o.tidy();
@@ -716,13 +724,13 @@ mod tests {
         assert_eq!(Component::Portal(small).validate(), Err(EntityWhy::Invalid));
 
         let mut big = portal(Dest::Here { arrive: [0.0; 3] });
-        big.size = [4.0, 65.0];
+        big.size = [4.0, crate::portal::MAX_SIDE + 1.0];
         assert_eq!(Component::Portal(big).validate(), Err(EntityWhy::Invalid));
     }
 
     #[test]
     fn objective_radius_above_the_cap_is_refused() {
-        let far = Component::Objective(Objective { name: "altar".into(), at: [0.0; 3], radius: 300.0 });
+        let far = Component::Objective(Objective { name: "altar".into(), at: [0.0; 3], radius: 600.0 });
         assert_eq!(far.validate(), Err(EntityWhy::Invalid));
 
         let edge = Component::Objective(Objective { name: "altar".into(), at: [0.0; 3], radius: MAX_RADIUS });
@@ -736,7 +744,7 @@ mod tests {
         let mut c = Component::Portal(p);
         c.tidy();
         let Component::Portal(p) = c else { panic!("still a portal") };
-        assert_eq!(p.size, [4.0, 6.0]);
+        assert_eq!(p.size, crate::portal::DEFAULT_SIZE);
         assert_eq!(p.to, Dest::Dungeon { name: "crypt".into(), arrive: [0.0; 3] });
         assert_eq!(Component::Portal(p).validate(), Ok(()));
     }

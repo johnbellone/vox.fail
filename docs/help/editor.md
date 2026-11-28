@@ -14,13 +14,13 @@ mode on the same canvas.
 
 ## Basic tools
 
-Basic lets you change your own plot. A plot is a square of 16 × 16 blocks you have claimed
+Basic lets you change your own plot. A plot is a square of 64 × 64 blocks you have claimed
 (see [Building](building.md)).
 
 - **Select** picks and moves things. Pick a thing in the world or in the list to open its panel.
 - **Blocks** shows the block palette. Choose a block, then build with it.
-- **Portal** marks a spot in your plot; a form opens there. A portal is 4 to 8 blocks wide and
-  6 to 16 blocks tall. A plot holds two of your portals at most, and each portal costs 30
+- **Portal** marks a spot in your plot; a form opens there. A portal is 8 to 16 blocks wide and
+  12 to 32 blocks tall (2 to 4 m wide, 3 to 8 m tall). A plot holds two of your portals at most, and each portal costs 30
   Authority.
 - **Prop** shows the prop catalogue while it is held. Choose a prop, then mark a spot. A prop
   needs something to stand on (the floor, or a wall, a ceiling, water or a table, as the prop
@@ -34,8 +34,8 @@ portal" where the form asks where it leads, and pick one of your keys: the key n
 other end is turned to lead back. The keys you can pick are the portals you have made, listed
 in your inventory.
 
-Your own portals can be moved, turned and resized in your plot (the form keeps a portal 4 to 8
-wide and 6 to 16 tall). The name of a portal you made
+Your own portals can be moved, turned and resized in your plot (the form keeps a portal 8 to 16
+wide and 12 to 32 tall). The name of a portal you made
 is fixed once it is made.
 
 ## Moving and turning things

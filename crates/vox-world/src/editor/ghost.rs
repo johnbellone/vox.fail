@@ -60,7 +60,7 @@ use crate::input::{Action, Actions, UiMode};
 
 /// A new doorway's size, blocks (width, height): the size a Portal create asks for, and the
 /// default the page's form shows.
-pub const GHOST_SIZE: [f32; 2] = [4.0, 6.0];
+pub const GHOST_SIZE: [f32; 2] = vox_core::portal::DEFAULT_SIZE;
 
 /// Where a ghost doorway would be: its sill's middle, which way it faces, and its size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -627,8 +627,8 @@ mod tests {
         // a guest is not refused here: a world started with --editors-all lets guests edit, and
         // the client cannot tell that world from the others, so the server decides
         assert_eq!(check_portal(&known, &portal), Ok(()));
-        // out of reach: the doorway is 20 blocks off from the feet
-        let far = doorway(&ghost_for([0, 0, 18], [0.0, 0.0, 1.0]), "yard");
+        // out of reach: the doorway is half as far again as the reach from the feet
+        let far = doorway(&ghost_for([0, 0, (vox_core::edit::REACH * 1.5) as i32], [0.0, 0.0, 1.0]), "yard");
         assert_eq!(check_portal(&known, &far), Err(EntityWhy::TooFar));
     }
 
@@ -636,14 +636,15 @@ mod tests {
     fn editor_ghost_outside_the_world_is_refused() {
         let empty = BTreeMap::new();
         let no_blocks = |_: Cell| false;
+        // a little past where the default bounds end along x
+        let outside = Bounds::default().hi[0] + 44;
         let known = Known {
-            at: Some([300.0, 0.0, 0.0]),
+            at: Some([outside as f32, 0.0, 0.0]),
             bounds: Bounds::default(),
             entities: &empty,
             solid: &no_blocks,
         };
-        // the default bounds end at 256 blocks along x, so a doorway at x = 300 is outside
-        let out = doorway(&ghost_for([300, 0, 0], [0.0, 0.0, 1.0]), "yard");
+        let out = doorway(&ghost_for([outside, 0, 0], [0.0, 0.0, 1.0]), "yard");
         assert_eq!(check_portal(&known, &out), Err(EntityWhy::Outside));
         assert_eq!(tint(check_portal(&known, &out)), Tint::Red(EntityWhy::Outside));
     }
@@ -686,8 +687,9 @@ mod tests {
             solid: &no_blocks,
         };
         assert_eq!(check_prop(&known, &ghost_prop([5, 0, -20]), &pivot, &free, &held), Ok(()));
-        // out of reach: 20 blocks from the feet
-        assert_eq!(check_prop(&known, &ghost_prop([5, 0, 180]), &pivot, &free, &held), Err(EntityWhy::TooFar));
+        // out of reach: half as far again as the reach from the feet
+        let far = (vox_core::edit::REACH * 1.5) as i32 * PROP_UNITS_PER_BLOCK;
+        assert_eq!(check_prop(&known, &ghost_prop([5, 0, far]), &pivot, &free, &held), Err(EntityWhy::TooFar));
     }
 
     #[test]
@@ -732,11 +734,11 @@ mod tests {
 
     #[test]
     fn editor_prop_spot_snaps_to_5cm_inside_the_hit_cell() {
-        // 2.36 blocks is 23.6 units: 24 units, in cell 2; 7.02 blocks in cell 7 is 70 units
-        assert_eq!(prop_spot([2, -1, 7], [2.36, 7.02], 0), Some([24, 0, 70]));
-        // negative: -2.96 blocks is -29.6 units, which rounds to -30 in cell -3; -0.04 in cell -1
+        // 2.36 blocks is 11.8 units: 12 units, in cell 2; 7.02 blocks in cell 7 is 35.1: 35 units
+        assert_eq!(prop_spot([2, -1, 7], [2.36, 7.02], 0), Some([12, 0, 35]));
+        // negative: -2.96 blocks is -14.8 units, which rounds to -15 in cell -3; -0.04 in cell -1
         // rounds to 0 units, which is cell 0, so it is clamped to the cell's last unit, -1
-        assert_eq!(prop_spot([-3, 0, -1], [-2.96, -0.04], 10), Some([-30, 10, -1]));
+        assert_eq!(prop_spot([-3, 0, -1], [-2.96, -0.04], 10), Some([-15, 10, -1]));
         assert_eq!(prop_spot([0, 0, 0], [0.0, 0.0], 10), Some([0, 10, 0]));
         // no finite ground, no spot
         assert_eq!(prop_spot([0, 0, 0], [f32::NAN, 0.0], 10), None);
@@ -744,24 +746,29 @@ mod tests {
 
     #[test]
     fn editor_prop_spot_clamps_a_side_face_hit_into_its_own_cell() {
-        // a hit on the +x face of cell 4 is at exactly 5.0 blocks, which would round to unit 50,
-        // the first unit of cell 5; the same for z
-        assert_eq!(prop_spot([4, 0, 4], [5.0, 5.0], 10), Some([49, 10, 49]));
-        // and on the -x face of cell 4 it stays at 4.0 blocks, unit 40
-        assert_eq!(prop_spot([4, 0, 4], [4.0, 4.0], 10), Some([40, 10, 40]));
+        let u = PROP_UNITS_PER_BLOCK;
+        // a hit on the +x face of cell 4 is at exactly 5.0 blocks, which would round to the first
+        // unit of cell 5; the same for z
+        assert_eq!(prop_spot([4, 0, 4], [5.0, 5.0], 10), Some([5 * u - 1, 10, 5 * u - 1]));
+        // and on the -x face of cell 4 it stays at 4.0 blocks, its first unit
+        assert_eq!(prop_spot([4, 0, 4], [4.0, 4.0], 10), Some([4 * u, 10, 4 * u]));
     }
 
     #[test]
     fn editor_prop_spot_is_over_the_cell_it_stands_on() {
+        use vox_core::body::prop_base_cells;
         use vox_core::entity::prop_cell;
         // the at a hit gives must sit in the cell hit, one block up (on its top), as the rules
-        // and the footprint read it: prop_cell is where the prop's footprint starts
+        // and the footprint read it: prop_cell is the pivot's block, and a footprint cell covers
+        // the half-metre cell the pivot is in, so that block is among its blocks
         for (cell, ground) in [([4, 0, 4], [5.0, 4.3]), ([-3, 0, -1], [-3.0, -0.04]), ([0, 0, 0], [0.0, 0.0])] {
             let top = (cell[1] + 1) * PROP_UNITS_PER_BLOCK;
             let at = prop_spot(cell, ground, top).expect("a finite spot");
             let floor = [cell[0], cell[1] + 1, cell[2]];
             assert_eq!(prop_cell(at), floor, "at {at:?} for cell {cell:?}");
-            assert_eq!(prop_footprint_cells(at, 0, &[[0, 0]], 1), vec![floor]);
+            assert!(prop_footprint_cells(at, 0, &[[0, 0]], 1).contains(&floor), "at {at:?} for cell {cell:?}");
+            let base = prop_base_cells(at, 0, &[[0, 0]]);
+            assert!(base.contains(&floor) && base.iter().all(|c| c[1] == floor[1]), "{base:?}");
         }
     }
 

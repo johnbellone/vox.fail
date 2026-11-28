@@ -92,17 +92,18 @@ pub fn parse(settings: &Value) -> Vec<PortalDef> {
     list.iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            let size = p.get("size").and_then(|s| s.as_array()).map_or(Vec2::new(4.0, 6.0), |s| {
+            let [dw, dh] = vox_core::portal::DEFAULT_SIZE;
+            let size = p.get("size").and_then(|s| s.as_array()).map_or(Vec2::new(dw, dh), |s| {
                 Vec2::new(
-                    s.first().and_then(|v| v.as_f64()).unwrap_or(4.0) as f32,
-                    s.get(1).and_then(|v| v.as_f64()).unwrap_or(6.0) as f32,
+                    s.first().and_then(|v| v.as_f64()).map_or(dw, |v| v as f32),
+                    s.get(1).and_then(|v| v.as_f64()).map_or(dh, |v| v as f32),
                 )
             });
             Some(PortalDef {
                 name: p.get("name").and_then(|v| v.as_str()).map_or_else(|| format!("portal {}", i + 1), String::from),
                 at: v3(p, "at")?,
                 along_x: p.get("axis").and_then(|v| v.as_str()) == Some("x"),
-                size: size.clamp(Vec2::splat(1.0), Vec2::splat(64.0)),
+                size: size.clamp(Vec2::splat(vox_core::portal::MIN_SIDE), Vec2::splat(vox_core::portal::MAX_SIDE)),
                 level: p.get("level")?.as_str()?.to_string(),
                 url: p.get("url").and_then(|v| v.as_str()).map(String::from),
                 arrive: v3(p, "arrive")?,
@@ -151,7 +152,7 @@ impl PortalDef {
     /// Is `p` (blocks, feet) in the doorway's opening, sideways and up?
     pub fn within(&self, p: Vec3) -> bool {
         let d = p - self.at;
-        d.dot(self.across()).abs() <= self.size.x * 0.5 && d.y >= -1.0 && d.y <= self.size.y - 1.0
+        d.dot(self.across()).abs() <= self.size.x * 0.5 && d.y >= -vox_core::portal::SILL_SLACK && d.y <= self.size.y - vox_core::portal::SILL_SLACK
     }
 
     /// Which side of the doorway `p` is on (blocks), signed distance.
@@ -214,10 +215,18 @@ pub struct PortalSurface;
 
 type Loaded = Result<(Meshes, Value), String>;
 
-/// A destination level, meshed and placed on its own layer.
+/// A destination level, meshed and placed on its own layer: only the part round the arrival
+/// point, `region` (the far side is a picture through a doorway, not a second world, and a
+/// whole level at quarter-metre blocks can be tens of millions of blocks).
 struct Scene {
     level: String,
+    region: vox_core::Bounds,
+    /// its place among the scenes: its render layer is `slot + 1` and it sits at
+    /// `AWAY + APART * slot` (a dropped scene's slot is used again)
+    slot: usize,
     layer: usize,
+    /// what it spawned (meshes, sky, light, floor), despawned when no doorway shows it
+    spawned: Vec<Entity>,
     offset: Vec3,
     look: Option<SkyLook>,
     loading: Option<Arc<Mutex<Option<Loaded>>>>,
@@ -280,9 +289,35 @@ fn target(px: UVec2) -> Image {
     img
 }
 
-/// Mesh a level in the background, once its file is here (in the browser it's fetched first:
-/// None means ask again next frame).
-fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Option<Loaded>>>> {
+/// An arrival point fit to hold an echo round: a world's doorways come from the network, so
+/// a coordinate that isn't a number becomes 0 and a huge one is brought within 2^24 blocks.
+fn sane(arrive: Vec3) -> Vec3 {
+    const FAR: f32 = (1 << 24) as f32;
+    arrive.to_array().map(|v| if v.is_finite() { v.clamp(-FAR, FAR) } else { 0.0 }).into()
+}
+
+/// The part of a level an echo arriving at `arrive` (blocks) holds: `radius_m` round it along
+/// x and z, every height.
+fn echo_region(arrive: Vec3, radius_m: f32) -> vox_core::Bounds {
+    let arrive = sane(arrive);
+    let r = vox_core::in_blocks(radius_m).ceil();
+    // `as` saturates, so a wild arrival point from a level file can't overflow
+    let lo = |v: f32| (v - r).floor() as i32;
+    let hi = |v: f32| ((v + r).ceil() as i32).saturating_add(1);
+    vox_core::Bounds { lo: [lo(arrive.x), i32::MIN, lo(arrive.z)], hi: [hi(arrive.x), i32::MAX, hi(arrive.z)] }
+}
+
+/// Does `region` hold the echo for an arrival at `arrive` well enough: is `arrive` at least
+/// half the radius inside it? Otherwise a doorway gets a scene of its own.
+fn covers(region: &vox_core::Bounds, arrive: Vec3, radius_m: f32) -> bool {
+    let arrive = sane(arrive);
+    let m = vox_core::in_blocks(radius_m) * 0.5;
+    arrive.x - m >= region.lo[0] as f32 && arrive.x + m <= region.hi[0] as f32 && arrive.z - m >= region.lo[2] as f32 && arrive.z + m <= region.hi[2] as f32
+}
+
+/// Mesh a level's `region` in the background, once its file is here (in the browser it's
+/// fetched first: None means ask again next frame).
+fn load(level: &str, region: vox_core::Bounds, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Option<Loaded>>>> {
     let slot = Arc::new(Mutex::new(None));
     let Some(path) = crate::blocks::level_path(level) else {
         *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("no level called {level}")));
@@ -297,9 +332,9 @@ fn load(level: &str, rects: &HashMap<String, [f32; 4]>) -> Option<Arc<Mutex<Opti
         .spawn(async move {
             let made = (|| -> Loaded {
                 let pal = crate::blocks::Palette::load(&crate::files::base().join("data/blocks.json"))?;
-                let cells = crate::blocks::load_level(&text, &pal)?;
+                let world = crate::blocks::load_level_world(&text, &pal, Some(region))?;
                 let settings = serde_json::from_str(&vox_core::level::settings(&text)).unwrap_or(Value::Null);
-                Ok((crate::blocks::mesh_level(&cells, &pal, &rects), settings))
+                Ok((crate::blocks::mesh_world(&world, &pal, &rects), settings))
             })();
             if let Err(e) = &made {
                 crate::note!("[portal] echo of {level}: {e}");
@@ -332,7 +367,9 @@ pub fn update(
         ResMut<Assets<FloorMaterial>>,
     ),
     mut commands: Commands,
+    detail: Option<Res<crate::detail::Detail>>,
 ) {
+    let echo_m = crate::detail::Detail::of(detail.as_deref()).echo_m;
     let p = &mut *portals;
     if !w.active() {
         for l in p.live.drain(..) {
@@ -380,16 +417,22 @@ pub fn update(
             commands.entity(l.cam).try_despawn();
         }
         for def in w.portals.clone() {
-            let scene = match p.scenes.iter().position(|s| s.level == def.level) {
+            let scene = match p.scenes.iter().position(|s| s.level == def.level && covers(&s.region, def.arrive, echo_m)) {
                 Some(i) => i,
                 None => {
                     let i = p.scenes.len();
+                    let region = echo_region(def.arrive, echo_m);
+                    // the first slot no scene holds (dropped scenes leave gaps)
+                    let slot = (0..).find(|k| !p.scenes.iter().any(|s| s.slot == *k)).unwrap_or(i);
                     p.scenes.push(Scene {
                         level: def.level.clone(),
-                        layer: i + 1,
-                        offset: Vec3::new(AWAY + APART * i as f32, 0.0, 0.0),
+                        region,
+                        slot,
+                        spawned: Vec::new(),
+                        layer: slot + 1,
+                        offset: Vec3::new(AWAY + APART * slot as f32, 0.0, 0.0),
                         look: None,
-                        loading: load(&def.level, &blocks.rects),
+                        loading: load(&def.level, region, &blocks.rects),
                         env: None,
                         failed: false,
                     });
@@ -427,12 +470,33 @@ pub fn update(
                 .id();
             p.live.push(Live { def, scene, quad, cam, image, mat, px, last_side: None, dressed: false, shown: 0.0 });
         }
+        // scenes no doorway shows any more (a doorway moved or removed, another world): gone,
+        // with what they spawned, so they don't pile up while a world is edited
+        let used: Vec<bool> = (0..p.scenes.len()).map(|i| p.live.iter().any(|l| l.scene == i)).collect();
+        if used.iter().any(|u| !u) {
+            let mut moved = vec![usize::MAX; p.scenes.len()];
+            let mut kept = Vec::new();
+            for (i, s) in std::mem::take(&mut p.scenes).into_iter().enumerate() {
+                if used[i] {
+                    moved[i] = kept.len();
+                    kept.push(s);
+                } else {
+                    for e in s.spawned {
+                        commands.entity(e).try_despawn();
+                    }
+                }
+            }
+            p.scenes = kept;
+            for l in &mut p.live {
+                l.scene = moved[l.scene];
+            }
+        }
     }
 
     // ---- echoes arriving from the background
     for s in &mut p.scenes {
         if s.loading.is_none() && s.look.is_none() && !s.failed {
-            s.loading = load(&s.level, &blocks.rects);
+            s.loading = load(&s.level, s.region, &blocks.rects);
         }
         let Some(slot) = &s.loading else { continue };
         let Some(made) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() else { continue };
@@ -457,18 +521,19 @@ pub fn update(
             if let Some(b) = aabb {
                 e.insert(b);
             }
+            s.spawned.push(e.id());
         }
         if glass.faces() > 0 {
-            commands.spawn((Mesh3d(meshes.add(glass.into_mesh())), MeshMaterial3d(blocks.glass.clone()), Transform::from_translation(o), layer.clone(), crate::NoBevel));
+            s.spawned.push(commands.spawn((Mesh3d(meshes.add(glass.into_mesh())), MeshMaterial3d(blocks.glass.clone()), Transform::from_translation(o), layer.clone(), crate::NoBevel)).id());
         }
         if water.faces() > 0 {
-            commands.spawn((Mesh3d(meshes.add(water.into_mesh())), MeshMaterial3d(blocks.water.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel));
+            s.spawned.push(commands.spawn((Mesh3d(meshes.add(water.into_mesh())), MeshMaterial3d(blocks.water.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel)).id());
         }
         if flame.faces() > 0 {
-            commands.spawn((Mesh3d(meshes.add(flame.into_mesh())), MeshMaterial3d(blocks.flame.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel));
+            s.spawned.push(commands.spawn((Mesh3d(meshes.add(flame.into_mesh())), MeshMaterial3d(blocks.flame.clone()), Transform::from_translation(o), NotShadowCaster, layer.clone(), crate::NoBevel)).id());
         }
         // its sky, its light and (the void) its endless floor
-        commands.spawn((
+        let sky = commands.spawn((
             Mesh3d(meshes.add(crate::outdoors::dome_mesh())),
             MeshMaterial3d(sky_mats.add(SkyMaterial { sky: crate::outdoors::sky_uniform(&look, clouds, Vec4::ZERO) })),
             Transform::from_translation(o),
@@ -477,8 +542,9 @@ pub fn update(
             layer.clone(),
             crate::NoBevel,
         ));
+        s.spawned.push(sky.id());
         let shadows = studio.level >= crate::Level::Medium;
-        commands.spawn((
+        let sun = commands.spawn((
             DirectionalLight {
                 illuminance: look.lux,
                 color: Color::linear_rgb(look.light.x, look.light.y, look.light.z),
@@ -491,8 +557,9 @@ pub fn update(
             Transform::from_translation(o + look.key * 50.0).looking_at(o, Vec3::Y),
             layer.clone(),
         ));
+        s.spawned.push(sun.id());
         if let Some(f) = set.get("floor").and_then(|v| v.as_f64()) {
-            commands.spawn((
+            let floor = commands.spawn((
                 Mesh3d(meshes.add(Plane3d::default().mesh().size(1600.0, 1600.0).subdivisions(8))),
                 MeshMaterial3d(floor_mats.add(FloorMaterial {
                     base: StandardMaterial { base_color: Color::srgb(0.86, 0.86, 0.89), perceptual_roughness: 0.08, reflectance: 0.55, ..default() },
@@ -502,6 +569,7 @@ pub fn update(
                 layer.clone(),
                 crate::NoBevel,
             ));
+            s.spawned.push(floor.id());
         }
         s.env = Some(images.add(crate::outdoors::sky_cube(&look, 64)));
         s.look = Some(look);
@@ -665,6 +733,26 @@ fn go(w: &mut WorldClient, def: &PortalDef, body: Vec3, side: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_echo_holds_the_part_round_its_arrival() {
+        let r = echo_region(Vec3::new(10.0, 3.0, -20.0), 48.0);
+        let reach = vox_core::in_blocks(48.0) as i32;
+        assert_eq!((r.lo[0], r.lo[2]), (10 - reach, -20 - reach));
+        assert_eq!((r.hi[0], r.hi[2]), (10 + reach + 1, -20 + reach + 1));
+        assert!(r.contains([10, -1000, -20]) && r.contains([10, 1000, -20]), "every height");
+        assert!(!r.contains([10 + reach + 2, 0, -20]));
+        // a second doorway arriving near the first shares its echo; one far away gets its own
+        assert!(covers(&r, Vec3::new(20.0, 0.0, -20.0), 48.0));
+        assert!(!covers(&r, Vec3::new(10.0 + reach as f32, 0.0, -20.0), 48.0));
+        // a wild arrival point can't overflow, and still holds its own echo: a world sending
+        // one can't make a new scene on every rebuild
+        for wild in [Vec3::new(f32::MAX, 0.0, f32::MIN), Vec3::new(f32::NAN, 0.0, f32::INFINITY), Vec3::new(1e10, 0.0, -1e10)] {
+            let far = echo_region(wild, 48.0);
+            assert!(far.lo[0] <= far.hi[0] && far.lo[2] <= far.hi[2]);
+            assert!(covers(&far, wild, 48.0), "{wild}");
+        }
+    }
 
     fn gate() -> PortalDef {
         parse(&serde_json::json!({"portals": [

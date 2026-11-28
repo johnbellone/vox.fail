@@ -8,8 +8,8 @@
 
 use vox_core::wire::{VOICE_NEARBY, VOICE_PARTY};
 
-/// Distance (blocks) inside which a nearby voice plays at full volume.
-const FULL_VOLUME: f32 = 2.0;
+/// Distance (blocks: 1 m) inside which a nearby voice plays at full volume.
+const FULL_VOLUME: f32 = vox_core::in_blocks(1.0);
 
 /// Left and right gains (0..=1) for one voice, from where it is and which channel it is on.
 ///
@@ -78,6 +78,9 @@ mod tests {
 
     const EPS: f32 = 1e-5;
     const ORIGIN: [f32; 3] = [0.0, 0.0, 0.0];
+    // 2.5 m from the listener, inside a 10 m radius (the same metres at any block size)
+    const NEAR: f32 = vox_core::in_blocks(2.5);
+    const RADIUS: f32 = vox_core::in_blocks(10.0);
     const SQRT_HALF: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
     fn near(a: (f32, f32), b: (f32, f32)) -> bool {
@@ -87,30 +90,30 @@ mod tests {
     #[test]
     fn voice_ahead_is_centred() {
         // yaw 0 faces -Z
-        let g = gains(ORIGIN, 0.0, [0.0, 0.0, -5.0], VOICE_NEARBY, 20.0);
-        let v = 15.0 / 18.0;
+        let g = gains(ORIGIN, 0.0, [0.0, 0.0, -NEAR], VOICE_NEARBY, RADIUS);
+        let v = (RADIUS - NEAR) / (RADIUS - FULL_VOLUME);
         assert!(near(g, (v * SQRT_HALF, v * SQRT_HALF)), "{g:?}");
     }
 
     #[test]
     fn voice_behind_is_centred() {
-        let g = gains(ORIGIN, 0.0, [0.0, 0.0, 5.0], VOICE_NEARBY, 20.0);
-        let v = 15.0 / 18.0;
+        let g = gains(ORIGIN, 0.0, [0.0, 0.0, NEAR], VOICE_NEARBY, RADIUS);
+        let v = (RADIUS - NEAR) / (RADIUS - FULL_VOLUME);
         assert!(near(g, (v * SQRT_HALF, v * SQRT_HALF)), "{g:?}");
     }
 
     #[test]
     fn voice_on_the_left_plays_in_the_left_ear() {
         // facing -Z, the left hand is -X
-        let g = gains(ORIGIN, 0.0, [-5.0, 0.0, 0.0], VOICE_NEARBY, 20.0);
-        let v = 15.0 / 18.0;
+        let g = gains(ORIGIN, 0.0, [-NEAR, 0.0, 0.0], VOICE_NEARBY, RADIUS);
+        let v = (RADIUS - NEAR) / (RADIUS - FULL_VOLUME);
         assert!(near(g, (v, 0.0)), "{g:?}");
     }
 
     #[test]
     fn voice_on_the_right_plays_in_the_right_ear() {
-        let g = gains(ORIGIN, 0.0, [5.0, 0.0, 0.0], VOICE_NEARBY, 20.0);
-        let v = 15.0 / 18.0;
+        let g = gains(ORIGIN, 0.0, [NEAR, 0.0, 0.0], VOICE_NEARBY, RADIUS);
+        let v = (RADIUS - NEAR) / (RADIUS - FULL_VOLUME);
         assert!(near(g, (0.0, v)), "{g:?}");
     }
 
@@ -155,8 +158,9 @@ mod tests {
 
     #[test]
     fn falls_off_linearly_between() {
-        // 6 blocks of a 10-block radius: (10 - 6) / (10 - 2) = 0.5 of full volume
-        let g = gains(ORIGIN, 0.0, [-6.0, 0.0, 0.0], VOICE_NEARBY, 10.0);
+        // halfway between the full-volume distance and the radius is half volume
+        let mid = (FULL_VOLUME + RADIUS) / 2.0;
+        let g = gains(ORIGIN, 0.0, [-mid, 0.0, 0.0], VOICE_NEARBY, RADIUS);
         assert!(near(g, (0.5, 0.0)), "{g:?}");
     }
 

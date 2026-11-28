@@ -18,7 +18,8 @@ blocks), like a medium Minecraft map.
 
     python3 tools/assets/build_islands.py        # writes data/levels/islands.json
 
-Coordinates are blocks: (0, -1, 0) is the ground where you arrive, -z is north (ahead).
+Coordinates are half-metre units (the file is written at quarter-metre blocks, twice these
+numbers, by rescale_level.py): (0, -1, 0) is the ground where you arrive, -z is north (ahead).
 The output is the level format (boxes), with identical neighbouring blocks merged into big
 boxes so the file stays small.
 """
@@ -27,6 +28,8 @@ import math
 from pathlib import Path
 
 import numpy as np
+
+from rescale_level import rescale
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "levels" / "islands.json"
@@ -604,6 +607,8 @@ def main():
                   "hotbar": ["obsidian", "basalt", "magma", "ash", "crystal", "fire", "stone", "cobblestone", "bricks"]},
         "boxes": to_boxes(),
     }
+    # drawn in half-metre units; written at quarter-metre blocks (docs/design/block-scale.md)
+    level = rescale(level, 2)
     OUT.write_text(json.dumps(level, separators=(",", ":")))
     print(f"{OUT}: {count} blocks ({fires} fires), {len(level['boxes'])} boxes, {OUT.stat().st_size // 1024} KB")
 

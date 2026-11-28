@@ -100,15 +100,15 @@ async fn authority_is_earned_and_spent() {
     // only world servers report
     let r = Client::new().post(format!("{base}/api/world/report")).bearer_auth("guess").json(&json!({"world": "void", "spawn": [0, 0, 0], "players": []})).send().await.unwrap();
     assert_eq!(r.status().as_u16(), 401);
-    // ten minutes in the Void and 120 blocks placed: 1 + 2
+    // ten minutes in the Void and 480 blocks placed: 1 + 2
     for i in 0..10 {
-        let (st, _) = report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": if i == 0 { 120 } else { 0 } }])).await;
+        let (st, _) = report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": if i == 0 { 480 } else { 0 } }])).await;
         assert_eq!(st, 200);
     }
     assert_eq!(ann.authority().await, game::WELCOME + 3);
     // capped per day
     for _ in 0..20 {
-        report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": 1200 }])).await;
+        report(&base, "void", json!([{ "account": ann.id, "at": [40.2, 1.0, 40.7], "edits": 4800 }])).await;
     }
     let w = ann.get("/api/wallet").await;
     assert_eq!(w["earning"]["today"], game::DAILY);
@@ -128,15 +128,16 @@ async fn plots_portals_and_what_worlds_enforce() {
     // feats happen where you last stood
     assert_eq!(ann.post("/api/feats/plot", json!({"world": "void"})).await.0, 400);
     // too near the spawn
-    report(&base, "void", json!([{ "account": ann.id, "at": [10.0, 1.0, 3.0] }, { "account": bob.id, "at": [50.0, 1.0, 50.0] }])).await;
+    report(&base, "void", json!([{ "account": ann.id, "at": [20.0, 2.0, 6.0] }, { "account": bob.id, "at": [100.0, 2.0, 100.0] }])).await;
     let (st, v) = ann.post("/api/feats/plot", json!({"world": "void"})).await;
     assert_eq!(st, 400, "{v}");
     // further out
-    report(&base, "void", json!([{ "account": ann.id, "at": [40.5, 1.0, 40.5] }, { "account": bob.id, "at": [50.0, 1.0, 50.0] }])).await;
+    report(&base, "void", json!([{ "account": ann.id, "at": [81.0, 2.0, 81.0] }, { "account": bob.id, "at": [100.0, 2.0, 100.0] }])).await;
     let (st, v) = ann.post("/api/feats/plot", json!({"world": "void"})).await;
     assert_eq!(st, 200, "{v}");
     let plot = v["plot"].as_i64().unwrap();
-    assert_eq!(v["area"], json!({"x0": 32, "z0": 32, "x1": 48, "z1": 48}));
+    // 64 × 64 blocks (16 m) round where she stood
+    assert_eq!(v["area"], json!({"x0": 49, "z0": 49, "x1": 113, "z1": 113}));
     assert_eq!(ann.authority().await, game::WELCOME - game::COST_PLOT);
     // Bob's would overlap
     let (st, v) = bob.post("/api/feats/plot", json!({"world": "void"})).await;
@@ -159,7 +160,7 @@ async fn plots_portals_and_what_worlds_enforce() {
     let p = &r["portals"][0];
     assert_eq!(p["url"], "/w/7781/ws");
     assert_eq!(p["level"], "yard");
-    assert_eq!(p["at"], json!([40.5, 1.0, 40.5]));
+    assert_eq!(p["at"], json!([81.0, 2.0, 81.0]));
     assert_eq!(p["arrive"], json!([0.5, 1.0, 0.5]));
     // the inventory: the deed and the key, coins, the wardrobe
     let inv = ann.get("/api/inventory").await;
@@ -226,7 +227,7 @@ async fn friends_groups_and_raids() {
     assert_eq!(bob.post("/api/crews/invite", json!({"crew": g["id"], "name": "Ann"})).await.0, 200);
     assert_eq!(ann.get("/api/people").await["invites"][0]["name"], "Builders");
     assert_eq!(ann.post("/api/crews/answer", json!({"crew": g["id"], "accept": true})).await.0, 200);
-    report(&base, "void", json!([{ "account": bob.id, "at": [-60.0, 1.0, -60.0] }])).await;
+    report(&base, "void", json!([{ "account": bob.id, "at": [-120.0, 2.0, -120.0] }])).await;
     let (_, plot) = bob.post("/api/feats/plot", json!({"world": "void"})).await;
     let (st, v) = bob.post("/api/plots/share", json!({"plot": plot["plot"], "group": g["id"]})).await;
     assert_eq!(st, 200, "{v}");

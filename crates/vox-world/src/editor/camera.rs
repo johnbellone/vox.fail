@@ -23,11 +23,11 @@ pub struct EditFly;
 pub const EDIT_FLY: f32 = crate::client::FLY;
 
 /// How far in front of an entity a fly-to ends, blocks.
-pub const FLY_TO_DISTANCE: f32 = 6.0;
+pub const FLY_TO_DISTANCE: f32 = vox_core::in_blocks(3.0);
 
 /// A fly-to ends this close to its target, blocks: it stops short rather than push into the
 /// entity's own cell.
-pub const FLY_TO_STOP: f32 = 1.5;
+pub const FLY_TO_STOP: f32 = vox_core::in_blocks(0.75);
 
 /// A fly-to gives up after this many frames in a row in which the player moved less than a
 /// tenth of the step they were sent: something solid is in the way.
@@ -172,7 +172,7 @@ mod tests {
     fn editor_camera_fly_to_passes_the_server_move_check() {
         // a fly-to at the frame rates a player can have (4 fps, the clamp, and 60 fps): every
         // frame's position must be one the server accepts, or the player is sent back
-        const BLOCK: f32 = 0.5;
+        const BLOCK: f32 = vox_core::BLOCK_M;
         let spawn = [1000.0, 0.0, 1000.0];
         for dt in [0.25_f32, 1.0 / 60.0] {
             let mut pos = [0.0, 10.0, 0.0];
@@ -201,14 +201,14 @@ mod tests {
     }
 
     #[test]
-    fn editor_camera_target_is_six_blocks_in_front() {
+    fn editor_camera_target_is_the_fly_to_distance_in_front() {
         // yaw 0 faces +z, yaw 90 faces +x (the client's own facing)
         let front = |yaw| {
             fly_target(&Component::Spawn(Spawn { at: [10.0, 2.0, -4.0], yaw })).expect("a spawn has a place")
         };
         let a = front(0.0);
-        assert!((a[0] - 10.0).abs() < 1e-4 && (a[1] - 2.0).abs() < 1e-4 && (a[2] - 2.0).abs() < 1e-4, "{a:?}");
+        assert!((a[0] - 10.0).abs() < 1e-4 && (a[1] - 2.0).abs() < 1e-4 && (a[2] + 4.0 - FLY_TO_DISTANCE).abs() < 1e-4, "{a:?}");
         let b = front(90.0);
-        assert!((b[0] - 16.0).abs() < 1e-4 && (b[2] + 4.0).abs() < 1e-4, "{b:?}");
+        assert!((b[0] - 10.0 - FLY_TO_DISTANCE).abs() < 1e-4 && (b[2] + 4.0).abs() < 1e-4, "{b:?}");
     }
 }

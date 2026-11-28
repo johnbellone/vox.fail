@@ -11,11 +11,13 @@
 //! - [`relief`]: the shallow dips in natural ground, from a seed, the same on every machine.
 //! - [`portal`]: doorways to other places: where they are and where going through takes you.
 //! - [`entity`]: the things placed in a world beside its blocks (doorways, spawns, settings).
+//! - [`rescale`]: converting a world saved at half-metre blocks to quarter-metre ones.
 //! - [`predict`]: a player's view of the world: confirmed blocks plus their own edits that
 //!   the server hasn't answered yet.
 //!
-//! Positions in here are in blocks: block (x, y, z) spans x..x+1 etc. The app scales by the
-//! palette's block size (0.5 m) to get metres.
+//! Positions in here are in blocks: block (x, y, z) spans x..x+1 etc. A block is [`BLOCK_M`]
+//! metres (a quarter metre); sizes that are really metres (a body, a reach, a plot) are written
+//! in metres and turned into blocks with [`in_blocks`], so the block size lives in one place.
 
 pub mod auth;
 pub mod body;
@@ -29,11 +31,26 @@ pub mod predict;
 pub mod terrain;
 pub mod ray;
 pub mod relief;
+pub mod rescale;
 pub mod weather;
 pub mod wire;
 pub mod world;
 
 pub use world::{Bounds, CHUNK, Cell, Chunk, ChunkKey, Why, World};
+
+/// A block's side in metres, in every world (docs/design/block-scale.md). `data/blocks.json`
+/// says the same (`block_size`), and [`block_size`] checks that it does.
+pub const BLOCK_M: f32 = 0.25;
+
+/// `metres` as a number of blocks.
+pub const fn in_blocks(metres: f32) -> f32 {
+    metres / BLOCK_M
+}
+
+/// `metres` as a whole number of blocks (rounded to the nearest).
+pub const fn whole_blocks(metres: f32) -> i32 {
+    (metres / BLOCK_M + 0.5) as i32
+}
 
 /// The palette's block names from `data/blocks.json`, in id order (id = index + 1; 0 is air).
 pub fn palette_names(blocks_json: &str) -> Result<Vec<String>, String> {
@@ -49,10 +66,17 @@ pub fn palette_names(blocks_json: &str) -> Result<Vec<String>, String> {
     Ok(f.blocks.into_iter().map(|d| d.name).collect())
 }
 
-/// The block size in metres from `data/blocks.json`.
-pub fn block_size(blocks_json: &str) -> f32 {
-    serde_json::from_str::<serde_json::Value>(blocks_json)
-        .ok()
-        .and_then(|v| v.get("block_size").and_then(|s| s.as_f64()))
-        .unwrap_or(0.5) as f32
+/// The block size in metres from `data/blocks.json`, which must be [`BLOCK_M`]: every rule
+/// measured in blocks is worked out for that size, so a palette that says otherwise is refused
+/// rather than played at the wrong scale.
+pub fn block_size(blocks_json: &str) -> Result<f32, String> {
+    let size = serde_json::from_str::<serde_json::Value>(blocks_json)
+        .map_err(|e| e.to_string())?
+        .get("block_size")
+        .and_then(|s| s.as_f64())
+        .ok_or("the palette has no block_size")? as f32;
+    if (size - BLOCK_M).abs() > 1e-6 {
+        return Err(format!("the palette's blocks are {size} m, but this build is made for {BLOCK_M} m blocks"));
+    }
+    Ok(size)
 }

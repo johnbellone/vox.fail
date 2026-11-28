@@ -14,7 +14,7 @@ export const KINDS: [ItemKind | "", string][] = [
 ];
 
 export const ABOUT: Partial<Record<ItemKind, string>> = {
-  deed: "A plot you claimed: 16 × 16 blocks, as high and deep as the world goes. Only you, and a group you share it with, can build or dig in it.",
+  deed: "A plot you claimed: 16 × 16 m (64 × 64 blocks), as high and deep as the world goes. Only you, and a group you share it with, can build or dig in it.",
   key: "A portal you opened from your plot. Everyone who walks through it goes to the world it leads to.",
   banner: "Your party's banner, raised when you led it on a raid.",
   trophy: "From a raid your party won: two or more of you spent ten minutes in the world together.",

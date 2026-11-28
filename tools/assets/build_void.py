@@ -20,12 +20,16 @@ Almost nothing stands in it, so what does looks lost and far away:
 
     python3 tools/assets/build_void.py        # writes data/levels/void.json
 
-Coordinates are blocks (half a metre); y = 0 is the floor's top.
+Coordinates are half-metre units (the file is written at quarter-metre blocks, twice these
+numbers, by rescale_level.py); y = 0 is the floor's top. The Void is 25.6 km across: 25,600
+units each way from the Circle.
 """
 import json
 import math
 import random
 from pathlib import Path
+
+from rescale_level import rescale
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "levels" / "void.json"
@@ -137,8 +141,13 @@ def main():
             ],
             "hotbar": ["pearl", "lumen", "glass", "concrete", "water", "crystal", "planks", "stone", "bricks"],
         },
+        # 25.6 km across, from 16 m under the floor to 96 m over it (half-metre units, as
+        # everything here)
+        "bounds": {"lo": [-25600, -32, -25600], "hi": [25600, 192, 25600]},
         "boxes": boxes,
     }
+    # drawn in half-metre units; written at quarter-metre blocks (docs/design/block-scale.md)
+    level = rescale(level, 2)
     OUT.write_text(json.dumps(level, indent=1))
     print(f"{OUT}: {len(boxes)} boxes, {OUT.stat().st_size // 1024} KB")
 

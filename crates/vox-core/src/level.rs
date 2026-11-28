@@ -4,10 +4,12 @@
 //! { "name": "yard", "boxes": [ { "block": "grass", "from": [-20, -1, -20], "to": [20, -1, 20] } ],
 //!   "blocks": [ [0, 0, 0, "stone"] ] }
 //! ```
-//! Later boxes overwrite earlier ones; `"air"` clears.
+//! Later boxes overwrite earlier ones; `"air"` clears. A level may give its world's size,
+//! `"bounds": {"lo": [x, y, z], "hi": [x, y, z]}` (hi exclusive), else the world takes
+//! [`Bounds::default`].
 
 use crate::entity::{Axis, Component, Dest, Objective, Portal, Settings};
-use crate::world::{Cell, World};
+use crate::world::{Bounds, Cell, World};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -28,6 +30,9 @@ struct LevelBox {
     /// only the outside of the box (walls, a hollow tree crown)
     #[serde(default)]
     hollow: bool,
+    /// how many blocks thick a hollow box's shell is (at least 1)
+    #[serde(default)]
+    thick: Option<u8>,
     /// a rounded box (a tree crown, a bush): corners further than this from the centre, in
     /// half-sizes, are left out
     #[serde(default)]
@@ -63,7 +68,7 @@ pub fn entities(text: &str) -> Result<Vec<Component>, String> {
             // clamped as `portal::parse` clamps, so an out-of-range size (even an infinite one) comes out the same
             let dim = |j: usize, d: f64| {
                 let c = size.and_then(|s| s.get(j)).and_then(|x| x.as_f64()).unwrap_or(d) as f32;
-                c.clamp(1.0, 64.0)
+                crate::portal::clamp_side(c)
             };
             let to = match p.get("url").and_then(|u| u.as_str()) {
                 None => Dest::Here { arrive },
@@ -76,7 +81,7 @@ pub fn entities(text: &str) -> Result<Vec<Component>, String> {
                 name: p.get("name").and_then(|n| n.as_str()).map_or_else(|| format!("portal {}", i + 1), String::from),
                 at,
                 axis: if p.get("axis").and_then(|a| a.as_str()) == Some("x") { Axis::X } else { Axis::Z },
-                size: [dim(0, 4.0), dim(1, 6.0)],
+                size: [dim(0, f64::from(crate::portal::DEFAULT_SIZE[0])), dim(1, f64::from(crate::portal::DEFAULT_SIZE[1]))],
                 // a yaw too big for f32 is 0, as `portal::parse` has it
                 yaw: match p.get("yaw").and_then(|y| y.as_f64()).unwrap_or(0.0) as f32 {
                     y if y.is_finite() => y,
@@ -115,8 +120,36 @@ fn vec3(v: &Value, k: &str) -> Option<[f32; 3]> {
     p.iter().all(|c| c.is_finite()).then_some(p)
 }
 
-/// A level's blocks: position -> id, where id is the index in `names` plus one.
-pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> {
+/// The longest a box may be corner to corner, in blocks (200 m).
+const MAX_BOX: f32 = crate::in_blocks(200.0);
+/// A level's bounds may reach this far from 0 along x and z, in blocks (about 4,000 km: the
+/// numbers stay far from overflowing), and span at most [`MAX_HEIGHT`] up.
+const MAX_REACH: i32 = 1 << 24;
+const MAX_HEIGHT: i32 = 4096;
+
+/// The size a level gives its world (`"bounds"`), if it gives a sensible one: each `lo` below
+/// its `hi`, within [`MAX_REACH`] of 0, and no taller than [`MAX_HEIGHT`].
+pub fn bounds(text: &str) -> Option<Bounds> {
+    let v: Value = serde_json::from_str(text).ok()?;
+    let b = v.get("bounds")?;
+    let cell = |k: &str| -> Option<Cell> {
+        let a = b.get(k)?.as_array()?;
+        let n = |i: usize| a.get(i)?.as_i64().and_then(|n| i32::try_from(n).ok()).filter(|n| n.abs() <= MAX_REACH);
+        Some([n(0)?, n(1)?, n(2)?])
+    };
+    let (lo, hi) = (cell("lo")?, cell("hi")?);
+    let ok = (0..3).all(|i| lo[i] < hi[i]) && hi[1] - lo[1] <= MAX_HEIGHT;
+    ok.then_some(Bounds { lo, hi })
+}
+
+/// A level's blocks, put one at a time into `put(cell, id)` in the file's order (id 0 is air:
+/// clear the cell), only those inside `within`. Boxes are clipped to `within` before their
+/// cells are visited, so a small region of a big level costs only that region. Every block
+/// name is checked before anything is put, so a bad level puts nothing.
+///
+/// Nothing here holds the level's blocks: at quarter-metre blocks the sea is 34 million of
+/// them, which a map of every block can't afford (docs/design/chunk-streaming.md).
+pub fn apply(text: &str, names: &[String], within: Bounds, mut put: impl FnMut(Cell, u16)) -> Result<(), String> {
     let f: LevelFile = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let id = |name: &str| -> Result<u16, String> {
         if name == "air" {
@@ -129,30 +162,37 @@ pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> 
                 .ok_or_else(|| format!("no block called \"{name}\""))
         }
     };
-    let mut cells = HashMap::new();
-    let mut put = |p: Cell, b: u16| {
-        if b == 0 {
-            cells.remove(&p);
-        } else {
-            cells.insert(p, b);
-        }
-    };
+    // names and sizes first
+    let mut boxes = Vec::with_capacity(f.boxes.len());
     for bx in &f.boxes {
         let b = id(&bx.block)?;
         let lo: [i32; 3] = std::array::from_fn(|i| bx.from[i].min(bx.to[i]));
         let hi: [i32; 3] = std::array::from_fn(|i| bx.from[i].max(bx.to[i]));
-        let size: [f32; 3] = std::array::from_fn(|i| (hi[i] - lo[i]) as f32);
-        if (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() > 400.0 {
+        // in i64: the corners come from a file, and their difference can overflow an i32
+        let size: [f32; 3] = std::array::from_fn(|i| (i64::from(hi[i]) - i64::from(lo[i])) as f32);
+        if (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt() > MAX_BOX {
             return Err(format!("a {} box is too big", bx.block));
         }
-        let centre: [f32; 3] = std::array::from_fn(|i| (lo[i] + hi[i]) as f32 * 0.5);
+        boxes.push((bx, b, lo, hi, size));
+    }
+    let singles: Vec<(Cell, u16)> = f.blocks.iter().map(|(x, y, z, name)| Ok(([*x, *y, *z], id(name)?))).collect::<Result<_, String>>()?;
+    for (bx, b, lo, hi, size) in boxes {
+        let centre: [f32; 3] = std::array::from_fn(|i| (lo[i] as f32 + hi[i] as f32) * 0.5);
         let half: [f32; 3] = std::array::from_fn(|i| (size[i] * 0.5 + 0.5).max(0.5));
-        for x in lo[0]..=hi[0] {
-            for y in lo[1]..=hi[1] {
-                for z in lo[2]..=hi[2] {
+        let t = i32::from(bx.thick.unwrap_or(1).max(1));
+        // the part of the box inside the region (hi inclusive here, exclusive in Bounds)
+        let first: [i32; 3] = std::array::from_fn(|i| lo[i].max(within.lo[i]));
+        let last: [i32; 3] = std::array::from_fn(|i| hi[i].min(within.hi[i].saturating_sub(1)));
+        // a hollow box's middle: more than `t` in from every face (in i64, as for `size`)
+        let middle = |p: Cell| (0..3).all(|i| {
+            let (v, t) = (i64::from(p[i]), i64::from(t));
+            v >= i64::from(lo[i]) + t && v <= i64::from(hi[i]) - t
+        });
+        for x in first[0]..=last[0] {
+            for y in first[1]..=last[1] {
+                for z in first[2]..=last[2] {
                     let p = [x, y, z];
-                    let inside = (0..3).all(|i| p[i] > lo[i] && p[i] < hi[i]);
-                    if bx.hollow && inside {
+                    if bx.hollow && middle(p) {
                         continue;
                     }
                     if let Some(r) = bx.round {
@@ -166,24 +206,43 @@ pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> 
             }
         }
     }
-    for (x, y, z, name) in &f.blocks {
-        put([*x, *y, *z], id(name)?);
+    for (c, b) in singles {
+        if within.contains(c) {
+            put(c, b);
+        }
     }
+    Ok(())
+}
+
+/// Bounds that take in every block a level can have: for reading a whole level.
+pub fn everywhere() -> Bounds {
+    Bounds { lo: [i32::MIN; 3], hi: [i32::MAX; 3] }
+}
+
+/// A level's blocks as a map: position -> id, where id is the index in `names` plus one. For
+/// tests and small levels; a world is filled with [`fill`], which keeps no map.
+pub fn load(text: &str, names: &[String]) -> Result<HashMap<Cell, u16>, String> {
+    let mut cells = HashMap::new();
+    apply(text, names, everywhere(), |p, b| {
+        if b == 0 {
+            cells.remove(&p);
+        } else {
+            cells.insert(p, b);
+        }
+    })?;
     Ok(cells)
 }
 
-/// Put a level's blocks into a world (those outside its bounds are left out); returns how
-/// many went in.
+/// Put a level's blocks into a world (those outside its bounds are left out), straight into
+/// its chunks; returns the net number of blocks the world gained (all of the level's, for an
+/// empty world: the only kind it is used on).
 pub fn fill(world: &mut World, text: &str, names: &[String]) -> Result<usize, String> {
-    let cells = load(text, names)?;
-    let mut n = 0;
-    for (c, b) in cells {
-        if world.bounds.contains(c) {
-            world.set(c, b);
-            n += 1;
-        }
-    }
-    Ok(n)
+    let before = world.count();
+    let within = world.bounds;
+    apply(text, names, within, |c, b| {
+        world.set(c, b);
+    })?;
+    Ok(world.count().saturating_sub(before))
 }
 
 #[cfg(test)]
@@ -218,6 +277,68 @@ mod tests {
     }
 
     #[test]
+    fn a_thick_hollow_box_keeps_a_shell_that_thick() {
+        let text = r#"{"boxes": [{ "block": "stone", "from": [0, 0, 0], "to": [5, 5, 5], "hollow": true, "thick": 2 }]}"#;
+        let c = load(text, &names()).unwrap();
+        assert_eq!(c.get(&[1, 1, 1]), Some(&2), "the shell's inner layer");
+        assert_eq!(c.get(&[2, 2, 2]), None, "the middle");
+        assert_eq!(c.get(&[3, 3, 3]), None, "the middle");
+        assert_eq!(c.get(&[4, 4, 4]), Some(&2), "the shell's inner layer, far side");
+        assert_eq!(c.len(), 6 * 6 * 6 - 2 * 2 * 2);
+    }
+
+    #[test]
+    fn a_region_of_a_level_is_that_region_of_the_whole() {
+        let text = r#"{
+            "boxes": [
+                { "block": "grass", "from": [-20, -1, -20], "to": [20, -1, 20] },
+                { "block": "stone", "from": [-3, 0, -3], "to": [6, 5, 6], "hollow": true, "thick": 2 },
+                { "block": "leaves", "from": [2, 2, 2], "to": [9, 9, 9], "round": 0.9 },
+                { "block": "air", "from": [0, -1, 0], "to": [1, -1, 1] }
+            ],
+            "blocks": [[4, 4, 4, "stone"], [30, 0, 0, "stone"]]
+        }"#;
+        let whole = load(text, &names()).unwrap();
+        let region = Bounds { lo: [-2, -1, 1], hi: [5, 4, 8] };
+        let mut part = HashMap::new();
+        apply(text, &names(), region, |c, b| {
+            assert!(region.contains(c), "{c:?} is outside the region");
+            if b == 0 { part.remove(&c); } else { part.insert(c, b); }
+        })
+        .unwrap();
+        let want: HashMap<Cell, u16> = whole.into_iter().filter(|(c, _)| region.contains(*c)).collect();
+        assert!(!want.is_empty());
+        assert_eq!(part, want);
+    }
+
+    #[test]
+    fn a_level_with_a_bad_block_puts_nothing() {
+        let text = r#"{"boxes": [{ "block": "stone", "from": [0, 0, 0], "to": [3, 3, 3] }, { "block": "lava", "from": [0, 0, 0], "to": [0, 0, 0] }]}"#;
+        let mut put = 0;
+        assert!(apply(text, &names(), everywhere(), |_, _| put += 1).is_err());
+        assert_eq!(put, 0);
+        // corners far apart are refused, not overflowed
+        let wide = r#"{"boxes": [{ "block": "stone", "from": [-2147483648, 0, 0], "to": [2147483647, 0, 0] }]}"#;
+        assert!(load(wide, &names()).is_err());
+    }
+
+    #[test]
+    fn a_level_may_give_its_bounds() {
+        let b = bounds(r#"{"bounds": {"lo": [-100, -8, -50], "hi": [100, 40, 50]}}"#).unwrap();
+        assert_eq!((b.lo, b.hi), ([-100, -8, -50], [100, 40, 50]));
+        assert_eq!(bounds(r#"{"boxes": []}"#), None, "none given: the default");
+        for bad in [
+            r#"{"bounds": {"lo": [10, 0, 0], "hi": [10, 5, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0, 0], "hi": [5, 5000, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0, 0], "hi": [99999999, 5, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0], "hi": [5, 5, 5]}}"#,
+            r#"{"bounds": {"lo": [0, 0, 0.5], "hi": [5, 5, 5]}}"#,
+        ] {
+            assert_eq!(bounds(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn world_settings() {
         assert_eq!(settings(r#"{"world":{"sky":"void"},"boxes":[]}"#), r#"{"sky":"void"}"#);
         assert_eq!(settings(r#"{"boxes":[]}"#), "{}");
@@ -227,7 +348,7 @@ mod tests {
     #[test]
     fn errors() {
         assert!(load(r#"{"boxes":[{"block":"lava","from":[0,0,0],"to":[0,0,0]}]}"#, &names()).is_err());
-        assert!(load(r#"{"boxes":[{"block":"stone","from":[0,0,0],"to":[500,0,0]}]}"#, &names()).is_err());
+        assert!(load(r#"{"boxes":[{"block":"stone","from":[0,0,0],"to":[900,0,0]}]}"#, &names()).is_err());
         assert!(load("not json", &names()).is_err());
     }
 
@@ -246,27 +367,30 @@ mod tests {
         let (w, names, text, n) = load_level("void");
         // a flat, nearly empty space: the floor is endless (not blocks), you arrive on it with
         // nothing overhead, and the pillars of the Circle glow at the top
-        assert!(n > 500 && n < 50_000, "{n}");
-        assert_eq!(w.ground(0, 0, 95), None);
+        assert!(n > 4_000 && n < 400_000, "{n}");
+        assert_eq!(w.ground(0, 0, 191), None);
+        // 25.6 km across, so there is room to build
+        let b = bounds(&text).expect("the void gives its bounds");
+        assert_eq!((b.lo[0], b.hi[0], b.lo[2], b.hi[2]), (-51_200, 51_200, -51_200, 51_200));
         let s: serde_json::Value = serde_json::from_str(&settings(&text)).unwrap();
         assert_eq!(s["sky"], "void");
         assert_eq!(s["floor"], 0);
         assert_eq!(s["cameras"][0]["name"], "gate");
         let lumen = names.iter().position(|n| n == "lumen").unwrap() as u16 + 1;
-        assert_eq!(w.get([22, 14, 0]), lumen);
+        assert_eq!(w.get([44, 28, 0]), lumen);
     }
 
     #[test]
     fn the_islands_load() {
         let (w, names, text, n) = load_level("islands");
-        assert!(n > 300_000, "{n}");
+        assert!(n > 2_400_000, "{n}");
         // you arrive standing on the plaza, with nothing overhead
-        assert_eq!(w.ground(0, 0, 95), Some(0));
+        assert_eq!(w.ground(0, 0, 191), Some(0));
         let fire = names.iter().position(|n| n == "fire").unwrap() as u16 + 1;
         assert!(w.keys().len() > 100);
         assert!(settings(&text).contains("islands"));
         // braziers burn round the plaza
-        assert_eq!(w.get([13, 4, 13]), fire);
+        assert_eq!(w.get([26, 8, 26]), fire);
     }
 
     #[test]
@@ -280,7 +404,7 @@ mod tests {
         assert!(n > 1000, "{n}");
         assert_eq!(w.count(), n);
         // the character stands at the origin, on the ground
-        assert_eq!(w.ground(0, 0, 20), Some(0));
+        assert_eq!(w.ground(0, 0, 40), Some(0));
     }
 
     fn entities_of(path: &str) -> Vec<Component> {
@@ -329,7 +453,7 @@ mod tests {
         });
         let objective = objective.expect("an objective");
         assert_eq!(objective.name, "the altar");
-        assert_eq!(objective.radius, 3.0);
+        assert_eq!(objective.radius, 6.0);
         assert!(all.iter().any(|c| matches!(c, Component::Portal(_))));
     }
 

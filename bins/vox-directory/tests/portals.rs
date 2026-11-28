@@ -74,7 +74,7 @@ async fn report(base: &str, world: &str, players: Value) {
     let r = Client::new()
         .post(format!("{base}/api/world/report"))
         .bearer_auth(SECRET)
-        .json(&json!({ "world": world, "level": world, "spawn": [0.5, 1.0, 0.5], "players": players }))
+        .json(&json!({ "world": world, "level": world, "spawn": [1.0, 2.0, 1.0], "players": players }))
         .send()
         .await
         .unwrap();
@@ -106,13 +106,13 @@ fn req(world: &str, account: u64, at: [f64; 3], to: &str, idem: &str) -> Value {
     json!({ "world": world, "account": account, "at": at, "axis": "x", "to": to, "idem": idem })
 }
 
-/// Ann has a plot in the Void (32 to 48 on x and z) and the Yard has reported; she holds
+/// Ann has a plot in the Void (49 to 113 on x and z) and the Yard has reported; she holds
 /// authority for three portals. Bob has nothing.
 async fn plotted() -> (Directory, String, P, P) {
     let (d, base) = serve().await;
     let ann = P::new(&base, "Ann").await;
     let bob = P::new(&base, "Bob").await;
-    report(&base, "void", json!([{ "account": ann.id, "at": [40.5, 1.0, 40.5] }])).await;
+    report(&base, "void", json!([{ "account": ann.id, "at": [81.0, 2.0, 81.0] }])).await;
     let (st, v) = ann.post("/api/feats/plot", json!({"world": "void"})).await;
     assert_eq!(st, 200, "{v}");
     report(&base, "yard", json!([])).await;
@@ -124,18 +124,18 @@ async fn plotted() -> (Directory, String, P, P) {
 async fn portal_charged_once_for_a_repeated_request() {
     let (_d, base, ann, bob) = plotted().await;
     let before = ann.authority().await;
-    let (st, first) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "edit-7")).await;
+    let (st, first) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "edit-7")).await;
     assert_eq!(st, 200, "{first}");
     assert_eq!(first["name"], "The Yard (".to_string() + &first["key"].to_string() + ")");
-    assert_eq!(first["at"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(first["at"], json!([80.0, 2.0, 80.0]));
     assert_eq!(ann.authority().await, before - game::COST_PORTAL);
     // the same request again: the same answer, and nothing charged
-    let (st, again) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "edit-7")).await;
+    let (st, again) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "edit-7")).await;
     assert_eq!(st, 200, "{again}");
     assert_eq!(again, first);
     assert_eq!(ann.authority().await, before - game::COST_PORTAL);
     // another world's or player's use of the same id is refused, and charges nothing
-    let (st, _) = world_portal(&base, req("void", bob.id, [40.0, 1.0, 40.0], "yard", "edit-7")).await;
+    let (st, _) = world_portal(&base, req("void", bob.id, [80.0, 2.0, 80.0], "yard", "edit-7")).await;
     assert_eq!(st, 409);
     // the rules list the portal once, under its key
     let r = rules(&base, "void").await;
@@ -149,10 +149,10 @@ async fn portal_charged_once_for_a_repeated_request() {
 #[tokio::test]
 async fn portal_cap_is_two_per_plot() {
     let (_d, base, ann, _bob) = plotted().await;
-    assert_eq!(world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await.0, 200);
-    assert_eq!(world_portal(&base, req("void", ann.id, [41.0, 1.0, 41.0], "yard", "b")).await.0, 200);
+    assert_eq!(world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await.0, 200);
+    assert_eq!(world_portal(&base, req("void", ann.id, [82.0, 2.0, 82.0], "yard", "b")).await.0, 200);
     let before = ann.authority().await;
-    let (st, v) = world_portal(&base, req("void", ann.id, [42.0, 1.0, 42.0], "yard", "c")).await;
+    let (st, v) = world_portal(&base, req("void", ann.id, [84.0, 2.0, 84.0], "yard", "c")).await;
     assert_eq!(st, 400, "{v}");
     assert_eq!(ann.authority().await, before);
     assert_eq!(rules(&base, "void").await["portals"].as_array().unwrap().len(), 2);
@@ -162,11 +162,11 @@ async fn portal_cap_is_two_per_plot() {
 async fn portal_must_be_in_a_plot_of_the_player() {
     let (_d, base, ann, bob) = plotted().await;
     // outside Ann's plot
-    assert_eq!(world_portal(&base, req("void", ann.id, [10.0, 1.0, 10.0], "yard", "out")).await.0, 400);
+    assert_eq!(world_portal(&base, req("void", ann.id, [20.0, 2.0, 20.0], "yard", "out")).await.0, 400);
     // inside her plot, but Bob has no plot there
-    assert_eq!(world_portal(&base, req("void", bob.id, [40.0, 1.0, 40.0], "yard", "bob")).await.0, 400);
+    assert_eq!(world_portal(&base, req("void", bob.id, [80.0, 2.0, 80.0], "yard", "bob")).await.0, 400);
     // a wall along neither x nor z
-    let mut bad_axis = req("void", ann.id, [40.0, 1.0, 40.0], "yard", "axis");
+    let mut bad_axis = req("void", ann.id, [80.0, 2.0, 80.0], "yard", "axis");
     bad_axis["axis"] = json!("y");
     assert_eq!(world_portal(&base, bad_axis).await.0, 400);
     assert_eq!(ann.authority().await, game::WELCOME + 100 - game::COST_PLOT);
@@ -176,24 +176,24 @@ async fn portal_must_be_in_a_plot_of_the_player() {
 async fn portal_destination_must_be_another_known_world() {
     let (_d, base, ann, _bob) = plotted().await;
     // the same world
-    assert_eq!(world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "void", "same")).await.0, 400);
+    assert_eq!(world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "void", "same")).await.0, 400);
     // a world the directory doesn't know
-    assert_eq!(world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "nowhere", "unknown")).await.0, 400);
+    assert_eq!(world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "nowhere", "unknown")).await.0, 400);
     // a request id that is not a plain id
-    assert_eq!(world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "has space")).await.0, 400);
-    assert_eq!(world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "")).await.0, 400);
+    assert_eq!(world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "has space")).await.0, 400);
+    assert_eq!(world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "")).await.0, 400);
 }
 
 #[tokio::test]
 async fn portal_needs_authority() {
     let (d, base) = serve().await;
     let ann = P::new(&base, "Ann").await;
-    report(&base, "void", json!([{ "account": ann.id, "at": [40.5, 1.0, 40.5] }])).await;
+    report(&base, "void", json!([{ "account": ann.id, "at": [81.0, 2.0, 81.0] }])).await;
     assert_eq!(ann.post("/api/feats/plot", json!({"world": "void"})).await.0, 200);
     report(&base, "yard", json!([])).await;
     // a plot leaves 5 authority, a portal costs 30
     assert_eq!(ann.authority().await, game::WELCOME - game::COST_PLOT);
-    let (st, v) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "poor")).await;
+    let (st, v) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "poor")).await;
     assert_eq!(st, 402, "{v}");
     assert!(rules(&base, "void").await["portals"].as_array().unwrap().is_empty());
     drop(d);
@@ -203,7 +203,7 @@ async fn portal_needs_authority() {
 async fn portal_refund_within_a_minute_credits_once() {
     let (_d, base, ann, bob) = plotted().await;
     let before = ann.authority().await;
-    let (_, made) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "refund-me")).await;
+    let (_, made) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "refund-me")).await;
     let key = made["key"].as_i64().unwrap();
     assert_eq!(ann.authority().await, before - game::COST_PORTAL);
     // someone else's key, or the wrong world: nothing happens
@@ -220,7 +220,7 @@ async fn portal_refund_within_a_minute_credits_once() {
     assert_eq!(refund(&base, "void", ann.id, key).await.1, json!({"refunded": false}));
     assert_eq!(ann.authority().await, before);
     // a repeat of the original request now says the portal was refunded, and charges nothing
-    assert_eq!(world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "refund-me")).await.0, 409);
+    assert_eq!(world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "refund-me")).await.0, 409);
     assert_eq!(ann.authority().await, before);
 }
 
@@ -230,7 +230,7 @@ async fn portal_feat_still_opens_one_through_the_same_code() {
     let before = ann.authority().await;
     let (st, v) = ann.post("/api/feats/portal", json!({"world": "void", "to": "yard"})).await;
     assert_eq!(st, 200, "{v}");
-    assert_eq!(v["at"], json!([40.5, 1.0, 40.5]));
+    assert_eq!(v["at"], json!([81.0, 2.0, 81.0]));
     assert_eq!(ann.authority().await, before - game::COST_PORTAL);
     let r = rules(&base, "void").await;
     assert_eq!(r["portals"][0]["key"], v["portal"]);
@@ -246,16 +246,16 @@ async fn portal_feat_still_opens_one_through_the_same_code() {
 #[tokio::test]
 async fn portal_keys_are_never_reused() {
     let (_d, base, ann, _bob) = plotted().await;
-    let (_, first) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "k1")).await;
+    let (_, first) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "k1")).await;
     let k1 = first["key"].as_i64().unwrap();
     assert_eq!(refund(&base, "void", ann.id, k1).await.1, json!({"refunded": true}));
     // the highest key was just deleted; the next one must still be above it
-    let (st, second) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "k2")).await;
+    let (st, second) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "k2")).await;
     assert_eq!(st, 200, "{second}");
     let k2 = second["key"].as_i64().unwrap();
     assert!(k2 > k1, "{k2} reuses or undercuts {k1}");
     assert_eq!(refund(&base, "void", ann.id, k2).await.1, json!({"refunded": true}));
-    let (st, third) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "k3")).await;
+    let (st, third) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "k3")).await;
     assert_eq!(st, 200, "{third}");
     assert!(third["key"].as_i64().unwrap() > k2);
 }
@@ -263,21 +263,21 @@ async fn portal_keys_are_never_reused() {
 #[tokio::test]
 async fn portal_refunded_request_does_not_leak_the_next_portal() {
     let (d, base, ann, bob) = plotted().await;
-    report(&base, "void", json!([{ "account": bob.id, "at": [100.5, 1.0, 100.5] }])).await;
+    report(&base, "void", json!([{ "account": bob.id, "at": [201.0, 2.0, 201.0] }])).await;
     assert_eq!(bob.post("/api/feats/plot", json!({"world": "void"})).await.0, 200);
     d.grant("Bob", 100, "test").unwrap();
     let bob_before = bob.authority().await;
     // Ann places and takes it back
-    let (_, made) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "ann-1")).await;
+    let (_, made) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "ann-1")).await;
     let ann_key = made["key"].as_i64().unwrap();
     assert_eq!(refund(&base, "void", ann.id, ann_key).await.1, json!({"refunded": true}));
     // Bob places his own portal in his plot
-    let (st, bobs) = world_portal(&base, req("void", bob.id, [100.0, 1.0, 100.0], "yard", "bob-1")).await;
+    let (st, bobs) = world_portal(&base, req("void", bob.id, [200.0, 2.0, 200.0], "yard", "bob-1")).await;
     assert_eq!(st, 200, "{bobs}");
     assert_ne!(bobs["key"], made["key"]);
     assert_eq!(bob.authority().await, bob_before - game::COST_PORTAL);
     // Ann repeats her request: refused, nothing charged, and Bob's portal is not shown to her
-    let (st, again) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "ann-1")).await;
+    let (st, again) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "ann-1")).await;
     assert_eq!(st, 409, "{again}");
     assert!(again.get("key").is_none() && again.get("name").is_none(), "{again}");
     assert!(!again.to_string().contains(&bobs["key"].to_string()));
@@ -290,7 +290,7 @@ async fn portal_refunded_request_does_not_leak_the_next_portal() {
 async fn portal_older_than_a_minute_is_not_refunded() {
     let (d, base, ann, _bob) = plotted().await;
     let before = ann.authority().await;
-    let (_, made) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "old")).await;
+    let (_, made) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "old")).await;
     let key = made["key"].as_i64().unwrap();
     d.backdate_portal(key, 61).unwrap();
     assert_eq!(refund(&base, "void", ann.id, key).await.1, json!({"refunded": false}));
@@ -316,7 +316,7 @@ fn entry(rules: &Value, key: &Value) -> Value {
 
 /// Ann claims a plot in the Yard as well (the Yard is reported with Ann standing in it first).
 async fn yard_plot(base: &str, ann: &P) {
-    report(base, "yard", json!([{ "account": ann.id, "at": [40.5, 1.0, 40.5] }])).await;
+    report(base, "yard", json!([{ "account": ann.id, "at": [81.0, 2.0, 81.0] }])).await;
     let (st, v) = ann.post("/api/feats/plot", json!({"world": "yard"})).await;
     assert_eq!(st, 200, "{v}");
 }
@@ -325,30 +325,30 @@ async fn yard_plot(base: &str, ann: &P) {
 async fn pair_travel_arrives_at_the_other_end() {
     let (_d, base, ann, _bob) = plotted().await;
     yard_plot(&base, &ann).await;
-    let (st, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "pa")).await;
+    let (st, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "pa")).await;
     assert_eq!(st, 200, "{a}");
     // a portal in the Yard paired with A: A is turned to lead back to it
-    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "pb")).await;
+    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [88.0, 2.0, 88.0], &a["key"], "pb")).await;
     assert_eq!(st, 200, "{b}");
 
     // A (in the Void) now arrives at B's place in the Yard, and names B as its pair
     let v = rules(&base, "void").await;
     let pa = entry(&v, &a["key"]);
     assert_eq!(pa["pair"], b["key"]);
-    assert_eq!(pa["arrive"], json!([44.0, 1.0, 44.0]));
+    assert_eq!(pa["arrive"], json!([88.0, 2.0, 88.0]));
     assert_eq!(pa["url"], "/w/7781/ws");
     // B (in the Yard) arrives at A's place in the Void
     let y = rules(&base, "yard").await;
     let pb = entry(&y, &b["key"]);
     assert_eq!(pb["pair"], a["key"]);
-    assert_eq!(pb["arrive"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(pb["arrive"], json!([80.0, 2.0, 80.0]));
     assert_eq!(pb["url"], "/w/7780/ws");
 
     // the travel into the Yard goes to the Yard, by its address as the level gives it
     let r = Client::new()
         .post(format!("{base}/api/world/travel"))
         .bearer_auth(SECRET)
-        .json(&json!({ "world": "void", "account": ann.id, "to": "/w/7781/ws", "arrive": [44.0, 1.0, 44.0] }))
+        .json(&json!({ "world": "void", "account": ann.id, "to": "/w/7781/ws", "arrive": [88.0, 2.0, 88.0] }))
         .send()
         .await
         .unwrap();
@@ -361,21 +361,21 @@ async fn pair_travel_arrives_at_the_other_end() {
 #[tokio::test]
 async fn pair_refused_for_another_owner_and_missing_keys() {
     let (d, base, ann, bob) = plotted().await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
     // Bob has a plot and a portal of his own
-    report(&base, "void", json!([{ "account": bob.id, "at": [100.5, 1.0, 100.5] }])).await;
+    report(&base, "void", json!([{ "account": bob.id, "at": [201.0, 2.0, 201.0] }])).await;
     assert_eq!(bob.post("/api/feats/plot", json!({"world": "void"})).await.0, 200);
     d.grant("Bob", 100, "test").unwrap();
-    let (st, bobs) = world_portal(&base, req("void", bob.id, [100.0, 1.0, 100.0], "yard", "b")).await;
+    let (st, bobs) = world_portal(&base, req("void", bob.id, [200.0, 2.0, 200.0], "yard", "b")).await;
     assert_eq!(st, 200, "{bobs}");
     let bob_before = bob.authority().await;
 
     // pairing with Ann's portal: refused, nothing charged
-    let (st, v) = world_portal(&base, pair_req("void", bob.id, [101.0, 1.0, 101.0], &a["key"], "steal")).await;
+    let (st, v) = world_portal(&base, pair_req("void", bob.id, [202.0, 2.0, 202.0], &a["key"], "steal")).await;
     assert_eq!(st, 403, "{v}");
     assert_eq!(bob.authority().await, bob_before);
     // a key that does not exist (or was refunded): 404
-    let (st, _) = world_portal(&base, pair_req("void", bob.id, [101.0, 1.0, 101.0], &json!(999_999), "gone")).await;
+    let (st, _) = world_portal(&base, pair_req("void", bob.id, [202.0, 2.0, 202.0], &json!(999_999), "gone")).await;
     assert_eq!(st, 404);
     // Ann's portal is unchanged: still leads to the Yard's spawn
     let pa = entry(&rules(&base, "void").await, &a["key"]);
@@ -394,49 +394,49 @@ async fn pair_refused_for_another_owner_and_missing_keys() {
 async fn pair_gone_end_falls_back_to_spawn() {
     let (_d, base, ann, _bob) = plotted().await;
     yard_plot(&base, &ann).await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
-    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
+    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [88.0, 2.0, 88.0], &a["key"], "b")).await;
     assert_eq!(st, 200, "{b}");
-    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["arrive"], json!([44.0, 1.0, 44.0]));
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["arrive"], json!([88.0, 2.0, 88.0]));
 
     // the Yard end is taken back: A has nothing to arrive at but the Yard's spawn
     let (st, v) = refund(&base, "yard", ann.id, b["key"].as_i64().unwrap()).await;
     assert_eq!((st, v), (200, json!({"refunded": true})));
     let pa = entry(&rules(&base, "void").await, &a["key"]);
     assert!(pa.get("pair").is_none(), "{pa}");
-    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pa["arrive"], json!([1.0, 2.0, 1.0]));
     assert_eq!(pa["url"], "/w/7781/ws");
 }
 
 #[tokio::test]
 async fn pair_within_one_world_works() {
     let (_d, base, ann, _bob) = plotted().await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
     // a second portal in the same plot pairs with the first: both lead into the Void
-    let (st, c) = world_portal(&base, pair_req("void", ann.id, [41.0, 1.0, 41.0], &a["key"], "c")).await;
+    let (st, c) = world_portal(&base, pair_req("void", ann.id, [82.0, 2.0, 82.0], &a["key"], "c")).await;
     assert_eq!(st, 200, "{c}");
     let v = rules(&base, "void").await;
     let pc = entry(&v, &c["key"]);
     assert_eq!(pc["pair"], a["key"]);
-    assert_eq!(pc["arrive"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(pc["arrive"], json!([80.0, 2.0, 80.0]));
     assert_eq!(pc["url"], "/w/7780/ws");
     let pa = entry(&v, &a["key"]);
     assert_eq!(pa["pair"], c["key"]);
-    assert_eq!(pa["arrive"], json!([41.0, 1.0, 41.0]));
+    assert_eq!(pa["arrive"], json!([82.0, 2.0, 82.0]));
     assert_eq!(pa["url"], "/w/7780/ws");
 }
 
 #[tokio::test]
 async fn pair_link_repoints_and_unlinks() {
     let (_d, base, ann, _bob) = plotted().await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
-    let (_, c) = world_portal(&base, req("void", ann.id, [41.0, 1.0, 41.0], "yard", "c")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
+    let (_, c) = world_portal(&base, req("void", ann.id, [82.0, 2.0, 82.0], "yard", "c")).await;
     // A pairs with C: both ends name each other (C was free, so it is turned to lead back)
     let (st, v) = link(&base, json!({ "world": "void", "account": ann.id, "key": a["key"], "pair": c["key"] })).await;
     assert_eq!(st, 200, "{v}");
     let r = rules(&base, "void").await;
     assert_eq!(entry(&r, &a["key"])["pair"], c["key"]);
-    assert_eq!(entry(&r, &a["key"])["arrive"], json!([41.0, 1.0, 41.0]));
+    assert_eq!(entry(&r, &a["key"])["arrive"], json!([82.0, 2.0, 82.0]));
     assert_eq!(entry(&r, &c["key"])["pair"], a["key"]);
 
     // A unlinks: it leads to its destination world's spawn, which is the Void now that it was
@@ -446,7 +446,7 @@ async fn pair_link_repoints_and_unlinks() {
     let r = rules(&base, "void").await;
     let pa = entry(&r, &a["key"]);
     assert!(pa.get("pair").is_none(), "{pa}");
-    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pa["arrive"], json!([1.0, 2.0, 1.0]));
     assert_eq!(pa["url"], "/w/7780/ws");
     let pc = entry(&r, &c["key"]);
     assert!(pc.get("pair").is_none(), "{pc}");
@@ -464,11 +464,11 @@ async fn pair_link_repoints_and_unlinks() {
 async fn pair_a_paired_end_is_not_taken_over() {
     let (d, base, ann, _bob) = plotted().await;
     yard_plot(&base, &ann).await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
-    let (_, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
+    let (_, b) = world_portal(&base, pair_req("yard", ann.id, [88.0, 2.0, 88.0], &a["key"], "b")).await;
     // a third portal pairs with A, which already has B: A keeps B, the new one still arrives at A
     d.grant("Ann", 100, "test").unwrap();
-    let (_, c) = world_portal(&base, req("void", ann.id, [41.0, 1.0, 41.0], "yard", "c")).await;
+    let (_, c) = world_portal(&base, req("void", ann.id, [82.0, 2.0, 82.0], "yard", "c")).await;
     let (st, v) = link(&base, json!({ "world": "void", "account": ann.id, "key": c["key"], "pair": a["key"] })).await;
     assert_eq!(st, 200, "{v}");
     let r = rules(&base, "void").await;
@@ -482,24 +482,24 @@ async fn pair_a_paired_end_is_not_taken_over() {
 async fn pair_refund_clears_the_partner_and_a_new_pair_turns_it_again() {
     let (d, base, ann, _bob) = plotted().await;
     yard_plot(&base, &ann).await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
-    let (_, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
+    let (_, b) = world_portal(&base, pair_req("yard", ann.id, [88.0, 2.0, 88.0], &a["key"], "b")).await;
     assert_eq!(entry(&rules(&base, "yard").await, &b["key"])["pair"], a["key"]);
 
     // A is refunded: B's pointer goes with it, and B leads to the Void's spawn
     assert_eq!(refund(&base, "void", ann.id, a["key"].as_i64().unwrap()).await.1, json!({"refunded": true}));
     let pb = entry(&rules(&base, "yard").await, &b["key"]);
     assert!(pb.get("pair").is_none(), "{pb}");
-    assert_eq!(pb["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pb["arrive"], json!([1.0, 2.0, 1.0]));
     assert_eq!(pb["url"], "/w/7780/ws");
 
     // C in the Void pairs with B: B has no live pair, so it is turned to lead back to C
     d.grant("Ann", 100, "test").unwrap();
-    let (st, c) = world_portal(&base, pair_req("void", ann.id, [41.0, 1.0, 41.0], &b["key"], "c")).await;
+    let (st, c) = world_portal(&base, pair_req("void", ann.id, [82.0, 2.0, 82.0], &b["key"], "c")).await;
     assert_eq!(st, 200, "{c}");
     let pb = entry(&rules(&base, "yard").await, &b["key"]);
     assert_eq!(pb["pair"], c["key"]);
-    assert_eq!(pb["arrive"], json!([41.0, 1.0, 41.0]));
+    assert_eq!(pb["arrive"], json!([82.0, 2.0, 82.0]));
     assert_eq!(pb["url"], "/w/7780/ws");
 }
 
@@ -507,14 +507,14 @@ async fn pair_refund_clears_the_partner_and_a_new_pair_turns_it_again() {
 async fn pair_release_clears_the_partner() {
     let (_d, base, ann, _bob) = plotted().await;
     yard_plot(&base, &ann).await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
-    let (_, _b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
+    let (_, _b) = world_portal(&base, pair_req("yard", ann.id, [88.0, 2.0, 88.0], &a["key"], "b")).await;
     // the Yard plot is released, taking B with it: A leads to the Yard's spawn, with no pair
     let plot = rules(&base, "yard").await["plots"][0]["id"].clone();
     assert_eq!(ann.post("/api/plots/release", json!({ "plot": plot })).await.0, 200);
     let pa = entry(&rules(&base, "void").await, &a["key"]);
     assert!(pa.get("pair").is_none(), "{pa}");
-    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pa["arrive"], json!([1.0, 2.0, 1.0]));
     assert_eq!(pa["url"], "/w/7781/ws");
 }
 
@@ -523,14 +523,14 @@ async fn pair_plain_to_portal_is_turned_around_when_paired_to() {
     let (_d, base, ann, _bob) = plotted().await;
     yard_plot(&base, &ann).await;
     // A leads to the Yard's spawn and is paired with nothing
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
     assert!(entry(&rules(&base, "void").await, &a["key"]).get("pair").is_none());
     // B in the Yard pairs with A: A is turned to lead back to B
-    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [44.0, 1.0, 44.0], &a["key"], "b")).await;
+    let (st, b) = world_portal(&base, pair_req("yard", ann.id, [88.0, 2.0, 88.0], &a["key"], "b")).await;
     assert_eq!(st, 200, "{b}");
     let pa = entry(&rules(&base, "void").await, &a["key"]);
     assert_eq!(pa["pair"], b["key"]);
-    assert_eq!(pa["arrive"], json!([44.0, 1.0, 44.0]));
+    assert_eq!(pa["arrive"], json!([88.0, 2.0, 88.0]));
 }
 
 /// A world server's request to move, turn or reshape one of a player's portals.
@@ -562,18 +562,18 @@ async fn keys_held(p: &P) -> usize {
 #[tokio::test]
 async fn portal_update_moves_and_turns_within_its_plot() {
     let (_d, base, ann, _bob) = plotted().await;
-    let (st, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "u1")).await;
+    let (st, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "u1")).await;
     assert_eq!(st, 200, "{a}");
     let key = a["key"].clone();
     let before = ann.authority().await;
-    let (st, v) = update(&base, upd("void", ann.id, key.as_i64().unwrap(), [42.5, 1.0, 43.0], "z", [5.0, 7.0], 90.0)).await;
+    let (st, v) = update(&base, upd("void", ann.id, key.as_i64().unwrap(), [85.0, 2.0, 86.0], "z", [10.0, 14.0], 90.0)).await;
     assert_eq!(st, 200, "{v}");
-    assert_eq!(v, json!({ "key": key, "at": [42.5, 1.0, 43.0] }));
+    assert_eq!(v, json!({ "key": key, "at": [85.0, 2.0, 86.0] }));
     assert_eq!(ann.authority().await, before, "moving is free");
     let e = entry(&rules(&base, "void").await, &key);
-    assert_eq!(e["at"], json!([42.5, 1.0, 43.0]));
+    assert_eq!(e["at"], json!([85.0, 2.0, 86.0]));
     assert_eq!(e["axis"], "z");
-    assert_eq!(e["size"], json!([5.0, 7.0]));
+    assert_eq!(e["size"], json!([10.0, 14.0]));
     assert_eq!(e["yaw"], json!(90.0));
 }
 
@@ -581,75 +581,75 @@ async fn portal_update_moves_and_turns_within_its_plot() {
 async fn portal_update_into_another_plot_obeys_the_cap() {
     let (d, base, ann, _bob) = plotted().await;
     // a second plot of Ann's, far from the first
-    report(&base, "void", json!([{ "account": ann.id, "at": [100.5, 1.0, 100.5] }])).await;
+    report(&base, "void", json!([{ "account": ann.id, "at": [201.0, 2.0, 201.0] }])).await;
     assert_eq!(ann.post("/api/feats/plot", json!({"world": "void"})).await.0, 200);
     d.grant("Ann", 100, "test").unwrap();
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
-    let (_, b) = world_portal(&base, req("void", ann.id, [41.0, 1.0, 41.0], "yard", "b")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
+    let (_, b) = world_portal(&base, req("void", ann.id, [82.0, 2.0, 82.0], "yard", "b")).await;
     let a_key = a["key"].as_i64().unwrap();
     let b_key = b["key"].as_i64().unwrap();
     // the second plot takes two: A and B move there
-    assert_eq!(update(&base, upd("void", ann.id, a_key, [100.0, 1.0, 100.0], "x", [4.0, 6.0], 0.0)).await.0, 200);
-    assert_eq!(update(&base, upd("void", ann.id, b_key, [101.0, 1.0, 101.0], "x", [4.0, 6.0], 0.0)).await.0, 200);
+    assert_eq!(update(&base, upd("void", ann.id, a_key, [200.0, 2.0, 200.0], "x", [8.0, 12.0], 0.0)).await.0, 200);
+    assert_eq!(update(&base, upd("void", ann.id, b_key, [202.0, 2.0, 202.0], "x", [8.0, 12.0], 0.0)).await.0, 200);
     // the first plot is free again: a third portal goes there
-    let (st, c) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "c")).await;
+    let (st, c) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "c")).await;
     assert_eq!(st, 200, "{c}");
     let c_key = c["key"].as_i64().unwrap();
     // the second plot is full: C may not move there
-    let (st, v) = update(&base, upd("void", ann.id, c_key, [102.0, 1.0, 102.0], "x", [4.0, 6.0], 0.0)).await;
+    let (st, v) = update(&base, upd("void", ann.id, c_key, [204.0, 2.0, 204.0], "x", [8.0, 12.0], 0.0)).await;
     assert_eq!(st, 400, "{v}");
-    assert_eq!(entry(&rules(&base, "void").await, &c["key"])["at"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(entry(&rules(&base, "void").await, &c["key"])["at"], json!([80.0, 2.0, 80.0]));
     // moving within its own plot is not capped
-    assert_eq!(update(&base, upd("void", ann.id, c_key, [41.0, 1.0, 41.0], "x", [4.0, 6.0], 0.0)).await.0, 200);
+    assert_eq!(update(&base, upd("void", ann.id, c_key, [82.0, 2.0, 82.0], "x", [8.0, 12.0], 0.0)).await.0, 200);
 }
 
 #[tokio::test]
 async fn portal_update_outside_your_plots_is_403() {
     let (_d, base, ann, _bob) = plotted().await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
     let key = a["key"].as_i64().unwrap();
-    let (st, v) = update(&base, upd("void", ann.id, key, [10.0, 1.0, 10.0], "x", [4.0, 6.0], 0.0)).await;
+    let (st, v) = update(&base, upd("void", ann.id, key, [20.0, 2.0, 20.0], "x", [8.0, 12.0], 0.0)).await;
     assert_eq!(st, 403, "{v}");
-    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([80.0, 2.0, 80.0]));
 }
 
 #[tokio::test]
 async fn portal_update_someone_elses_key_is_403() {
     let (_d, base, ann, bob) = plotted().await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
     let key = a["key"].as_i64().unwrap();
     // Bob moves Ann's portal to a place in Ann's own plot: still refused
-    let (st, v) = update(&base, upd("void", bob.id, key, [41.0, 1.0, 41.0], "x", [4.0, 6.0], 0.0)).await;
+    let (st, v) = update(&base, upd("void", bob.id, key, [82.0, 2.0, 82.0], "x", [8.0, 12.0], 0.0)).await;
     assert_eq!(st, 403, "{v}");
-    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([80.0, 2.0, 80.0]));
     // a key that does not exist: 404
-    let (st, _) = update(&base, upd("void", ann.id, 999_999, [41.0, 1.0, 41.0], "x", [4.0, 6.0], 0.0)).await;
+    let (st, _) = update(&base, upd("void", ann.id, 999_999, [82.0, 2.0, 82.0], "x", [8.0, 12.0], 0.0)).await;
     assert_eq!(st, 404);
 }
 
 #[tokio::test]
 async fn portal_update_bad_values_are_400() {
     let (_d, base, ann, _bob) = plotted().await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
     let key = a["key"].as_i64().unwrap();
     let before = ann.authority().await;
     // too narrow, too wide, too short, too tall
-    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [3.0, 6.0], 0.0)).await.0, 400);
-    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [9.0, 6.0], 0.0)).await.0, 400);
-    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [4.0, 5.0], 0.0)).await.0, 400);
-    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "x", [4.0, 17.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [82.0, 2.0, 82.0], "x", [6.0, 12.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [82.0, 2.0, 82.0], "x", [18.0, 12.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [82.0, 2.0, 82.0], "x", [8.0, 10.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [82.0, 2.0, 82.0], "x", [8.0, 34.0], 0.0)).await.0, 400);
     // a wall along neither x nor z
-    assert_eq!(update(&base, upd("void", ann.id, key, [41.0, 1.0, 41.0], "y", [4.0, 6.0], 0.0)).await.0, 400);
+    assert_eq!(update(&base, upd("void", ann.id, key, [82.0, 2.0, 82.0], "y", [8.0, 12.0], 0.0)).await.0, 400);
     // nothing moved, nothing charged
-    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([80.0, 2.0, 80.0]));
     assert_eq!(ann.authority().await, before);
 }
 
 #[tokio::test]
 async fn portal_remove_clears_partner_and_key() {
     let (_d, base, ann, bob) = plotted().await;
-    let (_, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "a")).await;
-    let (st, b) = world_portal(&base, pair_req("void", ann.id, [41.0, 1.0, 41.0], &a["key"], "b")).await;
+    let (_, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "a")).await;
+    let (st, b) = world_portal(&base, pair_req("void", ann.id, [82.0, 2.0, 82.0], &a["key"], "b")).await;
     assert_eq!(st, 200, "{b}");
     assert_eq!(keys_held(&ann).await, 2);
     let before = ann.authority().await;
@@ -663,36 +663,36 @@ async fn portal_remove_clears_partner_and_key() {
     assert!(entry(&r, &b["key"]).is_null());
     let pa = entry(&r, &a["key"]);
     assert!(pa.get("pair").is_none(), "{pa}");
-    assert_eq!(pa["arrive"], json!([0.5, 1.0, 0.5]));
+    assert_eq!(pa["arrive"], json!([1.0, 2.0, 1.0]));
     assert_eq!(keys_held(&ann).await, 1);
     // a second remove, and one through another world, find nothing
     assert_eq!(remove(&base, "void", ann.id, &b["key"]).await.1, json!({ "removed": false }));
     assert_eq!(remove(&base, "yard", ann.id, &a["key"]).await.1, json!({ "removed": false }));
-    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([40.0, 1.0, 40.0]));
+    assert_eq!(entry(&rules(&base, "void").await, &a["key"])["at"], json!([80.0, 2.0, 80.0]));
 }
 
 #[tokio::test]
 async fn portal_size_and_yaw_default_for_old_callers() {
     let (_d, base, ann, _bob) = plotted().await;
     // a request without size or yaw (as older world servers send it): 4 by 6, facing 0
-    let (st, a) = world_portal(&base, req("void", ann.id, [40.0, 1.0, 40.0], "yard", "old")).await;
+    let (st, a) = world_portal(&base, req("void", ann.id, [80.0, 2.0, 80.0], "yard", "old")).await;
     assert_eq!(st, 200, "{a}");
     let e = entry(&rules(&base, "void").await, &a["key"]);
-    assert_eq!(e["size"], json!([4.0, 6.0]));
+    assert_eq!(e["size"], json!([8.0, 12.0]));
     assert_eq!(e["yaw"], json!(0.0));
     // one that gives them is shown as given
-    let mut body = req("void", ann.id, [41.0, 1.0, 41.0], "yard", "new");
-    body["size"] = json!([6.0, 8.0]);
+    let mut body = req("void", ann.id, [82.0, 2.0, 82.0], "yard", "new");
+    body["size"] = json!([12.0, 16.0]);
     body["yaw"] = json!(-45.0);
     let (st, b) = world_portal(&base, body).await;
     assert_eq!(st, 200, "{b}");
     let e = entry(&rules(&base, "void").await, &b["key"]);
-    assert_eq!(e["size"], json!([6.0, 8.0]));
+    assert_eq!(e["size"], json!([12.0, 16.0]));
     assert_eq!(e["yaw"], json!(-45.0));
     // a size outside the limits is refused before anything is charged
     let before = ann.authority().await;
-    let mut bad = req("void", ann.id, [40.5, 1.0, 40.5], "yard", "huge");
-    bad["size"] = json!([9.0, 6.0]);
+    let mut bad = req("void", ann.id, [81.0, 2.0, 81.0], "yard", "huge");
+    bad["size"] = json!([18.0, 12.0]);
     assert_eq!(world_portal(&base, bad).await.0, 400);
     assert_eq!(ann.authority().await, before);
 }

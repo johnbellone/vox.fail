@@ -103,7 +103,7 @@ export function FeatsPanel({ feats: f, reload }: { feats: Feats; reload: () => P
         cost={c.plot}
         have={f.authority}
         ready={!!plotWorld}
-        about="16 × 16 blocks around where you last stood, at least 24 blocks from where people arrive. Only you (and a group you choose) can build in it."
+        about="16 × 16 m (64 × 64 blocks) around where you last stood, at least 12 m from where people arrive. Up to six in each world. Only you (and a group you choose) can build in it."
         run={async () => {
           const r = await after(post<{ area: { x0: number; x1: number; z0: number; z1: number } }>("/api/feats/plot", { world: plotWorld }));
           return `Claimed: x ${r.area.x0} to ${r.area.x1 - 1}, z ${r.area.z0} to ${r.area.z1 - 1}. The deed is in your inventory.`;

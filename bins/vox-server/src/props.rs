@@ -486,12 +486,15 @@ mod tests {
     fn one_more_prop_among_4000_in_a_zone_is_checked_fast() {
         let mut lib = library();
         let mut placed: BTreeMap<EntityId, Component> = BTreeMap::new();
+        // a crate fills one half-metre cell (PROP_CELL_BLOCKS blocks square), so the crates stand
+        // every other cell, and the new one goes in a gap between four of them
+        let gap = vox_core::entity::PROP_CELL_BLOCKS;
         for i in 0..4000u32 {
-            let c = Component::Prop(at(CRATE, (i % 64) as i32 * 2, (i / 64) as i32 * 2));
+            let c = Component::Prop(at(CRATE, (i % 64) as i32 * 2 * gap, (i / 64) as i32 * 2 * gap));
             lib.index_change(EntityId(i), None, Some(&c));
             placed.insert(EntityId(i), c);
         }
-        let p = at(CRATE, 1, 1);
+        let p = at(CRATE, gap, gap);
         let start = std::time::Instant::now();
         let free_now = free_near(&lib, &placed, &p, None);
         let took = start.elapsed();

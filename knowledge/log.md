@@ -1,3 +1,19 @@
+## 2026-11-28
+* **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/asset-pipeline.md`. — Level builders write through rescale_level.py at quarter-metre blocks.
+* **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/vox-client-and-web.md`. — Device profiles: Start.detail, vox-client --detail, the page's deviceDetail; editor portal limits and prop units at quarter-metre blocks.
+* **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/weather-simulation.md`. — The luminous Void is a haze now (humidity 0.98, no fog bank), with a thinner fog volume and 450 m visibility.
+* **Update** [2026-11-28T03:24:20Z]: Updated concept `architecture/economy-and-social.md`. — Quarter-metre blocks: plots 64 x 64 blocks, six per world, 12 m from the spawn; authority per 200 blocks placed.
+* **Update** [2026-11-28T03:24:20Z]: Updated concept `architecture/vox-directory.md`. — Quarter-metre blocks: one-time conversion of places (rescale.rs), portal sizes in metres.
+* **Update** [2026-11-28T03:24:20Z]: Updated concept `architecture/vox-world.md`. — Quarter-metre blocks: detail profiles (desktop, browser, mobile), echoes limited to their arrival region, levels held as chunks, palette size check.
+* **Update** [2026-11-28T03:24:20Z]: Updated concept `architecture/vox-server.md`. — Quarter-metre blocks: one-time conversion of saved worlds, level bounds, seeding straight into chunks, voice radius 64 blocks.
+* **Update** [2026-11-28T03:24:20Z]: Updated concept `architecture/wire-protocol.md`. — Protocol 10: quarter-metre blocks; no message changed, the version keeps older clients out.
+* **Update** [2026-11-28T03:24:20Z]: Updated concept `architecture/vox-core.md`. — Quarter-metre blocks: BLOCK_M and in_blocks, prop half-metre cells as 2x2 blocks, level::apply into chunks, rescale module, protocol 10.
+* **Update** [2026-11-28T03:21:57Z]: Updated concept `architecture/worlds-catalogue.md`. — Quarter-metre blocks: level bounds and thick hollow boxes, builders write through rescale_level.py, the Void 25.6 km in a haze, echoes near their arrival point.
+* **Update** [2026-11-28T03:21:43Z]: Updated concept `decisions/zones-and-regions.md`. — At quarter-metre blocks a zone is 128 m and a region 4 km; an atlas tile (1,024 blocks) is 2 x 2 zones, not a region.
+* **Update** [2026-11-28T03:21:28Z]: Updated concept `architecture/world-scaling-design.md`. — Blocks are 0.25 m now: zones are 128 m and regions 4 km; streaming, memory and far terrain are refined by chunk-streaming-design.
+* **Creation** [2026-11-28T03:21:10Z]: Documented concept `architecture/chunk-streaming-design.md` (Chunks, streaming and draw distance (proposed)). — Design written 2026-11-27/28 after measuring quarter-metre worlds; octree far field and ray-march prototype added at the owner's request.
+* **Creation** [2026-11-28T03:20:55Z]: Documented concept `architecture/quarter-metre-blocks-decision.md` (Quarter-metre blocks in every world, a 25 km Void). — Owner asked for smaller blocks, a Void 100x wider, less fog and more room to build (2026-11-27); level loading and echo fixes added 2026-11-28.
+
 ## 2026-11-27
 * **Update** [2026-11-27T22:11:30Z]: Updated concept `architecture/identity-and-tokens.md`. — Names can now change (vox-r58)
 * **Creation** [2026-11-27T22:11:19Z]: Documented concept `decisions/account-name-changes.md` (Decision: Account Name Changes with a 30-Day Limit and Held Names). — Name changes (vox-r58, gh-24)

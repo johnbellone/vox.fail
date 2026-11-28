@@ -184,6 +184,20 @@ impl WorldState {
                 }
             }
         }
+        // a snapshot from before quarter-metre blocks holds half-metre ones: converted as the world
+        // itself was (crate::rescale)
+        if crate::rescale::older(&self.db, m.taken_at) {
+            let k = vox_core::rescale::FROM_HALF_METRE;
+            let old: Vec<_> = world.keys().into_iter().filter_map(|key| world.chunk(key).map(|c| (key, c.clone()))).collect();
+            world = World::new(self.cfg.bounds, self.cfg.palette.len() as u16);
+            for (key, c) in vox_core::rescale::chunks(old, k) {
+                world.put_chunk(key, c);
+            }
+            for (_, c) in ents.values_mut() {
+                *c = vox_core::rescale::component(c, k);
+            }
+            eprintln!("snapshot {} is from before quarter-metre blocks: converted", m.id);
+        }
         // then the edits after the snapshot, up to the moment: blocks, and entities
         let mut replayed = 0;
         if let Some(t) = until {

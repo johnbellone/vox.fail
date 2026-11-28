@@ -135,6 +135,10 @@ impl Directory {
         if has_renamed == 0 {
             db.execute_batch("ALTER TABLE accounts ADD COLUMN renamed INTEGER").map_err(|e| e.to_string())?;
         }
+        // places saved at half-metre blocks are doubled once (docs/design/block-scale.md)
+        if crate::rescale::migrate(&db)? {
+            eprintln!("vox-directory: places converted to {} m blocks", vox_core::BLOCK_M);
+        }
         let catalogue = Catalogue::load(&cfg.data);
         if catalogue.characters.is_empty() {
             return Err(format!("no characters in {}/characters.json (tools/assets/build_catalogue.py makes it)", cfg.data.display()));

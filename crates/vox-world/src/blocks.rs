@@ -106,7 +106,10 @@ impl Palette {
     pub fn load(path: &Path) -> Result<Palette, String> {
         let text = crate::files::read_string(path).ok_or_else(|| format!("{}: can't read it", path.display()))?;
         let f: BlocksFile = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(Palette { size: f.block_size, defs: f.blocks })
+        // every size measured in blocks is worked out for vox_core::BLOCK_M
+        let size = vox_core::block_size(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        debug_assert_eq!(size, f.block_size);
+        Ok(Palette { size, defs: f.blocks })
     }
     pub fn id(&self, name: &str) -> Option<u16> {
         self.defs.iter().position(|d| d.name == name).map(|i| i as u16 + 1)
@@ -316,6 +319,19 @@ pub fn load_level(text: &str, pal: &Palette) -> Result<HashMap<IVec3, u16>, Stri
     Ok(vox_core::level::load(text, &names)?.into_iter().map(|(c, b)| (IVec3::from(c), b)).collect())
 }
 
+/// A level's blocks inside `within` (or all of them), held as chunks rather than a map of
+/// every block: at quarter-metre blocks a whole level can be tens of millions of blocks
+/// (docs/design/chunk-streaming.md). Later boxes overwrite earlier ones; "air" removes.
+pub fn load_level_world(text: &str, pal: &Palette, within: Option<vox_core::Bounds>) -> Result<vox_core::World, String> {
+    let names: Vec<String> = pal.defs.iter().map(|d| d.name.clone()).collect();
+    let region = within.unwrap_or_else(vox_core::level::everywhere);
+    let mut world = vox_core::World::new(region, names.len() as u16);
+    vox_core::level::apply(text, &names, region, |c, b| {
+        world.set(c, b);
+    })?;
+    Ok(world)
+}
+
 /// Where a level's file is: your own levels folder first, then the built-in ones.
 pub fn level_path(name: &str) -> Option<PathBuf> {
     // a dungeon's level (what a portal into one shows) is in its own folder; nothing else may
@@ -484,6 +500,24 @@ pub fn mesh_level(cells: &HashMap<IVec3, u16>, pal: &Palette, rects: &HashMap<St
     let mut keys: Vec<(IVec3, u16)> = cells.iter().map(|(p, b)| (*p, *b)).collect();
     keys.sort_by_key(|(p, _)| (p.y, p.z, p.x));
     mesh_cells(keys, |p| cells.get(&p).copied().unwrap_or(0), pal, rects, false)
+}
+
+/// [`mesh_level`] for a level held as chunks ([`load_level_world`]). Faces come chunk by chunk
+/// (each in y, z, x order), not in one order over the whole level as `mesh_level`'s do: the
+/// same faces, listed differently. Every cell of a non-empty chunk is looked at, which costs
+/// more than a map of solid blocks for a thin level, but holds no map.
+pub fn mesh_world(world: &vox_core::World, pal: &Palette, rects: &HashMap<String, [f32; 4]>) -> Meshes {
+    let mut keys = world.keys();
+    keys.sort_by_key(|k| (k.0[1], k.0[2], k.0[0]));
+    let n = vox_core::CHUNK;
+    let cells = keys.into_iter().filter_map(|k| world.chunk(k).filter(|c| !c.is_empty()).map(|c| (k.origin(), c))).flat_map(move |(o, c)| {
+        (0..n).flat_map(move |y| (0..n).flat_map(move |z| (0..n).map(move |x| [o[0] + x, o[1] + y, o[2] + z])))
+            .filter_map(move |p| match c.get(p) {
+                0 => None,
+                id => Some((IVec3::from(p), id)),
+            })
+    });
+    mesh_cells(cells, |p| world.get(p.to_array()), pal, rects, false)
 }
 
 /// [`mesh_level`] for some of a bigger world's blocks (a chunk): `cells` are the blocks to
@@ -980,9 +1014,11 @@ mod tests {
             let r = rects[t];
             uv[0] >= r[0] - 1e-6 && uv[0] <= r[2] + 1e-6 && uv[1] >= r[1] - 1e-6 && uv[1] <= r[3] + 1e-6
         };
-        let side_tiles = |y: f32, t: &str| m.pos.iter().zip(&m.uv).zip(&m.nrm).filter(|((p, uv), n)| n[1] == 0.0 && (p[1] - y).abs() < 0.3 && in_tile(**uv, t)).count();
-        assert!(side_tiles(0.125, "dirt") > 0 && side_tiles(0.125, "grass_side") == 0, "lower block: dirt sides");
-        assert!(side_tiles(0.625, "grass_side") > 0, "upper block: grass sides");
+        // positions are in metres: look near the foot of the lower block and of the upper one
+        let b = vox_core::BLOCK_M;
+        let side_tiles = |y: f32, t: &str| m.pos.iter().zip(&m.uv).zip(&m.nrm).filter(|((p, uv), n)| n[1] == 0.0 && (p[1] - y).abs() < 0.6 * b && in_tile(**uv, t)).count();
+        assert!(side_tiles(0.25 * b, "dirt") > 0 && side_tiles(0.25 * b, "grass_side") == 0, "lower block: dirt sides");
+        assert!(side_tiles(1.25 * b, "grass_side") > 0, "upper block: grass sides");
         // corner shading: a block on a floor is darker where it meets the floor
         let mut floor: HashMap<IVec3, u16> = HashMap::new();
         for x in -1..=1 {
@@ -1019,6 +1055,26 @@ mod tests {
         assert_eq!(m.water.faces(), 5, "no face against the stone");
         let top = m.water.pos.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
         assert!(top < pal.size * 0.95 && top > pal.size * 0.8);
+    }
+
+    #[test]
+    fn a_level_held_as_chunks_meshes_as_the_map_does() {
+        let pal = palette();
+        let rects = HashMap::from([("stone".to_string(), [0.0, 0.0, 1.0, 1.0]), ("glass".to_string(), [0.0, 0.0, 1.0, 1.0])]);
+        let level = r#"{"boxes": [
+            {"block": "stone", "from": [-40, -1, -3], "to": [40, -1, 3]},
+            {"block": "stone", "from": [28, 0, -2], "to": [36, 6, 2], "hollow": true},
+            {"block": "glass", "from": [30, 2, -1], "to": [31, 3, -1]}
+        ]}"#;
+        let map = load_level(level, &pal).unwrap();
+        let world = load_level_world(level, &pal, None).unwrap();
+        assert_eq!(world.count(), map.len());
+        let (a, b) = (mesh_level(&map, &pal, &rects), mesh_world(&world, &pal, &rects));
+        assert_eq!((a.opaque.faces(), a.glass.faces()), (b.opaque.faces(), b.glass.faces()));
+        assert!(a.opaque.faces() > 0);
+        // only a region: the floor's middle, nothing of the hut at x = 28 and beyond
+        let part = load_level_world(level, &pal, Some(vox_core::Bounds { lo: [-8, -64, -8], hi: [8, 64, 8] })).unwrap();
+        assert_eq!(part.count(), 16 * 7);
     }
 
     #[test]

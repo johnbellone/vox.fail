@@ -24,11 +24,11 @@ use crate::input::{Action, Actions};
 #[cfg(not(target_arch = "wasm32"))]
 use vox_voice::Packet;
 
-/// How far a nearby voice carries, in blocks, when the world doesn't say: the server's default
-/// `--voice-radius`. A world sends its own with its settings (`voice_radius`).
-pub const NEARBY_RADIUS: f32 = 32.0;
-/// The farthest radius a world may give (anything larger is taken as this).
-pub const RADIUS_MAX: f32 = 512.0;
+/// How far a nearby voice carries, in blocks (16 m), when the world doesn't say: the server's
+/// default `--voice-radius`. A world sends its own with its settings (`voice_radius`).
+pub const NEARBY_RADIUS: f32 = vox_core::in_blocks(16.0);
+/// The farthest radius a world may give (anything larger is taken as this): 256 m.
+pub const RADIUS_MAX: f32 = vox_core::in_blocks(256.0);
 
 /// The nearby radius from a world's settings: a finite number above zero, at most
 /// [`RADIUS_MAX`]; anything else (missing, zero, negative, not a number) means the default.

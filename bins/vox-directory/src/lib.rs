@@ -59,6 +59,7 @@ use vox_core::auth::{self, Character, Claims, SigningKey};
 pub mod game;
 mod editors;
 pub mod people;
+mod rescale;
 mod structures;
 pub mod social;
 pub use social::{Discord, Sites, Social, name_from};

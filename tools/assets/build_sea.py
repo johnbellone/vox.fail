@@ -13,7 +13,8 @@ roll, `"colour"` how dark the water is, `"opacity"` how much of the seabed shows
 
     python3 tools/assets/build_sea.py        # writes data/levels/sea.json
 
-Coordinates are blocks (half a metre). Everything is built as if the sea's surface were the
+Coordinates are half-metre units (the file is written at quarter-metre blocks, twice these
+numbers, by rescale_level.py). Everything is built as if the sea's surface were the
 top of y = -3 and the Landing's the top of y = 1 (two metres up: the crests come close), then lowered by `DROP` so that you walk at
 y = 0 like every other level (the avatar app stands its character at the origin).
 """
@@ -21,6 +22,8 @@ import json
 import math
 import random
 from pathlib import Path
+
+from rescale_level import rescale
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "levels" / "sea.json"
@@ -243,6 +246,8 @@ def main():
         "boxes": boxes,
         "blocks": cells,
     }
+    # drawn in half-metre units; written at quarter-metre blocks (docs/design/block-scale.md)
+    level = rescale(level, 2)
     OUT.write_text(json.dumps(level, separators=(",", ":")))
     print(f"{OUT}: {len(boxes)} boxes, {len(cells)} blocks, {OUT.stat().st_size // 1024} KB")
 

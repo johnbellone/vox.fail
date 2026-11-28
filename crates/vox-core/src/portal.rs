@@ -7,6 +7,23 @@
 
 use serde_json::Value;
 
+use crate::in_blocks;
+
+/// A doorway's width and height are each at least this and at most [`MAX_SIDE`], in blocks
+/// (half a metre to 32 m).
+pub const MIN_SIDE: f32 = in_blocks(0.5);
+pub const MAX_SIDE: f32 = in_blocks(32.0);
+/// The size a doorway that doesn't say gets: 2 m wide, 3 m high, in blocks.
+pub const DEFAULT_SIZE: [f32; 2] = [in_blocks(2.0), in_blocks(3.0)];
+/// Feet this far below the sill still count as in the opening, and the opening stops this far
+/// below its top (the head has to fit): half a metre, in blocks.
+pub const SILL_SLACK: f32 = in_blocks(0.5);
+
+/// One side of a doorway, clamped to [`MIN_SIDE`]..=[`MAX_SIDE`].
+pub fn clamp_side(c: f32) -> f32 {
+    c.clamp(MIN_SIDE, MAX_SIDE)
+}
+
 /// One doorway.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Door {
@@ -45,7 +62,7 @@ pub fn parse(settings: &Value) -> Vec<Door> {
                 name: p.get("name").and_then(|v| v.as_str()).map_or_else(|| format!("portal {}", i + 1), String::from),
                 at: v3(p, "at")?,
                 along_x: p.get("axis").and_then(|v| v.as_str()) == Some("x"),
-                size: [dim(0, 4.0).clamp(1.0, 64.0), dim(1, 6.0).clamp(1.0, 64.0)],
+                size: [clamp_side(dim(0, DEFAULT_SIZE[0] as f64)), clamp_side(dim(1, DEFAULT_SIZE[1] as f64))],
                 level: p.get("level")?.as_str()?.to_string(),
                 url: p.get("url").and_then(|v| v.as_str()).map(String::from),
                 arrive: v3(p, "arrive")?,
@@ -66,7 +83,7 @@ impl Door {
             name: p.name.clone(),
             at: p.at,
             along_x: p.axis == Axis::X,
-            size: p.size.map(|c| c.clamp(1.0, 64.0)),
+            size: p.size.map(clamp_side),
             level: p.level.clone(),
             url,
             arrive,
@@ -101,7 +118,7 @@ impl Door {
     /// Is `p` (feet) in the doorway's opening, sideways and up?
     pub fn within(&self, p: [f32; 3]) -> bool {
         let d = sub(p, self.at);
-        dot(d, self.across()).abs() <= self.size[0] * 0.5 && d[1] >= -1.0 && d[1] <= self.size[1] - 1.0
+        dot(d, self.across()).abs() <= self.size[0] * 0.5 && d[1] >= -SILL_SLACK && d[1] <= self.size[1] - SILL_SLACK
     }
 
     /// Which side of the doorway `p` is on: the signed distance from it.
@@ -174,18 +191,19 @@ mod tests {
 
     #[test]
     fn from_portal_matches_parse_when_turned_and_clamped() {
-        // a doorway along x, turned a quarter, with a size that parse clamps to 64 by 1
+        // a doorway along x, turned a quarter, with a size that parse clamps to the largest width
+        // and the smallest height
         let json = serde_json::json!({ "portals": [
-            {"name": "far", "at": [5, 0, 2], "axis": "x", "size": [100, 0.5], "level": "far", "url": "/w/7781/ws", "arrive": [-3, 0, 2], "yaw": 90},
+            {"name": "far", "at": [5, 0, 2], "axis": "x", "size": [300, 0.5], "level": "far", "url": "/w/7781/ws", "arrive": [-3, 0, 2], "yaw": 90},
         ]});
         let parsed = parse(&json);
-        assert_eq!(parsed[0].size, [64.0, 1.0]);
+        assert_eq!(parsed[0].size, [MAX_SIDE, MIN_SIDE]);
         // the same values as a Portal, tidied the way the editor's input is
         let mut c = crate::entity::Component::Portal(crate::entity::Portal {
             name: "far".into(),
             at: [5.0, 0.0, 2.0],
             axis: crate::entity::Axis::X,
-            size: [100.0, 0.5],
+            size: [300.0, 0.5],
             yaw: 90.0,
             level: "far".into(),
             to: crate::entity::Dest::Url { url: "/w/7781/ws".into(), arrive: [-3.0, 0.0, 2.0] },

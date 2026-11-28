@@ -1,4 +1,4 @@
-//! A zone (16 × 16 chunk columns, 256 m across) as one blob. Zones are the unit of storage
+//! A zone (16 × 16 chunk columns, 512 blocks or 128 m across) as one blob. Zones are the unit of storage
 //! and hashing; [`crate::region`]s group them, 32 × 32 to a region.
 //!
 //! ```text

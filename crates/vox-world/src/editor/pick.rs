@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use vox_core::entity::{Axis, Component, EntityId, prop_cell};
+use vox_core::entity::{Axis, Component, EntityId, PROP_CELL_BLOCKS, PROP_UNITS_PER_CELL, prop_cell};
 use vox_core::ray;
 use vox_core::world::Cell;
 
@@ -35,12 +35,13 @@ pub fn solid(w: &WorldClient) -> impl Fn(Cell) -> bool + '_ {
     move |c: Cell| w.floor.is_some_and(|f| c[1] < f) || w.view.solid(c)
 }
 
-/// How far a pick reaches, in blocks: the same reach as the cursor's ray in `client::controls`.
-pub const PICK_REACH: f32 = 200.0;
+/// How far a pick reaches, in blocks (100 m): the same reach as the cursor's ray in
+/// `client::controls`.
+pub const PICK_REACH: f32 = vox_core::in_blocks(100.0);
 
 /// A doorway's frame is this thick, in blocks, through its plane, so a ray finds it from either
 /// side and a ray grazing the plane still counts.
-pub const FRAME_THICKNESS: f32 = 0.5;
+pub const FRAME_THICKNESS: f32 = vox_core::in_blocks(0.25);
 
 /// An axis-aligned box, in blocks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -75,11 +76,15 @@ pub fn frame_box(at: [f32; 3], axis: Axis, size: [f32; 2]) -> Aabb {
     Aabb { min, max }
 }
 
-/// The box of a prop: the block it stands in. The catalogue's footprint is not on the client yet,
-/// so a prop is picked by its block.
+/// The box of a prop: the half-metre cell its pivot is in (the cell its footprint starts from),
+/// half a metre up from the pivot's block. The catalogue's footprint is not on the client yet,
+/// so a prop is picked by that one cell, the same size in metres at any block size.
 pub fn prop_box(at: [i32; 3]) -> Aabb {
-    let c = prop_cell(at).map(|v| v as f32);
-    Aabb { min: c, max: [c[0] + 1.0, c[1] + 1.0, c[2] + 1.0] }
+    let n = PROP_CELL_BLOCKS;
+    let cell = |v: i32| (v.div_euclid(PROP_UNITS_PER_CELL) * n) as f32;
+    let y = prop_cell(at)[1] as f32;
+    let min = [cell(at[0]), y, cell(at[2])];
+    Aabb { min, max: [min[0] + n as f32, y + n as f32, min[2] + n as f32] }
 }
 
 /// The distance along a ray at which it first meets `b`, or None when it misses, or meets it
@@ -219,9 +224,10 @@ mod tests {
     #[test]
     fn editor_pick_portal_frame_front_edge_and_miss() {
         let b = frame_box([0.0, 0.0, 10.0], Axis::Z, [4.0, 6.0]);
-        // front: straight at the middle of the frame, it meets the near face at z = 9.75
+        // front: straight at the middle of the frame, it meets the near face half a frame
+        // thickness before the plane z = 10
         let t = ray_box([0.0, 3.0, 0.0], FWD, &b, 100.0).expect("the front is met");
-        assert!((t - 9.75).abs() < 1e-5, "{t}");
+        assert!((t - (10.0 - FRAME_THICKNESS / 2.0)).abs() < 1e-5, "{t}");
         // edge: along the frame's side at x = 2 (its right edge) and at its top at y = 6
         assert!(ray_box([2.0, 3.0, 0.0], FWD, &b, 100.0).is_some(), "the edge counts");
         assert!(ray_box([0.0, 6.0, 0.0], FWD, &b, 100.0).is_some(), "the top edge counts");
@@ -237,7 +243,7 @@ mod tests {
     fn editor_pick_portal_frame_of_an_x_doorway() {
         let b = frame_box([5.0, 0.0, 0.0], Axis::X, [4.0, 6.0]);
         let t = ray_box([0.0, 3.0, 0.0], [1.0, 0.0, 0.0], &b, 100.0).expect("the front is met");
-        assert!((t - 4.75).abs() < 1e-5, "{t}");
+        assert!((t - (5.0 - FRAME_THICKNESS / 2.0)).abs() < 1e-5, "{t}");
         // the frame is 4 wide along z, so z = 2.01 is past it
         assert!(ray_box([0.0, 3.0, 2.01], [1.0, 0.0, 0.0], &b, 100.0).is_none());
     }
@@ -253,7 +259,8 @@ mod tests {
         match pick([0.5, 3.5, 0.5], FWD, 100.0, wall, &[door], &[]) {
             Some(Hit::Entity { id, dist }) => {
                 assert_eq!(id, EntityId(2));
-                assert!((dist - 2.25).abs() < 1e-5, "{dist}");
+                // from z = 0.5 to the near face of a frame at z = 3
+                assert!((dist - (2.5 - FRAME_THICKNESS / 2.0)).abs() < 1e-5, "{dist}");
             }
             other => panic!("expected the doorway, got {other:?}"),
         }
@@ -265,8 +272,9 @@ mod tests {
 
     #[test]
     fn editor_pick_prop_box_is_hit_by_its_block() {
-        // a prop at block (-3, 2, 4): its position is in tenths of a block
-        let prop = (EntityId(7), prop_box([-30, 25, 40]));
+        // a prop at block (-3, 2, 4): its position is in 5 cm units
+        let u = vox_core::entity::PROP_UNITS_PER_BLOCK;
+        let prop = (EntityId(7), prop_box([-3 * u, 2 * u, 4 * u]));
         match pick([-2.5, 2.5, 0.5], FWD, 100.0, no_blocks, &[], &[prop]) {
             Some(Hit::Entity { id, dist }) => {
                 assert_eq!(id, EntityId(7));
@@ -281,8 +289,9 @@ mod tests {
     #[test]
     fn editor_pick_equal_distances_pick_the_smaller_id() {
         // two props at the same distance: the smaller id wins whichever comes first
-        let a = (EntityId(3), prop_box([-30, 25, 40]));
-        let b = (EntityId(9), prop_box([-30, 25, 40]));
+        let u = vox_core::entity::PROP_UNITS_PER_BLOCK;
+        let a = (EntityId(3), prop_box([-3 * u, 2 * u, 4 * u]));
+        let b = (EntityId(9), prop_box([-3 * u, 2 * u, 4 * u]));
         for props in [[a, b], [b, a]] {
             match pick([-2.5, 2.5, 0.5], FWD, 100.0, no_blocks, &[], &props) {
                 Some(Hit::Entity { id, .. }) => assert_eq!(id, EntityId(3)),

@@ -18,16 +18,15 @@
 //! different function is a new version, and the golden values in the tests hold this one.
 
 /// The function this build draws. A world asking for another version gets no relief.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 /// Places are in this many parts of a block.
 pub const SUB: i32 = 16;
-/// The swales' lattice, in blocks (a power of two dividing an atlas tile).
-pub const SWALE: i32 = 4;
-/// The roughness's lattice, in blocks.
-pub const ROUGH: i32 = 1;
-/// The deepest dip, in blocks (6 cm at half-metre blocks), before the block's and the world's
-/// own amounts scale it.
-pub const MAX_DIP: f32 = 0.12;
+/// The swales' lattice, in blocks (2 m; a power of two dividing an atlas tile).
+pub const SWALE: i32 = 8;
+/// The roughness's lattice, in blocks (half a metre).
+pub const ROUGH: i32 = 2;
+/// The deepest dip, in blocks (6 cm), before the block's and the world's own amounts scale it.
+pub const MAX_DIP: f32 = crate::in_blocks(0.06);
 /// The share of the noise's range left flat: dips start above it.
 const FLAT: i64 = 29_491; // 0.45 of 65,535
 
@@ -57,7 +56,7 @@ impl Relief {
         if !amount.is_finite() || amount <= 0.0 {
             return None;
         }
-        // whole swales only: the shader moves its lattice by whole steps (atlas tiles, 512
+        // whole swales only: the shader moves its lattice by whole steps (atlas tiles, 1024
         // blocks, always are)
         let at = |i: usize| {
             let v = r.get("origin").and_then(|o| o.get(i)).and_then(|v| v.as_i64()).and_then(|v| i32::try_from(v).ok()).unwrap_or(0);
@@ -124,8 +123,8 @@ pub fn depth(seed: u32, x: i32, z: i32) -> u8 {
 mod tests {
     use super::*;
 
-    /// These pin version 1. If one changes, every world with relief looks different: make a
-    /// new version instead.
+    /// These pin version 2 (version 1 was the same ground at half-metre blocks). If one
+    /// changes, every world with relief looks different: make a new version instead.
     #[test]
     fn golden_values() {
         assert_eq!(mix32(0), 0);
@@ -135,9 +134,9 @@ mod tests {
             .iter()
             .map(|&(x, z)| depth(0x5eed, x, z))
             .collect();
-        assert_eq!(got, GOLDEN.to_vec(), "relief version 1 changed");
+        assert_eq!(got, GOLDEN.to_vec(), "relief version 2 changed");
     }
-    const GOLDEN: [u8; 12] = [0, 0, 20, 58, 0, 0, 0, 18, 44, 20, 0, 0];
+    const GOLDEN: [u8; 12] = [0, 0, 0, 8, 0, 0, 0, 0, 12, 14, 0, 0];
 
     #[test]
     fn there_are_dips_and_flats_in_fair_shares() {
@@ -201,12 +200,12 @@ mod tests {
         let r = Relief::from_settings(&s, "x").unwrap();
         assert_eq!((r.amount, r.origin), (1.0, [1024, -512]));
         assert_eq!(Relief::from_settings(&serde_json::json!({}), "x"), None, "off unless asked for");
-        assert_eq!(Relief::from_settings(&serde_json::json!({ "relief": { "version": 2 } }), "x"), None);
+        assert_eq!(Relief::from_settings(&serde_json::json!({ "relief": { "version": 1 } }), "x"), None);
         assert_eq!(Relief::from_settings(&serde_json::json!({ "relief": { "amount": 0 } }), "x"), None);
         assert_eq!(Relief::from_settings(&serde_json::json!({ "relief": { "amount": "lots" } }), "x").map(|r| r.amount), Some(1.0));
         // an origin between swales is moved down to one, both ways round
         let o = |v: serde_json::Value| Relief::from_settings(&serde_json::json!({ "relief": { "origin": v } }), "x").unwrap().origin;
-        assert_eq!(o(serde_json::json!([2, -3])), [0, -4]);
+        assert_eq!(o(serde_json::json!([2, -3])), [0, -8]);
         assert_eq!(o(serde_json::json!([-512, 4099])), [-512, 4096]);
     }
 }

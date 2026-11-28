@@ -16,11 +16,14 @@ and stars; the station is all there is in the world. Nothing is under it but a l
 
     python3 tools/assets/build_orbit.py        # writes data/levels/orbit.json
 
-Coordinates are blocks (half a metre); you walk at y = 0 (the decks are at y = -1).
+Coordinates are half-metre units (the file is written at quarter-metre blocks, twice these
+numbers, by rescale_level.py); you walk at y = 0 (the decks are at y = -1).
 """
 import json
 import math
 from pathlib import Path
+
+from rescale_level import rescale
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "data" / "levels" / "orbit.json"
@@ -240,6 +243,8 @@ def main():
         "boxes": boxes,
         "blocks": [c for c in cells if not any(all(a[i] <= c[i] <= b[i] for i in range(3)) for a, b in carved)],
     }
+    # drawn in half-metre units; written at quarter-metre blocks (docs/design/block-scale.md)
+    level = rescale(level, 2)
     OUT.write_text(json.dumps(level, separators=(",", ":")))
     print(f"{OUT}: {len(boxes)} boxes, {len(cells)} blocks, {OUT.stat().st_size // 1024} KB")
 

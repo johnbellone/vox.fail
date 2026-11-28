@@ -42,7 +42,7 @@ Two products share one Cargo workspace:
 | --- | --- | --- |
 | `crates/vox-core/` | `vox-core` | Engine-free rules shared by everyone: blocks and chunks (`world`), voxel raycast (`ray`), walking physics (`body`), level files (`level`), the wire protocol (`wire`), sign-in tokens (`auth`), client-side prediction (`predict`), weather simulation (`weather`), who may use, copy and edit a structure (`entitle`), doorways (`portal`), an atlas's generated ground (`terrain`: integer noise over map-wide coordinates, so tiles agree at their edges). **No Bevy here.** |
 | `crates/vox-world/` | `vox-world` | A world on screen, shared by the app and the client: block meshing and materials (`blocks`), server link, chunks, controls, camera (`client`), input actions, bindings, controller brands and button hints (`input/`), the pixel HUD and quick wheel (`hud`), menus with controller navigation (`menu`), sky and fog (`outdoors`), portals (`portals`), avatar pose streaming (`pose`, `proto`), file access that also works in the browser (`files`). |
-| `crates/vox-format/` | `vox-format` | The world format: zones (16 × 16 chunk columns, 256 m) as checked, zstd-compressed blobs named by their BLAKE3 hash (`zone`), regions (32 × 32 zones, 8 km, one atlas tile) as hashed lists of their zones' hashes (`region`), a blob store and snapshots (manifests of region hashes, shared blobs, kept a week; `store`), in a folder or an Oxen repository with a commit per snapshot and history older than the week squashed (`oxen`, runs the `oxen` command line). Decodes in wasm too (`ruzstd`); encoding is native. |
+| `crates/vox-format/` | `vox-format` | The world format: zones (16 × 16 chunk columns, 128 m) as checked, zstd-compressed blobs named by their BLAKE3 hash (`zone`), regions (32 × 32 zones, 4 km) as hashed lists of their zones' hashes (`region`), a blob store and snapshots (manifests of region hashes, shared blobs, kept a week; `store`), in a folder or an Oxen repository with a commit per snapshot and history older than the week squashed (`oxen`, runs the `oxen` command line). Decodes in wasm too (`ruzstd`); encoding is native. |
 | `crates/vox-link/` | `vox-link` | A WebSocket kept open on its own thread, reconnecting with backoff; a `Dial` says where and how (world servers, the relay). Desktop only. |
 | `crates/avatar-voice/` | `avatar-voice` | Block Avatar's voice analysis, pure Rust: lip sync (`lipsync`), pitch and formants (`voice`), laugh and sing detection (`detect`), WAV files (`wav`, one hardened reader). Its tests run on real recordings in `testdata/real`. |
 | `crates/vox-art/` | `vox-art` | Voxels in the project's style with no engine: scales, a sparse grid, the palette, a seeded RNG (`rng`), prop definitions and their checks (`prop`, `check`), the MagicaVoxel reader and palette import (`vox`, `import`), recipes (typed building operations, `recipe`), a GPU-free contact-sheet render (`render`), and world-scale builds as named block cells (`export`). Deterministic and wasm-safe. |
@@ -132,7 +132,7 @@ ignores `*.db`).
   hasn't one open (at most three copies an hour, fresh copies of a gone one included), and gives
   tickets for it only to the party. A dungeon's level may name an objective (a place to
   reach); reaching it ends a raid on `dungeon:<name>` (`POST /api/world/objective`).
-- **Atlases:** a big map is a grid of tiles, each an ordinary world 512 blocks across
+- **Atlases:** a big map is a grid of tiles, each an ordinary world 1,024 blocks (256 m) across
   (`vox-core::terrain`). Walking within a block of a tile's edge that leads on, the client sends
   `Through { portal: "edge:east" }`; the world sends you to the same place on the map just inside
   the next tile, by ticket like any portal. The directory needs the same `--atlas` to know the
@@ -148,8 +148,9 @@ ignores `*.db`).
 ## Conventions
 
 - Rust 2024 edition, Bevy 0.20 (0.20.1). Shaders are WESL (`assets/shaders/*.wesl`: `import …;`,
-  `@if(…)`, `constants::MATERIAL_BIND_GROUP`), as Bevy 0.20 requires. Positions in `vox-core` are in **blocks**; the app scales by
-  the palette's block size (0.5 m) for metres.
+  `@if(…)`, `constants::MATERIAL_BIND_GROUP`), as Bevy 0.20 requires. Positions in `vox-core` are in **blocks**; a block is
+  `vox_core::BLOCK_M` (0.25 m), and sizes that are really metres are written as
+  `in_blocks(metres)` (docs/design/block-scale.md).
 - The client crate also compiles to **wasm32**. Do not use threads, blocking I/O, `std::time`
   clocks, or unchecked arithmetic on untrusted sizes in code shared with `vox-world` or
   `vox-core`: release builds on wasm32 wrap on overflow (`usize` is 32 bits).
@@ -297,6 +298,13 @@ Proposals live in `docs/design/`. Read the relevant one before large changes:
 - [controls-and-hud.md](docs/design/controls-and-hud.md): block-game controls on an action
   layer, gamepad out of the box with brand-matched button hints, HUD (hotbar, health), menus
   with controller navigation, server-side inventory and health.
+- [block-scale.md](docs/design/block-scale.md): quarter-metre blocks in every world, sizes
+  written in metres (`vox_core::BLOCK_M`, `in_blocks`), the 25 km Void, and the one-time
+  conversion of saved worlds and the directory.
+- [chunk-streaming.md](docs/design/chunk-streaming.md): paletted chunks, levels loaded straight
+  into chunks, streaming by view radius, draw distance (64 m browser, 128 m desktop), a sparse
+  voxel octree for far terrain (meshed rings, then a ray-marching prototype); how Minecraft and
+  others do it.
 - [cloudflare-hosting.md](docs/design/cloudflare-hosting.md): vox.fail on Cloudflare Containers: one
   container (directory and vox-host) behind the edge Worker as a Durable Object, sleeping when
   idle; SQLite kept, streamed to R2 by Litestream; the Worker serves the site; the server path retired.

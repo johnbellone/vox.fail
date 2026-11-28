@@ -37,7 +37,7 @@ async fn main() {
         .unwrap_or_else(|e| panic!("can't read {}: {e}", blocks_path.display()));
     let palette = vox_core::palette_names(&blocks).expect("block palette");
     let mut cfg = vox_server::Config::new(arg("--db").unwrap_or_else(|| "world.db".into()), palette);
-    cfg.block_size = vox_core::block_size(&blocks);
+    cfg.block_size = vox_core::block_size(&blocks).expect("block palette");
     cfg.name = arg("--name").unwrap_or_else(|| "void".into());
     // a new world starts as the void, the first world everyone enters
     let seed = arg("--seed").map(PathBuf::from).unwrap_or_else(|| data.join("levels/void.json"));
