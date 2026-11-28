@@ -1,7 +1,7 @@
 # ADR 0004: Seamless transitions between worlds: falling from orbit into the sea
 
 - **Status:** proposed; amended 2026-11-28 (preparing by time, waking the destination, the live
-  echo); traversing servers in general is [ADR 0005](0005-traversing-servers.md)
+  echo, doorways that show their destination's state); traversing servers in general is [ADR 0005](0005-traversing-servers.md)
 - **Date:** 2026-11-28
 - **Decider:** the owner
 - **Builds on:** [world-network.md](../design/world-network.md) (tickets, atlas edges);
@@ -114,6 +114,38 @@ for a minute.
     simulation summaries (ADR 0001) colouring them. Before that, the planet stays the sky
     shader's, and the prepared sea world's chunks appear as the fall nears them.
 
+### Doorways show whether the way is open
+
+11. **A doorway shows its destination's state** before anyone reaches it. Its look comes from
+    one of five states, each different in **colour and in motion**, so nobody needs to tell the
+    colours apart. Coming close also shows a line of text naming the state.
+
+    | State | When | How it looks | Walking through |
+    | --- | --- | --- | --- |
+    | **Open** | The destination is running and will take you | Today's look; a live picture of the far side once prepared (decision 2) | You cross |
+    | **Waking** | The destination is stopped and starting (`--idle-stop`, woken by Prepare, decision 1), or its host is starting | The picture is gone; slow rings ripple out from the centre across the whole surface, quickening as it comes up | You're held at the sill until it's open (decision 4), then you cross |
+    | **Unlinked** | Nothing answers: no such world, its host down or refusing, the directory unreachable, a ticket refused | Drained of colour: a cold grey with a faint violet edge, **still** (no shimmer, no ripple), a fine static in place of the picture | You bump gently back, with the text "The way to *name* is closed" |
+    | **Restricted** | The world is there but not for you: a dungeon without your raid party, a full world, a world that needs sign-in | Amber, with a slow pulse and the picture faint behind it | You bump back, with the reason in general terms ("for a raid party") |
+    | **Unknown** | Not checked yet (just arrived, a new doorway) | Today's faint look | As today |
+
+12. **The world server decides a doorway's state, from what it already knows.**
+    - The directory knows which worlds exist, when each last reported, and who is in which
+      raid party.
+    - `vox-host` knows which of its worlds are running and which are starting.
+    - A Prepare's answer, or a failed one, says the rest.
+
+    The server checks doorways that players are near when they approach, and every 30 s while
+    anyone is near. It sends `ToClient::DoorState { portal, state }` (reliable, a few bytes)
+    when a state changes, and the current states with the welcome. It rides the same protocol
+    bump as decision 1.
+
+    A state describes only that doorway's own destination, so it can't be used to probe for
+    worlds. A restricted reason is told in general terms.
+13. **Drawing it** extends the doorway's material: `PortalMaterial` gains a state and the time
+    the state began, beside today's `params` (presence, echo ready, aspect, seed).
+    `assets/shaders/portal.wesl` draws the five looks and blends between them over half a
+    second, so a waking doorway opening up is itself a small event.
+
 ## Options considered
 
 | | Option | Verdict |
@@ -160,7 +192,7 @@ ADR's crossing is its first step.
 2. `vox-81l.2` Tickets and travel carry velocity, facing and a frame; `Prepare` (protocol bump).
 3. `vox-81l.3` Client: make-before-break crossings, doorways and atlas edges first (after
    streaming, vox-cti.8). Prepare by time, wake the destination, and the live echo through a
-   watcher (`vox-81l.7`).
+   watcher (`vox-81l.7`). Doorway states (`vox-81l.8`).
 4. `vox-81l.4` The planet frame, the sea's tall sky, orbit's compressed descent, and `edge:down`.
 5. `vox-81l.5` The sky at any altitude, and the re-entry glow.
 6. `vox-81l.6` Review, and a recorded playtest of the fall from the station.

@@ -1,4 +1,5 @@
 ## 2026-11-28
+* **Update** [2026-11-28T04:38:59Z]: Updated concept `decisions/seamless-transitions.md`. — Amended 2026-11-28 at the owner's suggestion: doorways show their destination's state (open, waking with a ripple, unlinked in another colour, restricted, unknown).
 * **Update** [2026-11-28T04:37:31Z]: Updated concept `decisions/seamless-transitions.md`. — Amended 2026-11-28: prepare by time, wake the destination, a live echo through a watcher, one socket on the same host; ADR 0005 generalises it.
 * **Creation** [2026-11-28T04:37:31Z]: Documented concept `decisions/traversing-servers.md` (Decision (proposed): Traversing Servers Without Seams). — ADR 0005 written 2026-11-28 at the owner's request (how seamless can traversing servers be); ADR 0004 amended.
 * **Creation** [2026-11-28T04:33:06Z]: Documented concept `decisions/seamless-transitions.md` (Decision (proposed): Seamless Transitions, Falling from Orbit into the Sea). — ADR 0004 written 2026-11-28 at the owner's request: seamless transitions, falling from orbit into the sea.
