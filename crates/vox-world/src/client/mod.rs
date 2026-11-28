@@ -274,8 +274,8 @@ const ASK_WITHIN: f64 = 5.0;
 const HELD_WITHIN: f64 = 95.0;
 /// Most doorway states kept (a world's own doorways; a hostile world can't grow this).
 const DOOR_STATES_MOST: usize = 256;
-/// Farther than this (blocks) from where we asked at a waking doorway, we've walked off: 3 m,
-/// as the world's own limit on holding us.
+/// Farther than this (blocks) from a waking doorway's sill, we've walked off: 3 m, or half its
+/// width and a metre for a wide one, as the world's own limit on holding us (`HOLD_NEAR`).
 const WALKED_OFF: f32 = vox_core::in_blocks(3.0);
 
 #[derive(Resource)]
@@ -365,8 +365,8 @@ pub struct WorldClient {
     velocity: [f32; 3],
     /// what each doorway here shows about where it leads, as the world last said (by name)
     pub door_states: HashMap<String, vox_core::travel::DoorState>,
-    /// the doorway asked to go through, and where we stood then, while its answer is awaited
-    asked_door: Option<(String, [f32; 3])>,
+    /// the doorway asked to go through, while its answer is awaited
+    asked_door: Option<String>,
     /// which way the character faces, and the camera's turn and tilt (radians)
     yaw: f32,
     pub cam_yaw: f32,
@@ -780,7 +780,7 @@ impl WorldClient {
         let motion = vox_core::travel::Motion { velocity: self.velocity, yaw: self.yaw };
         self.send(&ToServer::Through { portal: portal.into(), side: if side < 0.0 { -1 } else { 1 }, motion });
         self.asked = Some((a, self.now()));
-        self.asked_door = Some((portal.to_string(), self.body.pos));
+        self.asked_door = Some(portal.to_string());
     }
 
     /// Put back at `to` (blocks) by something that won't let you on, no longer falling.
@@ -847,14 +847,18 @@ impl WorldClient {
     pub fn travel_check(&mut self) {
         // asked the way and no answer: this world didn't let us through. A waking doorway holds
         // us at its sill until the world there is up (the world tells us if it gives up)
-        let state = self.asked_door.as_ref().and_then(|(d, _)| self.door_states.get(d)).copied();
+        let state = self.asked_door.as_ref().and_then(|d| self.door_states.get(d)).copied();
         let waking = state == Some(vox_core::travel::DoorState::Waking);
         let within = if waking { HELD_WITHIN } else { ASK_WITHIN };
         // the world turned us away (the doorway shows closed), or we walked off from a waking
         // one (the world stops holding us then too): no longer waiting
         let turned_away = state.is_some_and(|s| !s.lets_through() && !waking);
+        // measured from the sill's middle, with the world's own reach (more for a wide doorway)
         let walked_off = waking
-            && self.asked_door.as_ref().is_some_and(|(_, from)| (0..3).map(|i| (self.body.pos[i] - from[i]).powi(2)).sum::<f32>() > WALKED_OFF * WALKED_OFF);
+            && self.asked_door.as_ref().and_then(|d| self.portals.iter().find(|p| &p.name == d)).is_some_and(|p| {
+                let reach = WALKED_OFF.max(p.size.x * 0.5 + vox_core::in_blocks(1.0));
+                (Vec3::from(self.body.pos) - p.at).length_squared() > reach * reach
+            });
         if self.asked.is_some() && (turned_away || walked_off) {
             self.asked = None;
             self.asked_door = None;
