@@ -8,20 +8,29 @@ You build with blocks. Each block is a cube, a quarter of a metre (0.25 m) on a 
 - **Right mouse** places the block in your hand where you point.
 - On a controller, the right trigger breaks and the left trigger places.
 
-## The hotbar
+## Quick blocks
 
-Your hotbar has nine slots. The block in your hand is the one in the selected slot.
+Each world gives you up to nine quick blocks. There is no bar on screen: what is in your hand
+shows small, bottom right, with its name for a moment when it changes.
 
-- Press **1** to **9** on the keyboard to choose a slot.
-- On a controller, the bumpers move to the next and previous slot.
+- Press **1** to **9** on the keyboard to choose one; the mouse wheel steps through them.
+- On a controller, use the block wheel.
 
-## The quick wheel
+## The block wheel
 
-The quick wheel shows your nine hotbar blocks in a circle.
-
-1. Hold **Tab** (or the controller's left d-pad button) to open it.
-2. Point with the mouse or the right stick. The top slot is first, then the rest go clockwise.
+1. Hold **Tab** (or the controller's **left bumper**) to open it.
+2. The top half holds your quick blocks, left to right. Point with the mouse or the right stick.
 3. Let go to take the block you point at.
+
+The bottom half has two more: **All** (lower left) and **Props** (lower right). Point at one
+for a moment, or press South or the right trigger (Enter or left click), and a second wheel opens with every block in the
+world, or every prop, sixteen at a time. Turn its pages with the left stick or the mouse wheel;
+East (or Backspace) goes back. Let go to take what you point at:
+
+- a block from **All** goes into your current quick slot;
+- a **prop** goes in your hand (until you take a block or go to another world). Place puts it down where you aim, facing you, and it stays in
+  your hand for the next one. The world decides whether it may go there (on your plot, with room
+  for it). Take a block to put the prop away.
 
 ## Picking a block
 

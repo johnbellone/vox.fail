@@ -247,9 +247,12 @@ pub fn receive(
                             }
                         }
                     }
-                    // a refused Put, Remove or Build: the editor (edit mode only) hears why
+                    // a refused Put, Remove or Build: a prop from your hand says why; otherwise
+                    // the editor (edit mode only) hears it
                     ToClient::EntityRefused { id, why } => {
-                        if let (Some(out), Some(st)) = (editor.as_mut(), editing.as_mut()) {
+                        if !w.hand_refused(id, &why)
+                            && let (Some(out), Some(st)) = (editor.as_mut(), editing.as_mut())
+                        {
                             out.0.push(st.refused(id, why));
                         }
                     }

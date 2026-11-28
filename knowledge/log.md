@@ -1,4 +1,9 @@
 ## 2026-11-28
+* **Update** [2026-11-28T05:25:42Z]: Updated concept `decisions/wheels-replace-hotbar.md`. — Emote targets: left stick looks, L2 locks on (owner's call).
+* **Update** [2026-11-28T05:14:59Z]: Updated concept `architecture/vox-world.md`. — HUD row: the wheels replace the hotbar (vox-jps).
+* **Update** [2026-11-28T05:14:30Z]: Updated concept `architecture/controls-and-hud-design.md`. — Link the wheels decision.
+* **Update** [2026-11-28T05:14:09Z]: Updated concept `architecture/controls-and-hud-design.md`. — Wheels replace the hotbar (vox-jps).
+* **Creation** [2026-11-28T05:13:53Z]: Documented concept `decisions/wheels-replace-hotbar.md` (Wheels Replace the Hotbar (Block Wheel on LB, Emote Wheel on RB)). — Recorded the wheels decision (bead vox-jps).
 * **Update** [2026-11-28T04:38:59Z]: Updated concept `decisions/seamless-transitions.md`. — Amended 2026-11-28 at the owner's suggestion: doorways show their destination's state (open, waking with a ripple, unlinked in another colour, restricted, unknown).
 * **Update** [2026-11-28T04:37:31Z]: Updated concept `decisions/seamless-transitions.md`. — Amended 2026-11-28: prepare by time, wake the destination, a live echo through a watcher, one socket on the same host; ADR 0005 generalises it.
 * **Creation** [2026-11-28T04:37:31Z]: Documented concept `decisions/traversing-servers.md` (Decision (proposed): Traversing Servers Without Seams). — ADR 0005 written 2026-11-28 at the owner's request (how seamless can traversing servers be); ADR 0004 amended.

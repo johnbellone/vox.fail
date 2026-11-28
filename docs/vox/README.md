@@ -88,9 +88,10 @@ yourself instead. The desktop client goes to vox.fail by default.
 **Moving and building:** you start in first person, looking around with the mouse. **V** or **F5**
 changes the view: first person, behind your shoulder, then from above. From above, **left click**
 walks to the point under the pointer, **right click** places a block, **Shift + right click**
-removes one, and the **wheel** zooms. **1–9** choose the hotbar slot. Some places have a fixed
+removes one, and the **wheel** zooms. **1–9** choose a quick block (there is no hotbar; **Tab** holds the block wheel, **G** the emote wheel). Some places have a fixed
 camera that takes over while you're there. A controller: left stick walks, right stick looks,
-South jumps, D-pad down flies, RT breaks, LT places, and the bumpers choose the hotbar block. The
+South jumps, D-pad down flies, RT breaks, LT places, the left bumper holds the block wheel and
+the right bumper the emote wheel. The
 show's hotkeys are off while you're in a world. Others appear as their own characters, moving as
 they move. Every control is listed in [the player help](../help/controls.md).
 

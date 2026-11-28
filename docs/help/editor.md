@@ -61,7 +61,7 @@ Advanced is for the world's owner and its editors (the owner may add up to 32 ed
 - **Any destination** for a portal: a world, your other portal, a spot in this world ("here"),
   an address ("url"), or a dungeon ("dungeon").
 - **World settings**: the sky, the time of day, the weather, the clouds, the relief of the
-  ground, the water, the hotbar, and on an atlas tile the edges that lead on.
+  ground, the water, the quick blocks (the `hotbar` setting), and on an atlas tile the edges that lead on.
 - **Spawn** and **Objective**: where players start, and a place with a radius to reach.
 - **Add node**: a graph node, with its kind, size, recipe and seed, and a **Build** button that
   asks the server to build it. Nodes show as outlines, and the selected one as a preview of what

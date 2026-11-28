@@ -150,6 +150,19 @@ struct Placed {
     pose: Pose,
 }
 
+/// A prop in your hand, taken from the block wheel's Props: Place puts it down (the server
+/// judges it by the plot rules, as it does the editor's Basic mode).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandProp {
+    /// the prop's version hash, as the catalogue names it
+    pub hash: [u8; 16],
+    pub name: String,
+}
+
+/// Request numbers for props put down from your hand start here, so a refusal can be told from
+/// the editor's (whose numbers count up from 1).
+pub const HAND_REQUESTS: u32 = 0x8000_0000;
+
 /// Someone else in the world.
 struct Other {
     name: String,
@@ -283,6 +296,10 @@ pub struct WorldClient {
     pub cmds: Vec<String>,
     hotbar: Vec<u16>,
     pub slot: usize,
+    /// a prop in your hand instead of the slot's block; taking a block puts it away
+    pub hand_prop: Option<HandProp>,
+    /// the next request number for a prop from your hand
+    hand_req: u32,
     walker: Option<Entity>,
     hud: Option<Entity>,
     /// lamps and fires (confirmed), for lighting the nearest
@@ -418,6 +435,8 @@ impl Default for WorldClient {
             cmds: Vec::new(),
             hotbar: Vec::new(),
             slot: 0,
+            hand_prop: None,
+            hand_req: HAND_REQUESTS,
             walker: None,
             hud: None,
             lights: HashMap::new(),
@@ -854,6 +873,7 @@ impl WorldClient {
         if block == 0 || self.liquid.get(block as usize).copied().unwrap_or(false) {
             return;
         }
+        self.hand_prop = None;
         if let Some(i) = self.hotbar.iter().position(|b| *b == block) {
             self.slot = i;
         } else if self.slot < self.hotbar.len() {
@@ -861,6 +881,59 @@ impl WorldClient {
         } else {
             self.hotbar.push(block);
             self.slot = self.hotbar.len() - 1;
+        }
+    }
+
+    /// Put the prop in your hand down standing in `cell` (on the floor of it, in the middle),
+    /// facing `yaw` steps. The server places it or refuses it ([`Self::hand_refused`]); the prop
+    /// stays in your hand either way, for the next.
+    pub fn put_prop(&mut self, cell: [i32; 3], yaw: u8) {
+        let Some(hand) = &self.hand_prop else { return };
+        let u = vox_core::entity::PROP_UNITS_PER_BLOCK;
+        let at = [
+            cell[0].saturating_mul(u).saturating_add(u / 2),
+            cell[1].saturating_mul(u),
+            cell[2].saturating_mul(u).saturating_add(u / 2),
+        ];
+        let prop = vox_core::entity::Prop { prop: hand.hash, at, yaw, variant: 0, state: 0, channel: None, text: None, owner: None };
+        let id = self.hand_req;
+        self.hand_req = self.hand_req.checked_add(1).unwrap_or(HAND_REQUESTS);
+        self.send(&ToServer::Put { id, entity: None, expect: None, component: vox_core::entity::Component::Prop(prop) });
+    }
+
+    /// The server refused request `id`: if it was a prop from your hand, say why and return
+    /// true; otherwise (the editor's) false.
+    pub fn hand_refused(&mut self, id: u32, why: &vox_core::entity::EntityWhy) -> bool {
+        if id < HAND_REQUESTS {
+            return false;
+        }
+        let text: String = format!("Can't put that here: {why}").chars().filter(|c| !c.is_control()).take(120).collect();
+        self.notice(text);
+        true
+    }
+
+    /// Where everyone else is (blocks, feet) and their number, from their newest poses: for
+    /// the emote wheel's targets.
+    pub fn others_at(&self) -> Vec<(u32, Vec3)> {
+        let size = if self.block_size > 0.0 { self.block_size } else { vox_core::BLOCK_M };
+        self.others.iter().filter_map(|(id, o)| o.places.back().map(|(_, at, _)| (*id, *at / size))).collect()
+    }
+
+    /// A stick's direction (x right, y up the screen) on the ground, as walking reads it: up
+    /// the screen is the way the camera looks.
+    pub fn ground_dir(&self, stick: Vec2) -> Vec3 {
+        let d = self.cam_dir;
+        let yaw = if d.x.abs() + d.z.abs() > 1e-3 { (-d.x).atan2(-d.z) } else { self.cam_yaw };
+        let fwd = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
+        let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+        fwd * stick.y + right * stick.x
+    }
+
+    /// Turn to face `at` (blocks). Nothing when it is where you stand.
+    pub fn face(&mut self, at: Vec3) {
+        let (dx, dz) = (at.x - self.body.pos[0], at.z - self.body.pos[2]);
+        if (dx * dx + dz * dz).is_finite() && dx * dx + dz * dz > 1e-6 {
+            self.yaw = dx.atan2(dz);
         }
     }
 
@@ -960,6 +1033,8 @@ impl WorldClient {
         spawn: [f32; 3],
         local: &crate::blocks::Palette,
     ) {
+        // a prop in your hand is this world's to judge; a new one starts with blocks
+        self.hand_prop = None;
         self.you = Some(you);
         self.world = world;
         // the last world's air stays behind: this one sends its own, or has none (orbit)
