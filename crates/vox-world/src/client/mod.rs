@@ -376,6 +376,8 @@ pub struct WorldClient {
     pub stream_radius: u16,
     /// the chunk the last view was centred on (None: none sent on this connection yet)
     last_view: Option<ChunkKey>,
+    /// the radius this world granted (from its welcome): chunks are dropped where it forgets them
+    pub granted_radius: Option<u16>,
     /// what each doorway here shows about where it leads, as the world last said (by name)
     pub door_states: HashMap<String, vox_core::travel::DoorState>,
     /// the doorway asked to go through, while its answer is awaited
@@ -501,6 +503,7 @@ impl Default for WorldClient {
             door_states: HashMap::new(),
             stream_radius: stream_radius(crate::detail::Detail::default().view_m),
             last_view: None,
+            granted_radius: None,
             asked_door: None,
             yaw: 0.0,
             cam_yaw: 0.0,
@@ -802,13 +805,24 @@ impl WorldClient {
     /// asks for, a small one when only watching.
     pub fn view_now(&self) -> vox_core::wire::View {
         let at = self.arrival.as_ref().map_or(self.body.pos, |a| a.pos);
-        let radius = if self.watch { WATCH_RADIUS } else { self.stream_radius };
+        let asked = if self.watch { WATCH_RADIUS } else { self.stream_radius };
+        let radius = self.granted_radius.map_or(asked, |g| asked.min(g.max(1)));
         vox_core::wire::View { centre: ChunkKey::of(at.map(|v| v.floor() as i32)), radius, rings: 0, budget_kbps: 0 }
     }
 
-    /// A new connection: the next view goes out before the hello.
+    /// A new connection: the next view goes out before the hello, and the world there says what
+    /// it grants.
     pub fn forget_view(&mut self) {
         self.last_view = None;
+    }
+
+    /// The world's welcome said what radius it grants (`view_radius` in its settings).
+    pub fn grant(&mut self, settings: &serde_json::Value) {
+        let g = settings["view_radius"].as_u64().map(|r| r.min(vox_core::wire::MAX_VIEW_RADIUS as u64) as u16);
+        if g != self.granted_radius {
+            self.granted_radius = g;
+            self.last_view = None;
+        }
     }
 
     /// Streaming, each frame: once you are in a new chunk, the view to send the world (None while
@@ -1443,6 +1457,18 @@ mod tests {
         assert!(w.view.confirmed.chunk_count() <= 2 * (4 + 2) + 1, "{}", w.view.confirmed.chunk_count());
         assert!(w.view.confirmed.chunk(ChunkKey([0, 0, 0])).is_none(), "far behind: dropped");
         assert!(w.dirty.contains(&ChunkKey([0, 0, 0])), "its mesh goes at the next remesh");
+    }
+
+    #[test]
+    fn a_world_that_grants_less_is_asked_for_no_more() {
+        let mut w = WorldClient::default();
+        w.stream_radius = 16;
+        w.grant(&serde_json::json!({ "view_radius": 4 }));
+        assert_eq!(w.view_now().radius, 4);
+        w.grant(&serde_json::json!({ "view_radius": 1000 }));
+        assert_eq!(w.view_now().radius, 16, "never more than the device asks");
+        w.grant(&serde_json::json!({}));
+        assert_eq!(w.view_now().radius, 16, "a world that says nothing");
     }
 
     #[test]

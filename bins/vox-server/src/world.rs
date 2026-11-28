@@ -531,6 +531,16 @@ impl WorldState {
     /// first; without, every chunk, as before.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn send_world(&self, tx: &mpsc::Sender<Message>, you: u32, name: &str, names: bool, from: [f32; 3], interest: Option<&mut Interest>) -> bool {
+        // a client that streams is told the radius it was granted, so it drops chunks where this
+        // world forgets them
+        let settings = match &interest {
+            Some(i) => {
+                let mut s: serde_json::Value = serde_json::from_str(&self.settings_now()).unwrap_or_else(|_| serde_json::json!({}));
+                s["view_radius"] = serde_json::json!(i.radius());
+                s.to_string()
+            }
+            None => self.settings_now(),
+        };
         let mut ok = Self::send_to(
             tx,
             &ToClient::Welcome {
@@ -540,13 +550,13 @@ impl WorldState {
                 block_size: self.cfg.block_size,
                 bounds: self.cfg.bounds,
                 spawn: self.spawn,
-                settings: self.settings_now(),
+                settings,
                 name: name.to_string(),
             },
         );
         let keys = match interest {
             Some(i) => {
-                i.queue(&self.world.keys());
+                i.queue(self.world.chunk_keys());
                 i.take_all()
             }
             None => self.world.keys(),
@@ -583,7 +593,9 @@ impl WorldState {
         }
         // no player has this number: the watcher's own poses never come back to it
         let from = self.spawn;
-        let mut interest = view.map(|v| Interest::new(v, self.limits(), self.cfg.bounds));
+        // a watcher sees round the spawn (it can't send another view to move it)
+        let centre = ChunkKey::of(from.map(|v| v.floor() as i32));
+        let mut interest = view.map(|v| Interest::new(View { centre, ..v }, self.limits(), self.cfg.bounds));
         if self.send_world(&tx, u32::MAX, "", false, from, interest.as_mut()) {
             self.watchers.insert(conn, tx);
             if let Some(i) = interest {
@@ -605,8 +617,12 @@ impl WorldState {
         }
         let id = conn as u32;
         let name = if name.is_empty() { format!("player {id}") } else { name };
-        let mut interest = view.map(|v| Interest::new(v, self.limits(), self.cfg.bounds));
-        let ok = self.send_world(&tx, id, &name, true, arrive.unwrap_or(self.spawn), interest.as_mut());
+        // the view is centred on where they really start (a fresh client guesses before it knows
+        // the spawn), so what joining sends is what is round them
+        let from = arrive.unwrap_or(self.spawn);
+        let centre = ChunkKey::of(from.map(|v| v.floor() as i32));
+        let mut interest = view.map(|v| Interest::new(View { centre, ..v }, self.limits(), self.cfg.bounds));
+        let ok = self.send_world(&tx, id, &name, true, from, interest.as_mut());
         if !ok {
             return;
         }
@@ -913,8 +929,9 @@ impl WorldState {
             return self.broadcast(&ToClient::Edits(applied), None);
         }
         let mut gone = Vec::new();
-        let for_view = |i: &mut Interest| -> Vec<Applied> {
-            let mine: Vec<Applied> = applied.iter().filter(|a| i.wants_edit(ChunkKey::of(a.cell))).copied().collect();
+        // a player always hears their own edits (their client waits for each to confirm it)
+        let for_view = |i: &mut Interest, me: u32| -> Vec<Applied> {
+            let mine: Vec<Applied> = applied.iter().filter(|a| a.player == me || i.wants_edit(ChunkKey::of(a.cell))).copied().collect();
             // an edit into a chunk they don't hold yet is how it arrives: they hold it now
             for a in &mine {
                 i.mark_sent(ChunkKey::of(a.cell));
@@ -924,7 +941,7 @@ impl WorldState {
         for (conn, p) in self.players.iter_mut() {
             let mine = match p.interest.as_mut() {
                 None => applied.clone(),
-                Some(i) => for_view(i),
+                Some(i) => for_view(i, p.id),
             };
             if !mine.is_empty() && !Self::send_to(&p.tx, &ToClient::Edits(mine)) {
                 gone.push(*conn);
@@ -933,7 +950,7 @@ impl WorldState {
         for (conn, tx) in &self.watchers {
             let mine = match self.watcher_interest.get_mut(conn) {
                 None => applied.clone(),
-                Some(i) => for_view(i),
+                Some(i) => for_view(i, u32::MAX),
             };
             if !mine.is_empty() && !Self::send_to(tx, &ToClient::Edits(mine)) {
                 gone.push(*conn);
@@ -982,7 +999,9 @@ impl WorldState {
     fn stream_step(&mut self) {
         let dt = self.streamed_at.elapsed().as_secs_f64();
         self.streamed_at = Instant::now();
-        if self.players.values().all(|p| p.interest.is_none()) && self.watcher_interest.is_empty() {
+        let waiting = self.players.values().any(|p| p.interest.as_ref().is_some_and(|i| i.has_pending()))
+            || self.watcher_interest.values().any(|i| i.has_pending());
+        if !waiting {
             return;
         }
         // a chunk's size as last encoded, or a guess for one not encoded yet
@@ -1839,11 +1858,14 @@ impl WorldState {
             // a player who starts streaming only now is sent what's in view again
             ToServer::View(v) => {
                 let (limits, bounds) = (self.limits(), self.cfg.bounds);
-                let keys = self.world.keys();
                 let Some(p) = self.players.get_mut(&conn) else { return };
-                let i = p.interest.get_or_insert_with(|| Interest::new(v, limits, bounds));
-                i.set_view(v, limits, bounds);
-                i.queue(&keys);
+                match p.interest.as_mut() {
+                    Some(i) => i.set_view(v, limits, bounds),
+                    None => p.interest = Some(Interest::new(v, limits, bounds)),
+                }
+                if let Some(i) = p.interest.as_mut() {
+                    i.queue(self.world.chunk_keys());
+                }
             }
             ToServer::Through { portal, side, motion } => {
                 if !p.bucket.take(now) {

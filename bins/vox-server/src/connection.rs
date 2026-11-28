@@ -111,6 +111,9 @@ pub(super) async fn watch_connection(
     writer.abort();
 }
 
+/// Views a player may send in a second (see the cap in [`run_connection`]).
+const MAX_VIEWS_PER_SECOND: u32 = 10;
+
 pub(super) async fn run_connection(server: Server, socket: WebSocket) {
     let conn = server.next_conn.fetch_add(1, Ordering::Relaxed);
     let (mut sink, mut stream) = socket.split();
@@ -162,7 +165,7 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
     }
     // poses and voice have no limit further on: cap them here, before they queue. Each has its
     // own count in the same one-second window.
-    let (mut window, mut poses, mut voices) = (Instant::now(), 0u32, 0u32);
+    let (mut window, mut poses, mut voices, mut views) = (Instant::now(), 0u32, 0u32, 0u32);
     while let Some(Ok(m)) = stream.next().await {
         match m {
             Message::Binary(b) => match wire::decode::<ToServer>(&b) {
@@ -173,10 +176,21 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
                             break;
                         }
                         if window.elapsed() >= Duration::from_secs(1) {
-                            (window, poses, voices) = (Instant::now(), 0, 0);
+                            (window, poses, voices, views) = (Instant::now(), 0, 0, 0);
                         }
                         poses += 1;
                         if poses > MAX_POSES_PER_SECOND {
+                            continue;
+                        }
+                    }
+                    // a view is sent on crossing a chunk border: a few a second even flying fast;
+                    // more is someone making the world thread work for nothing
+                    if let ToServer::View(_) = &msg {
+                        if window.elapsed() >= Duration::from_secs(1) {
+                            (window, poses, voices, views) = (Instant::now(), 0, 0, 0);
+                        }
+                        views += 1;
+                        if views > MAX_VIEWS_PER_SECOND {
                             continue;
                         }
                     }
@@ -186,7 +200,7 @@ pub(super) async fn run_connection(server: Server, socket: WebSocket) {
                             continue;
                         }
                         if window.elapsed() >= Duration::from_secs(1) {
-                            (window, poses, voices) = (Instant::now(), 0, 0);
+                            (window, poses, voices, views) = (Instant::now(), 0, 0, 0);
                         }
                         voices += 1;
                         if voices > MAX_VOICE_PER_SECOND {

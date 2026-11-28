@@ -53,6 +53,7 @@ pub fn receive(
                 // streaming by view: say how far you see before saying hello, so joining sends
                 // only what's near (docs/design/chunk-streaming.md §3)
                 if s == "Connected" {
+                    w.granted_radius = None;
                     w.forget_view();
                     if let Some(v) = w.stream() {
                         w.send(&ToServer::View(v));
@@ -119,6 +120,8 @@ pub fn receive(
                         // its portals (from the settings, until its entities say otherwise);
                         // and if you came through one, where you come out
                         w.portals = crate::portals::parse(&set);
+                        // how far this world sends round you: drop chunks where it forgets them
+                        w.grant(&set);
                         w.edges = set["atlas"]["edges"]
                             .as_array()
                             .map(|a| a.iter().filter_map(|e| e.as_str()).take(4).map(String::from).collect())

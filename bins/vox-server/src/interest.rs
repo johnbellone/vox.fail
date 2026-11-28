@@ -76,8 +76,20 @@ impl Interest {
     pub fn set_view(&mut self, view: View, limits: Limits, bounds: Bounds) {
         let v = view.sane();
         let budget = if v.budget_kbps == 0 { DEFAULT_KBPS } else { v.budget_kbps.min(MOST_KBPS) };
-        let v = View { radius: v.radius.clamp(1, limits.radius), rings: v.rings.min(limits.rings), budget_kbps: budget, ..v };
+        let r = v.radius.clamp(1, limits.radius);
+        // the centre comes from the network: held to the world's chunks and a radius round them,
+        // so nothing below can overflow
+        let pad = r as i32 + 1;
+        let lo = bounds.lo.map(|b| b.div_euclid(CHUNK) - pad);
+        let hi = bounds.hi.map(|b| b.div_euclid(CHUNK) + pad);
+        let centre = ChunkKey([0, 1, 2].map(|i| v.centre.0[i].clamp(lo[i], hi[i])));
+        let v = View { centre, radius: r, rings: v.rings.min(limits.rings), budget_kbps: budget };
+        // only the budget changed: nothing to work out again
+        let same = self.view.centre == v.centre && self.view.radius == v.radius && self.view.rings == v.rings && !self.wanted.is_empty();
         self.view = v;
+        if same {
+            return;
+        }
         let r = v.radius as i32;
         let c = v.centre.0;
         // the world's height in chunks: nothing is wanted above or below it
@@ -100,10 +112,10 @@ impl Interest {
     }
 
     /// Queue the chunks with blocks (`existing`) that are wanted and not yet held, nearest first.
-    pub fn queue(&mut self, existing: &[ChunkKey]) {
+    pub fn queue(&mut self, existing: impl IntoIterator<Item = ChunkKey>) {
         for k in existing {
-            if self.wanted.contains(k) && !self.sent.contains(k) && self.queued.insert(*k) {
-                self.pending.push_back(*k);
+            if self.wanted.contains(&k) && !self.sent.contains(&k) && self.queued.insert(k) {
+                self.pending.push_back(k);
             }
         }
         let centre = self.view.centre;
@@ -136,10 +148,21 @@ impl Interest {
         out
     }
 
-    /// Whether an edit to chunk `k` goes to this player: it is in their view, and not still
-    /// waiting to be sent whole (which would carry the edit anyway).
+    /// Whether an edit to chunk `k` goes to this player: they hold it (in their view, or just
+    /// past it and not yet forgotten), or it is in their view and not still waiting to be sent
+    /// whole (which would carry the edit anyway).
     pub fn wants_edit(&self, k: ChunkKey) -> bool {
-        self.wanted.contains(&k) && !self.queued.contains(&k)
+        self.sent.contains(&k) || (self.wanted.contains(&k) && !self.queued.contains(&k))
+    }
+
+    /// The radius granted, in chunks.
+    pub fn radius(&self) -> u16 {
+        self.view.radius
+    }
+
+    /// Whether anything waits to be sent.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     /// A chunk sent outside the queue (a whole chunk after a big build): held now.
@@ -196,11 +219,11 @@ mod tests {
     #[test]
     fn the_nearest_chunks_come_first_and_only_those_in_view() {
         let mut i = Interest::new(view([0, 0, 0], 4), LIMITS, bounds());
-        i.queue(&[ChunkKey([3, 0, 0]), ChunkKey([100, 0, 0]), ChunkKey([0, 0, 1]), ChunkKey([0, 0, 0]), ChunkKey([-2, 0, 2])]);
+        i.queue([ChunkKey([3, 0, 0]), ChunkKey([100, 0, 0]), ChunkKey([0, 0, 1]), ChunkKey([0, 0, 0]), ChunkKey([-2, 0, 2])]);
         assert_eq!(i.take_all(), vec![ChunkKey([0, 0, 0]), ChunkKey([0, 0, 1]), ChunkKey([-2, 0, 2]), ChunkKey([3, 0, 0])]);
         assert!(i.holds(ChunkKey([3, 0, 0])) && !i.holds(ChunkKey([100, 0, 0])));
         // queued again: what's held isn't sent twice
-        i.queue(&[ChunkKey([3, 0, 0])]);
+        i.queue([ChunkKey([3, 0, 0])]);
         assert!(i.take_all().is_empty());
     }
 
@@ -208,11 +231,11 @@ mod tests {
     fn moving_queues_what_comes_into_view_and_drops_what_is_well_behind() {
         let mut i = Interest::new(view([0, 0, 0], 4), LIMITS, bounds());
         let world: Vec<ChunkKey> = (-20..=20).map(|x| ChunkKey([x, 0, 0])).collect();
-        i.queue(&world);
+        i.queue(world.iter().copied());
         assert_eq!(i.take_all().len(), 9, "-4..=4");
         // four chunks east: 5..=8 come into view; -4..=-3 are past the radius but kept (hysteresis)
         i.set_view(view([4, 0, 0], 4), LIMITS, bounds());
-        i.queue(&world);
+        i.queue(world.iter().copied());
         let new: Vec<i32> = i.take_all().iter().map(|k| k.0[0]).collect();
         assert_eq!(new, vec![5, 6, 7, 8]);
         assert!(i.holds(ChunkKey([-2, 0, 0])), "6 chunks behind: within radius + 2");
@@ -224,7 +247,7 @@ mod tests {
         // 80 kbps is 10,000 bytes a second
         let mut i = Interest::new(View { budget_kbps: 80, ..view([0, 0, 0], 4) }, LIMITS, bounds());
         let keys: Vec<ChunkKey> = (0..4).map(|x| ChunkKey([x, 0, 0])).collect();
-        i.queue(&keys);
+        i.queue(keys.iter().copied());
         // a tenth of a second: 1,000 bytes, so one 3,000-byte chunk goes (and the budget is in debt)
         assert_eq!(i.take_paced(0.1, |_| 3000).len(), 1);
         assert!(i.take_paced(0.1, |_| 3000).is_empty(), "still paying for the first");
@@ -232,19 +255,39 @@ mod tests {
         assert_eq!(i.take_paced(1.0, |_| 3000).len(), 3);
         // one bigger than a second's budget still goes
         let mut big = Interest::new(View { budget_kbps: 8, ..view([0, 0, 0], 4) }, LIMITS, bounds());
-        big.queue(&keys[..1]);
+        big.queue(keys[..1].iter().copied());
         assert_eq!(big.take_paced(0.05, |_| 60_000).len(), 1);
     }
 
     #[test]
     fn edits_go_to_those_in_view_and_not_ahead_of_a_queued_chunk() {
         let mut i = Interest::new(view([0, 0, 0], 4), LIMITS, bounds());
-        i.queue(&[ChunkKey([1, 0, 0])]);
+        i.queue([ChunkKey([1, 0, 0])]);
         assert!(!i.wants_edit(ChunkKey([1, 0, 0])), "queued: the chunk will carry it");
         assert!(i.wants_edit(ChunkKey([2, 0, 0])), "in view, no blocks yet: the edit is how it arrives");
         assert!(!i.wants_edit(ChunkKey([50, 0, 0])), "out of view");
         i.mark_sent(ChunkKey([1, 0, 0]));
         assert!(i.wants_edit(ChunkKey([1, 0, 0])));
         assert!(i.take_all().is_empty(), "sent outside the queue, so no longer queued");
+    }
+
+    #[test]
+    fn a_held_chunk_just_past_the_view_still_gets_edits() {
+        let mut i = Interest::new(view([0, 0, 0], 4), LIMITS, bounds());
+        let world: Vec<ChunkKey> = (-10..=10).map(|x| ChunkKey([x, 0, 0])).collect();
+        i.queue(world.iter().copied());
+        i.take_all();
+        // a step east: chunk -5 is past the radius but still held, so its edits still come
+        i.set_view(view([1, 0, 0], 4), LIMITS, bounds());
+        assert!(i.holds(ChunkKey([-4, 0, 0])) && !i.wanted.contains(&ChunkKey([-4, 0, 0])));
+        assert!(i.wants_edit(ChunkKey([-4, 0, 0])));
+    }
+
+    #[test]
+    fn a_centre_from_the_network_cant_overflow() {
+        for c in [[i32::MAX; 3], [i32::MIN; 3], [i32::MAX, i32::MIN, 0]] {
+            let i = Interest::new(view(c, 16), LIMITS, bounds());
+            assert!(i.view().centre.0.iter().all(|v| v.abs() < 1000), "{:?}", i.view().centre);
+        }
     }
 }

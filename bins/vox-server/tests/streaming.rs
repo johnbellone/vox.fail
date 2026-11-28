@@ -119,8 +119,10 @@ async fn the_nearest_chunk_comes_first_and_walking_brings_the_rest() {
     let (_s, url) = serve().await;
     let (mut ann, got) = join(&url, Some(View { centre: ChunkKey([1, 0, 1]), ..HERE })).await;
     let near = chunks(&got);
-    assert_eq!(near.first(), Some(&ChunkKey([1, -1, 1])), "the chunk nearest [1, 0, 1] with blocks in it (the floor under it) comes first: {near:?}");
-    let d = |k: &ChunkKey| (k.0[0] - 1).pow(2) + k.0[1].pow(2) + (k.0[2] - 1).pow(2);
+    // the client guessed [1, 0, 1]; the world centres the join on where it really starts them,
+    // the spawn's chunk, [0, 0, 0]
+    assert_eq!(near.first(), Some(&ChunkKey([0, -1, 0])), "the chunk nearest the spawn with blocks in it (the floor under it) comes first: {near:?}");
+    let d = |k: &ChunkKey| k.0[0].pow(2) + k.0[1].pow(2) + k.0[2].pow(2);
     assert!(near.windows(2).all(|w| d(&w[0]) <= d(&w[1])), "nearest first: {near:?}");
     // walking east to the tower: it comes, paced, after the view moves
     send(&mut ann, &ToServer::View(View { centre: ChunkKey([11, 0, 0]), ..HERE })).await;

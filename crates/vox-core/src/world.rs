@@ -233,17 +233,21 @@ impl Chunk {
         if runs.iter().all(|(_, b)| *b == runs[0].1) {
             return Ok(Chunk { store: Store::Uniform(runs[0].1), version, solid });
         }
+        // ids to palette indices through a map, so a hostile chunk of many kinds costs no more
+        // than a plain one
         let mut palette: Vec<u16> = Vec::new();
+        let mut index_of: HashMap<u16, u64> = HashMap::new();
         for (_, b) in &runs {
-            if !palette.contains(b) {
+            index_of.entry(*b).or_insert_with(|| {
                 palette.push(*b);
-            }
+                (palette.len() - 1) as u64
+            });
         }
         let bits = bits_for(palette.len());
         let mut words = vec![0u64; words_for(bits)];
         let mut i = 0;
         for (n, b) in runs {
-            let p = palette.iter().position(|&x| x == b).unwrap_or(0) as u64;
+            let p = index_of[&b];
             for j in i..i + n {
                 let (w, shift) = slot(j, bits);
                 words[w] |= p << shift;
@@ -397,6 +401,11 @@ impl World {
     /// How many chunks are held, empty ones too.
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
+    }
+    /// Chunks with any blocks in, in no order (cheaper than [`World::keys`] when the order doesn't
+    /// matter).
+    pub fn chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.chunks.iter().filter(|(_, c)| !c.is_empty()).map(|(k, _)| *k)
     }
     /// Chunks with any blocks in, sorted (so they go out in the same order every time).
     pub fn keys(&self) -> Vec<ChunkKey> {

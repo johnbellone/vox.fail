@@ -21,8 +21,8 @@
 mod connection;
 pub mod doors;
 mod entities;
-mod interest;
 pub mod flags;
+mod interest;
 mod neighbours;
 mod props;
 mod rescale;
