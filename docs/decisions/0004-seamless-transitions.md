@@ -141,6 +141,12 @@ for a minute.
 
     A state describes only that doorway's own destination, so it can't be used to probe for
     worlds. A restricted reason is told in general terms.
+
+    *As built (vox-81l.8):* a stopped destination is woken when a player near its doorway is
+    checked, at most every 30 s per world. So someone lingering by a doorway wakes its world
+    again each time `--idle-stop` stops it: an idle world can cycle while anyone stands near a
+    doorway to it. That is the price of the doorway being honest; Prepare by time (vox-81l.7)
+    will narrow it to players actually heading through.
 13. **Drawing it** extends the doorway's material: `PortalMaterial` gains a state and the time
     the state began, beside today's `params` (presence, echo ready, aspect, seed).
     `assets/shaders/portal.wesl` draws the five looks and blends between them over half a

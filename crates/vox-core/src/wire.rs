@@ -23,6 +23,7 @@
 //! answered with [`ToClient::EntityDone`] to its sender only.
 
 use crate::entity::{Component, EntityId, EntityWhy};
+use crate::travel::{DoorState, Frame, Motion};
 use crate::world::{Bounds, Cell, ChunkKey, Why};
 use serde::{Deserialize, Serialize};
 
@@ -31,8 +32,10 @@ use serde::{Deserialize, Serialize};
 /// `ToClient::Voice`); 8: the ground's water in weather keyframes (`Keyframe::ground`); 9:
 /// world entities (`ToServer::Put`, `Remove`, `Build`, `ToClient::Entities`,
 /// `ToClient::EntityRefused`, `ToClient::EntityDone`); 10: quarter-metre blocks (every
-/// position, size and level is at the new scale, so an older client must not come in).
-pub const PROTOCOL: u32 = 10;
+/// position, size and level is at the new scale, so an older client must not come in); 11:
+/// crossings carry motion and a frame (`ToServer::Through`'s `motion`, `ToClient::Travel`'s
+/// `motion` and `frame`, `ToClient::Prepare`, `ToClient::DoorState`; ADR 0004).
+pub const PROTOCOL: u32 = 11;
 
 /// Voice channel: heard by players near the speaker.
 pub const VOICE_NEARBY: u8 = 0;
@@ -100,9 +103,10 @@ pub enum ToServer {
     /// numbers.
     Watch { protocol: u32 },
     /// Through the doorway called `portal` (to another world), from `side` (+1 from its +x/+z
-    /// side, -1 the other). The world checks you're there and answers [`ToClient::Travel`].
-    /// Added last, so older messages keep their numbers.
-    Through { portal: String, side: i8 },
+    /// side, -1 the other), moving as `motion` says (the world holds it to what a player can
+    /// do). The world checks you're there and answers [`ToClient::Travel`]. Added last, so older
+    /// messages keep their numbers.
+    Through { portal: String, side: i8, motion: Motion },
     /// A packet of speech from this player. Added last, so older messages keep their numbers.
     Voice(VoicePacket),
     /// Place entity `entity` (None: a new one) with `component`, or change it. `expect` is the
@@ -168,8 +172,10 @@ pub enum ToClient {
     Correct { at: [f32; 3] },
     /// Go through: connect to `url` (as a portal's url: `":7781"`, `"/w/7781/ws"` or whole),
     /// saying hello with `ticket` if there is one (it's for that world only, once, for a
-    /// minute), and arrive at `arrive` (blocks, feet), which is where the world there puts you.
-    Travel { url: String, ticket: Option<String>, arrive: [f32; 3] },
+    /// minute), and arrive at `arrive` (blocks, feet), which is where the world there puts you,
+    /// moving as `motion` says (already in that world's frame). `frame` is how this world meets
+    /// that one (a point here is `frame.point(p)` there).
+    Travel { url: String, ticket: Option<String>, arrive: [f32; 3], motion: Motion, frame: Frame },
     /// Something everyone here should know (a dungeon's objective reached), shown for a moment.
     Notice { text: String },
     /// Speech from `player`, passed on by the server. Added last, so older messages keep
@@ -186,6 +192,15 @@ pub enum ToClient {
     /// that carries the change. `entity` and `seq` are the change's own. Added last, so older
     /// messages keep their numbers.
     EntityDone { id: u32, entity: EntityId, seq: u64 },
+    /// A crossing is near (ADR 0004): `url` is where it leads, `frame` how that world meets this
+    /// one, so the far side can be fetched and drawn in place before you get there. `ticket`,
+    /// when there is one, lets you watch it ahead of time; the crossing itself still comes as a
+    /// [`ToClient::Travel`]. Added last, so older messages keep their numbers.
+    Prepare { url: String, ticket: Option<String>, frame: Frame },
+    /// What the doorway called `portal` shows about where it leads: sent when it changes, and
+    /// for every doorway checked so far after the welcome. Added last, so older messages keep
+    /// their numbers.
+    DoorState { portal: String, state: DoorState },
 }
 
 /// A change to one entity: its new component, or `None` when it was removed.
@@ -244,7 +259,13 @@ mod tests {
             ToClient::Pose { player: 1, blob: vec![0; 40] },
             ToClient::Bye { why: "full".into() },
             ToClient::Correct { at: [1.0, 2.0, 3.0] },
-            ToClient::Travel { url: ":7781".into(), ticket: Some("t1.a.b".into()), arrive: [0.0, 0.0, 11.5] },
+            ToClient::Travel {
+                url: ":7781".into(),
+                ticket: Some("t1.a.b".into()),
+                arrive: [0.0, 0.0, 11.5],
+                motion: Motion { velocity: [0.0, -40.0, 1.0], yaw: 1.5 },
+                frame: Frame { offset: [4096.0, -8000.0, 0.0], turn: 0.5 },
+            },
             ToClient::Notice { text: "The altar: reached".into() },
             ToClient::Entities(vec![
                 EntityChange { seq: 1 << 40, entity: EntityId(3), component: Some(spawn()) },
@@ -252,6 +273,8 @@ mod tests {
             ]),
             ToClient::EntityRefused { id: 5, why: EntityWhy::Changed },
             ToClient::EntityDone { id: 6, entity: EntityId(3), seq: (1 << 40) | 2 },
+            ToClient::Prepare { url: "/w/sea/ws".into(), ticket: None, frame: Frame::moved([0.0, -8000.0, 0.0]) },
+            ToClient::DoorState { portal: "Down Gate".into(), state: DoorState::Restricted(crate::travel::Restriction::Party) },
         ];
         for m in msgs {
             let back: ToClient = decode(&encode(&m)).unwrap();
@@ -259,7 +282,7 @@ mod tests {
         }
         let m = ToServer::Hello { protocol: PROTOCOL, name: "Sam".into(), avatar: vec![1], token: Some("w1.a.b".into()) };
         assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
-        let m = ToServer::Through { portal: "yard".into(), side: -1 };
+        let m = ToServer::Through { portal: "yard".into(), side: -1, motion: Motion { velocity: [1.0, -2.0, 3.0], yaw: 0.25 } };
         assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
         let m = ToServer::Edit { id: 1, cell: [1, -2, 3], block: 5 };
         assert_eq!(decode::<ToServer>(&encode(&m)).unwrap(), m);
@@ -346,11 +369,11 @@ mod tests {
         assert_eq!(encode(&ToServer::Hello { protocol: PROTOCOL, name: String::new(), avatar: vec![], token: None })[0], 0);
         assert_eq!(encode(&ToServer::Edit { id: 0, cell: [0, 0, 0], block: 0 })[0], 1);
         assert_eq!(encode(&ToServer::Watch { protocol: PROTOCOL })[0], 4);
-        assert_eq!(encode(&ToServer::Through { portal: String::new(), side: 1 })[0], 5);
+        assert_eq!(encode(&ToServer::Through { portal: String::new(), side: 1, motion: Motion::default() })[0], 5);
         assert_eq!(encode(&ToServer::Voice(voice()))[0], 6);
         assert_eq!(encode(&ToClient::Ready)[0], 2);
         assert_eq!(encode(&ToClient::Correct { at: [0.0; 3] })[0], 10);
-        assert_eq!(encode(&ToClient::Travel { url: String::new(), ticket: None, arrive: [0.0; 3] })[0], 11);
+        assert_eq!(encode(&ToClient::Travel { url: String::new(), ticket: None, arrive: [0.0; 3], motion: Motion::default(), frame: Frame::SAME })[0], 11);
         assert_eq!(encode(&ToClient::Notice { text: String::new() })[0], 12);
         assert_eq!(encode(&ToClient::Voice { player: 0, packet: voice() })[0], 13);
         assert_eq!(encode(&ToServer::Put { id: 0, entity: None, expect: None, component: spawn() })[0], 7);
@@ -360,6 +383,8 @@ mod tests {
         assert_eq!(encode(&ToClient::Entities(vec![]))[0], 14);
         assert_eq!(encode(&ToClient::EntityRefused { id: 0, why: EntityWhy::Invalid })[0], 15);
         assert_eq!(encode(&ToClient::EntityDone { id: 0, entity: EntityId(0), seq: 0 })[0], 16);
+        assert_eq!(encode(&ToClient::Prepare { url: String::new(), ticket: None, frame: Frame::SAME })[0], 17);
+        assert_eq!(encode(&ToClient::DoorState { portal: String::new(), state: DoorState::Unknown })[0], 18);
     }
 
     #[test]

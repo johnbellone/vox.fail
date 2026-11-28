@@ -7,6 +7,7 @@
 //!
 //! - `GET /` — a short status (world, players, blocks, edits) as JSON.
 //! - `GET /ws` — a player's connection.
+//! - `GET /link` — a neighbouring world's link (with a world secret; see neighbours.rs).
 //!
 //! The rules (bounds, palette, reach, rate) are vox-core's, so the app predicts edits
 //! with the same checks the server makes.
@@ -18,8 +19,10 @@
 //! they opened (kept as portal entities, which new arrivals get with the rest).
 
 mod connection;
+pub mod doors;
 mod entities;
 pub mod flags;
+mod neighbours;
 mod props;
 mod rescale;
 mod snapshot;
@@ -28,6 +31,7 @@ mod world;
 pub use connection::*;
 #[allow(unused_imports)]
 pub use world::*;
+pub use neighbours::Neighbour;
 pub use snapshot::{Restore, SnapStore, list_snapshots, restore};
 
 use std::{
@@ -52,7 +56,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use rusqlite::{Connection, params};
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use vox_core::{
     Bounds, Chunk, ChunkKey, Why, World,
     edit::Role,
@@ -140,6 +144,16 @@ pub struct Config {
     /// play and tests only: a live world asks the directory who may edit, and a world with a
     /// directory refuses this flag. Without it, guests may not edit.
     pub editors_all: bool,
+    /// what the host knows about its worlds, for what doorways show ([`doors`]); `vox-host` sets
+    /// it. None (a plain `vox-server`): doorways to other worlds show their unchecked look.
+    pub ways: Option<Arc<dyn doors::Ways>>,
+    /// where this world's host answers, for dialling its neighbours (`ws://127.0.0.1:7790`): a
+    /// lone server's own `--listen`, a host's. None: no links to neighbours. Links also need
+    /// `world_secret`, which both ends prove they know.
+    pub link_base: Option<String>,
+    /// the host is a `vox-host`: a doorway's `":7781"` is the alias of a world on `link_base`
+    /// (`/w/7781/link`), not another server on that port of this machine
+    pub link_hosted: bool,
 }
 
 impl Config {
@@ -171,6 +185,9 @@ impl Config {
             rules_every: Duration::from_secs(30),
             editors_all: false,
             props: PathBuf::from("data/props"),
+            ways: None,
+            link_base: None,
+            link_hosted: false,
         }
     }
 }
@@ -206,7 +223,7 @@ enum Event {
     /// predates it, and is not applied)
     Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>, Instant),
     /// the directory's answer for a trip: where to go, and the ticket (if it gave one)
-    Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3] },
+    Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3], motion: vox_core::travel::Motion, frame: vox_core::travel::Frame },
     /// the directory's answer on whether an account may make advanced edits (None: no answer,
     /// which refuses the edit)
     Editor { conn: u64, account: u64, editor: Option<bool> },
@@ -319,12 +336,15 @@ pub(crate) struct Asking {
 }
 
 /// A trip through a portal to ask the directory a ticket for: who, where to (the portal's
-/// url), arriving where.
+/// url), arriving where, moving how (in the arriving world's frame), and how the two worlds
+/// meet.
 pub(crate) struct Trip {
     pub conn: u64,
     pub account: u64,
     pub to: String,
     pub arrive: [f32; 3],
+    pub motion: vox_core::travel::Motion,
+    pub frame: vox_core::travel::Frame,
 }
 
 /// Trips waiting for the directory at most; past this a player goes on without a ticket.
@@ -370,6 +390,8 @@ pub struct Server {
     gate: Arc<Gate>,
     thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     next_conn: Arc<AtomicU64>,
+    /// the neighbours and which are linked
+    links: Arc<neighbours::Links>,
 }
 
 impl Server {
@@ -396,7 +418,18 @@ impl Server {
         };
         // named after the world, so a host running many can tell them apart
         let thread_name = format!("world-{}", cfg.name);
+        // links to neighbours need the secret (both ends prove they know it) and an address to
+        // dial them from
+        let linking = cfg.world_secret.is_some() && cfg.link_base.is_some();
+        let links = Arc::new(neighbours::Links::new(cfg.name.clone(), cfg.world_secret.clone().filter(|_| linking)));
         let mut state = WorldState::open(cfg)?;
+        let plan = linking.then(|| {
+            let (plan_tx, plan_rx) = watch::channel(Vec::new());
+            state.plan = Some(plan_tx);
+            // the first plan now, so a neighbour dialling at once finds us knowing it
+            state.send_plan();
+            plan_rx
+        });
         if office.is_some() {
             state.trips = Some(trip_tx);
             state.goals = Some(goal_tx);
@@ -421,23 +454,28 @@ impl Server {
         if let Some(link) = link {
             tokio::spawn(directory_link(tx.clone(), link, rules_now.clone()));
         }
+        if let Some(plan) = plan {
+            tokio::spawn(neighbours::keep_links(links.clone(), plan, tx.clone()));
+        }
         if let Some((url, secret, world)) = office {
             tokio::spawn(objective_reached(goal_rx, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(editor_office(tx.clone(), ask_rx, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(portal_office(tx.clone(), portal_rx, rules_now, url.clone(), secret.clone(), world.clone()));
             tokio::spawn(ticket_office(tx.clone(), trip_rx, url, secret, world));
         }
-        Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)) })
+        Ok(Server { tx, gate, thread: Arc::new(Mutex::new(Some(thread))), next_conn: Arc::new(AtomicU64::new(1)), links })
     }
 
     pub fn router(&self) -> Router {
         Router::new()
             .route("/", get(status_page))
             .route("/ws", get(connect))
+            .route("/link", get(link))
             // behind a Cloudflare Tunnel, worlds share one address and are told apart by path
             // (vox.fail/w/7780/ws), which the tunnel passes on as it is
             .route("/w/{port}/", get(status_page))
             .route("/w/{port}/ws", get(connect))
+            .route("/w/{port}/link", get(link))
             .with_state(self.clone())
     }
 
@@ -454,7 +492,20 @@ impl Server {
         Router::new()
             .route(&format!("{prefix}/"), get(status_page))
             .route(&format!("{prefix}/ws"), get(connect))
+            .route(&format!("{prefix}/link"), get(link))
             .with_state(self.clone())
+    }
+
+    /// Take a neighbouring world's link, as `GET /link` does. For `vox-host`.
+    pub fn accept_link(&self, ws: WebSocketUpgrade) -> Response {
+        let (links, tx) = (self.links.clone(), self.tx.clone());
+        ws.max_message_size(vox_core::neighbour::MAX_LINK_MESSAGE).on_upgrade(move |socket| neighbours::listen(links, tx, socket))
+    }
+
+    /// This world's neighbours (atlas tiles over open edges, doorways' worlds on this host),
+    /// and which are linked now.
+    pub fn neighbours(&self) -> Vec<Neighbour> {
+        self.links.list()
     }
 
     pub async fn status(&self) -> Option<Status> {
@@ -496,6 +547,26 @@ struct Player {
     pending: Option<Pending>,
     /// their last finished builds, oldest first, for `ToServer::Unbuild` (dropped with them)
     kept: VecDeque<KeptBuild>,
+    /// what each doorway near them shows, as last sent to them (by portal name)
+    doors: HashMap<String, vox_core::travel::DoorState>,
+}
+
+/// A player held at a waking doorway's sill until the world it leads to is up (ADR 0004
+/// decision 4): sent on then, or told the way closed.
+struct Held {
+    conn: u64,
+    /// the destination's name, as its host knows it
+    name: String,
+    /// the doorway, for the notice, and its sill: walking away gives up the wait
+    door: String,
+    sill: [f32; 3],
+    /// how far (blocks) from the sill's middle still counts as at the doorway: more for a wide one
+    reach: f32,
+    url: String,
+    arrive: [f32; 3],
+    motion: vox_core::travel::Motion,
+    frame: vox_core::travel::Frame,
+    since: Instant,
 }
 
 /// One block edit in the log: (seq, at, player name, account, cell, old, new).
@@ -558,6 +629,10 @@ struct WorldState {
     /// when a keyed portal was last made, moved, linked or removed here (the directory has
     /// changed its list): a rules fetch that began before it is not applied to the portals
     last_keyed_commit: Option<Instant>,
+    /// players held at waking doorways
+    held: Vec<Held>,
+    /// when doorways were last checked for the players near them
+    doors_at: Instant,
     /// woken after a keyed-portal change here, so the rules are fetched again at once and the
     /// fetch that follows is one that began after the change (None: no directory)
     rules_now: Option<Arc<Notify>>,
@@ -577,6 +652,10 @@ struct WorldState {
     /// the settings moved on from what `meta('settings')` holds, so the next flush writes them
     /// (a flush with nothing else dirty would otherwise skip them)
     settings_unsaved: bool,
+    /// where the world's neighbours go to the link task (None: no links), and when they were
+    /// last worked out
+    plan: Option<watch::Sender<Vec<neighbours::Target>>>,
+    plan_at: Instant,
 }
 
 /// A place in a world to reach: a dungeon's objective.

@@ -1,9 +1,9 @@
 ---
 type: Architecture
-title: World Wire Protocol (PROTOCOL = 10)
-description: "The message set between a world server and its players, how it is encoded, and what each protocol version added (10: quarter-metre blocks)."
+title: World Wire Protocol (PROTOCOL = 11)
+description: "The message set between a world server and its players, how it is encoded, and what each protocol version added (11: crossings carry motion and a frame; Prepare and DoorState)."
 tags: [architecture, protocol, networking, postcard]
-generated: { by: agent/mcp, at: "2026-11-28T03:24:20Z" }
+generated: { by: agent/mcp, at: "2026-11-28T06:27:35Z" }
 status: stable
 governance: constraint
 code_refs: [crates/vox-core/src/wire.rs, crates/vox-world/src/proto.rs]
@@ -11,12 +11,12 @@ code_refs: [crates/vox-core/src/wire.rs, crates/vox-world/src/proto.rs]
 
 # World Wire Protocol
 
-Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 10`). Each WebSocket **binary** message is one postcard-encoded value. Bump the constant whenever messages change in a way old players cannot read; the server refuses a wrong version.
+Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 11`). Each WebSocket **binary** message is one postcard-encoded value. Bump the constant whenever messages change in a way old players cannot read; the server refuses a wrong version.
 
 ## Messages
 **ToServer**:
 - `Hello {protocol, name, avatar: Vec<u8>, token: Option<String>}`, `Edit {id, cell, block}`, `Pose {at, blob}`, a weather change, and `Watch {protocol}`.
-- `Through {portal, side}` (protocol 6): go through a portal. The world checks you're in the doorway and answers `Travel`.
+- `Through {portal, side, motion}` (protocol 6; `motion` since 11): go through a portal. The world checks you're in the doorway, holds `motion` to what a player can do, and answers `Travel`.
 - `Voice(VoicePacket)` (protocol 7).
 - The entity messages of protocol 9 (below), appended last: `Put`, `Remove`, `Build`, `Unbuild`.
 
@@ -25,10 +25,11 @@ Defined in `crates/vox-core/src/wire.rs` (`pub const PROTOCOL: u32 = 10`). Each 
 - `Chunk {key, version, data}` (run-length encoded), `Ready`, `Joined {player, name, avatar}`, `Left`.
 - `Edits(Vec<Applied{seq, player, id, cell, block}>)`, `Refused {id, why}`, `Pose`, `Weather` (a `weather::Keyframe`), `Bye {why}`.
 - Added last, so older clients ignore it, `Correct {at}`: the server's answer to an impossible position, telling the client to go back.
-- `Travel {url, ticket, arrive}` (protocol 6): connect there, say hello with the one-use ticket, and arrive where that world puts you.
+- `Travel {url, ticket, arrive, motion, frame}` (protocol 6; `motion` and `frame` since 11): connect there, say hello with the one-use ticket, and arrive where that world puts you, still moving as `motion` says.
 - `Notice {text}`, added after `Travel` with the raid objectives under protocol 6: something everyone in the world should know, such as a dungeon's objective reached, shown for a moment. Protocol 9 also uses it for the counts after an `Unbuild`.
 - `Voice {player, packet}` (protocol 7).
 - The entity messages `Entities`, `EntityRefused`, `EntityDone` (protocol 9).
+- `Prepare {url, ticket, frame}` and `DoorState {portal, state}` (protocol 11).
 
 New messages always go last, so older ones keep their numbers; a test pins each one's first byte. `Pose`, `Weather` and `Voice` are *droppable*: a newer one follows, so a full queue drops them instead of disconnecting the player. Everything else is reliable.
 
@@ -50,7 +51,15 @@ New messages always go last, so older ones keep their numbers; a test pins each 
   - An applied Unbuild is answered under its `id`, followed by a `Notice` with the counts.
 - `EntityWhy`: `NotYours, Outside, TooFar, TooMany, TooBig, Blocked, BadDest, NoSuchProp, CantAfford, TooFast, Changed, Unavailable, Invalid`, and last `NoSupport` (a prop with nothing under, behind or over it to stand on). `Why` (block edits) gained `Blocked` at the end: a placed prop stands in that cell.
 
-**Quarter-metre blocks (protocol 10).** No message changed. Every position, size and level is now in 0.25 m blocks, so a client from before must not come in. Planned next, protocol 11: `ToServer::View` and `ToClient::FarTile` for streaming by view radius and the far-field octree (`architecture/chunk-streaming-design`).
+**Quarter-metre blocks (protocol 10).** No message changed. Every position, size and level is now in 0.25 m blocks, so a client from before must not come in.
+
+**Crossings (protocol 11, ADR 0004, `vox-81l.2`).** `vox_core::travel` holds the shared rules:
+- `Frame {offset, turn}`: a point here is `turn(p) + offset` there (a rotation about y, as glam's). `Door::frame(side)` gives a doorway's, which maps points exactly as `Door::carry`; an atlas edge's is a move of one tile. `Frame::valid()` checks one from the network.
+- `Motion {velocity (blocks/s), yaw}`: `sane(block_size)` holds it to the move check's limits (`moves::MAX_SPEED` sideways, `MAX_RISE` up, `MAX_FALL` down) and makes nonsense still; `through(frame)` turns it into the far frame.
+- The client sends its motion with `Through`; the origin world holds it sane, turns it through the frame, and asks the directory (`/api/world/travel` takes an optional `motion`, held sane again). The signed `Ticket` carries `motion`. The client arrives still falling (`Arrival::vy`); walking comes from the player's own input.
+- `Prepare` (the far side ahead of time) and `DoorState` (`travel::DoorState`: Unknown, Open, Waking, Unlinked, Restricted(Party | Full | SignIn)) are defined; the client hears and ignores them until vox-81l.3 and vox-81l.8.
+
+Planned next, protocol 12: `ToServer::View` and `ToClient::FarTile` for streaming by view radius and the far-field octree (`architecture/chunk-streaming-design`).
 
 ## Version history (from docs/PROJECT.md; v3 is not documented)
 | Version | Change |
@@ -64,6 +73,7 @@ New messages always go last, so older ones keep their numbers; a test pins each 
 | 8 | Weather keyframes carry the ground's water (`Keyframe::ground`) for puddles; world settings may carry `relief` (no version change needed for that) |
 | 9 | World entities: `Put`, `Remove`, `Build`, `Unbuild`; `Entities`, `EntityRefused`, `EntityDone` (see `decisions/world-editor`) |
 | 10 | Quarter-metre blocks in every world (`architecture/quarter-metre-blocks-decision`) |
+| 11 | Crossings carry motion and a frame; `Prepare`, `DoorState` (ADR 0004) |
 
 ## Separate protocol
 Shows (host, guest, viewers) use a different format in `crates/vox-world/src/proto.rs`, carried by `vox-relay`. See `architecture/show-networking`.
@@ -77,3 +87,4 @@ Shows (host, guest, viewers) use a different format in `crates/vox-world/src/pro
 - [Decision: The World Editor](../decisions/world-editor.md): why the entity messages exist
 - [vox-core](vox-core.md): the entity and edit rules behind them
 - [Quarter-metre blocks](quarter-metre-blocks-decision.md): protocol 10
+- [Seamless transitions](../decisions/seamless-transitions.md): protocol 11

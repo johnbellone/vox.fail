@@ -10,6 +10,7 @@
 #   vox.fail/w/7783/...  the dark sea
 #   vox.fail/w/7784/...  orbit
 #   /api/world/...       refused (only the worlds use it, on localhost)
+#   /w/<id>/link         refused (worlds link to their neighbours on localhost, ADR 0005)
 #   everything else      vox-directory on 127.0.0.1:7700
 #
 # The tunnel passes paths on unchanged; world servers answer at /w/<port>/ws as well as /ws.
@@ -20,6 +21,10 @@ tunnel: vox
 credentials-file: /etc/cloudflared/vox.json
 
 ingress:
+  # worlds link to their neighbours over localhost, never through the tunnel
+  - hostname: vox.fail
+    path: ^/w/[^/]+/link/?$
+    service: http_status:404
   - hostname: vox.fail
     path: ^/w/7780/
     service: http://127.0.0.1:7780

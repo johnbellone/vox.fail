@@ -235,7 +235,14 @@ pub fn receive(
                         w.status = if w.travel.is_some() { format!("Can't reach the world: {why}") } else { why };
                         w.ready = false;
                     }
-                    ToClient::Travel { url, ticket, arrive } => w.travelled(&url, ticket, arrive),
+                    ToClient::Travel { url, ticket, arrive, motion, frame } => w.travelled(&url, ticket, arrive, motion, frame),
+                    // what a doorway shows about where it leads: kept by name for its look and for
+                    // whether it lets you through (a name from the network: short, plain, and
+                    // only so many)
+                    ToClient::DoorState { portal, state } => w.door_state(portal, state),
+                    // the far side drawn ahead of time comes with vox-81l.3; until then it is
+                    // heard and left
+                    ToClient::Prepare { .. } => {}
                     // world entities (protocol 9); the portals are drawn from them in portals.rs
                     ToClient::Entities(changes) => {
                         entities.apply(&changes);

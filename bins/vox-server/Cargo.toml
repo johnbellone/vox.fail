@@ -5,8 +5,11 @@ edition.workspace = true
 description = "A Vox world server: one shared build space, its players and its blocks, kept in SQLite."
 
 [dependencies]
+getrandom.workspace = true
 vox-core.workspace = true
 vox-format.workspace = true
+# the dialling end of links to neighbouring worlds (neighbours.rs)
+vox-link.workspace = true
 vox-art = { path = "../../crates/vox-art" }
 vox-graph = { path = "../../crates/vox-graph" }
 axum = { workspace = true, features = ["ws"] }

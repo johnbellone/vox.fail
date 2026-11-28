@@ -18,6 +18,9 @@ const OFFLINE_PAGE = "/_offline/offline.html";
 const DYNAMIC = ["/api/", "/auth/", "/w/"];
 /** For the servers on localhost only (world reports, travel, dungeon instances): never from outside. */
 const INTERNAL = ["/api/world/", "/api/host/"];
+/** A world's link to its neighbours (`/w/<id>/link`, ADR 0005): between worlds inside the container only. */
+const LINK = /^\/w\/[^/]+\/link\/?$/;
+const internal = (path: string) => starts(path, INTERNAL) || LINK.test(path) || path === "/link";
 
 // What says the servers aren't there: 530 (the container didn't start), 502 (it can't be
 // reached), 504 and the 52x errors. Not 503: the directory itself says 503 when it's busy, and
@@ -144,7 +147,7 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
-    if (starts(path, INTERNAL)) {
+    if (internal(path)) {
       return Response.json({ error: "not found" }, { status: 404, headers: { ...SECURITY, "cache-control": "no-store" } });
     }
     if (starts(path, DYNAMIC)) return toServers(req, env, url);

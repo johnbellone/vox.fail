@@ -4,10 +4,22 @@
 #[allow(unused_imports)]
 use super::*;
 use crate::entities::{self, Entities};
+use crate::neighbours;
 use crate::props;
 use vox_core::edit::{self, Ctx, EYES, PlotArea, REACH, Role};
 use vox_core::entity::{Axis, Component, Dest, EntityWhy, Portal, Prop, Settings, Spawn, prop_cell};
 use vox_core::portal::Door;
+use vox_core::travel::{DoorState, Frame, Motion};
+
+/// How often doorways are checked for the players near them.
+const DOOR_CHECK: Duration = Duration::from_secs(1);
+/// How near a doorway (blocks) a player is told what it shows: 24 m.
+const DOOR_NEAR: f32 = vox_core::in_blocks(24.0);
+/// The longest a player is held at a waking doorway before the way counts as closed (the host's
+/// slowest start, a big world loading, with room).
+const HOLD_MOST: Duration = Duration::from_secs(90);
+/// Farther than this (blocks) from the sill, a held player has walked away: 3 m.
+const HOLD_NEAR: f32 = vox_core::in_blocks(3.0);
 use vox_core::wire::EntityChange;
 
 /// How far from a doorway's plane (blocks) a player may be and still go through it: their last
@@ -21,6 +33,8 @@ const BUILD_PER_TICK: usize = 4_096;
 /// A chunk that one tick's batch changes by more than this many blocks is sent whole (`Chunk`)
 /// rather than as a run of `Applied` entries.
 const BULK_CHUNK: usize = 256;
+/// How often the world works out its neighbours again (portals and settings change).
+const PLAN_EVERY: Duration = Duration::from_secs(2);
 
 impl WorldState {
     pub(super) fn open(mut cfg: Config) -> Result<WorldState, String> {
@@ -162,6 +176,8 @@ impl WorldState {
             editor_cache: HashMap::new(),
             portals: None,
             portal_routes: HashMap::new(),
+            held: Vec::new(),
+            doors_at: Instant::now(),
             refunds_due: Vec::new(),
             last_keyed_commit: None,
             rules_now: None,
@@ -170,6 +186,8 @@ impl WorldState {
             build_palette,
             builds: VecDeque::new(),
             last_build: None,
+            plan: None,
+            plan_at: Instant::now(),
         };
         // the entities are the source of truth: where the stored settings differ from them, the
         // world takes the entities' (a change made while it was closed)
@@ -215,6 +233,14 @@ impl WorldState {
                         self.save();
                     }
                     self.build_step();
+                    if self.doors_at.elapsed() >= DOOR_CHECK {
+                        self.doors_at = Instant::now();
+                        self.check_doors();
+                        self.send_held();
+                    }
+                    if self.plan_at.elapsed() >= PLAN_EVERY {
+                        self.send_plan();
+                    }
                     // a refund that could not be queued is tried once more, here
                     for (account, key) in std::mem::take(&mut self.refunds_due) {
                         if !self.ask_refund(account, key) {
@@ -266,9 +292,9 @@ impl WorldState {
                         }
                     }
                 }
-                Event::Ticket { conn, url, ticket, arrive } => {
+                Event::Ticket { conn, url, ticket, arrive, motion, frame } => {
                     if let Some(p) = self.players.get(&conn) {
-                        let _ = Self::send_to(&p.tx, &ToClient::Travel { url, ticket, arrive });
+                        let _ = Self::send_to(&p.tx, &ToClient::Travel { url, ticket, arrive, motion, frame });
                     }
                 }
                 Event::Editor { conn, account, editor } => self.editor_answer(conn, account, editor),
@@ -578,23 +604,130 @@ impl WorldState {
         }
         let voice = Bucket::new(MAX_VOICE_PER_SECOND, VOICE_BURST);
         let edits = Bucket::new(EDIT_RATE, EDIT_RATE);
-        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None, kept: VecDeque::new() });
+        self.players.insert(conn, Player { id, name: name.clone(), avatar, tx, at: start, moves, corrected_at: -1.0, bucket, voice, account, placed: 0, edits, pending: None, kept: VecDeque::new(), doors: HashMap::new() });
     }
 
-    /// On to `url`, arriving at `arrive`: with a ticket from the directory when there is one to
-    /// be had (a signed-in player, a directory), else straight away without.
-    fn send_on(&self, conn: u64, account: Option<u64>, tx: &mpsc::Sender<Message>, url: String, arrive: [f32; 3]) {
+    /// Send `conn` on to `url`, arriving at `arrive` moving as `motion` (both in the arriving
+    /// world's frame) through `frame`: with a ticket from the directory when there is one.
+    #[allow(clippy::too_many_arguments)]
+    fn send_on(&self, conn: u64, account: Option<u64>, tx: &mpsc::Sender<Message>, url: String, arrive: [f32; 3], motion: Motion, frame: Frame) {
+        // (turned into the far frame it may have grown past a limit by rounding: held again)
+        let motion = motion.sane(self.cfg.block_size);
         match (&self.trips, account) {
             (Some(trips), Some(account)) => {
-                let trip = Trip { conn, account, to: url.clone(), arrive };
+                let trip = Trip { conn, account, to: url.clone(), arrive, motion, frame };
                 if trips.try_send(trip).is_err() {
                     // the directory is far behind: go on without a ticket
-                    let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive });
+                    let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive, motion, frame });
                 }
             }
             // no directory here, or a guest: no ticket to be had
             _ => {
-                let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive });
+                let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive, motion, frame });
+            }
+        }
+    }
+
+    /// Where a doorway leads, as far as this world knows ([`doors::Dest`]). Only addresses on
+    /// this host (`":7781"`, `"/w/<id>/ws"`) are asked of the host; one elsewhere stays unchecked.
+    fn door_dest(&self, p: &Portal) -> doors::Dest {
+        let url = match &p.to {
+            Dest::Here { .. } => return doors::Dest::Here,
+            Dest::Dungeon { .. } => return doors::Dest::Dungeon,
+            Dest::Url { url, .. } => url.clone(),
+            Dest::World { .. } | Dest::Pair { .. } => match p.key.and_then(|k| self.portal_routes.get(&k)) {
+                None => return doors::Dest::Unrouted,
+                Some(r) => match &r.url {
+                    None => return doors::Dest::Nowhere,
+                    Some(u) => u.clone(),
+                },
+            },
+        };
+        let here = url.starts_with(':') || url.starts_with('/');
+        match doors::name_of(&url).filter(|_| here) {
+            Some(name) => doors::Dest::World(name),
+            None => doors::Dest::Unrouted,
+        }
+    }
+
+    /// Who a player is, for what doorways show them.
+    fn who(&self, account: Option<u64>) -> doors::Who {
+        doors::Who { signed_in: account.is_some(), in_party: account.is_some_and(|a| self.party_of.contains_key(&a)) }
+    }
+
+    /// Every player near a doorway is told what it shows, when that changes (ADR 0004 decision
+    /// 12). Run every [`DOOR_CHECK`].
+    fn check_doors(&mut self) {
+        let near: Vec<(String, [f32; 3], doors::Dest)> = self
+            .entities
+            .map
+            .values()
+            .filter_map(|(_, c)| match c {
+                Component::Portal(p) => Some((p.name.clone(), p.at, self.door_dest(p))),
+                _ => None,
+            })
+            .collect();
+        if near.is_empty() {
+            return;
+        }
+        let sign_in = self.cfg.directory.is_some();
+        let ways = self.cfg.ways.clone();
+        let whos: HashMap<u64, doors::Who> = self.players.iter().map(|(c, p)| (*c, self.who(p.account))).collect();
+        for (conn, p) in self.players.iter_mut() {
+            let Some(at) = p.at else { continue };
+            let who = whos[conn];
+            for (name, door_at, dest) in &near {
+                let d2: f32 = (0..3).map(|i| (at[i] - door_at[i]).powi(2)).sum();
+                if d2 > DOOR_NEAR * DOOR_NEAR {
+                    continue;
+                }
+                let state = doors::state(dest, who, sign_in, ways.as_deref());
+                if p.doors.get(name) != Some(&state) {
+                    p.doors.insert(name.clone(), state);
+                    let _ = Self::send_to(&p.tx, &ToClient::DoorState { portal: name.clone(), state });
+                }
+            }
+        }
+    }
+
+    /// Tell `conn` what the doorway called `door` shows now, and remember it as sent.
+    fn tell_door(&mut self, conn: u64, door: &str, state: DoorState) {
+        if let Some(p) = self.players.get_mut(&conn) {
+            p.doors.insert(door.to_string(), state);
+            let _ = Self::send_to(&p.tx, &ToClient::DoorState { portal: door.to_string(), state });
+        }
+    }
+
+    /// A held player's wait is over without a way: told so.
+    fn give_up(&mut self, h: &Held, tx: &mpsc::Sender<Message>) {
+        let text = DoorState::Unlinked.line(&h.door).unwrap_or_default();
+        let _ = Self::send_to(tx, &ToClient::Notice { text });
+        self.tell_door(h.conn, &h.door, DoorState::Unlinked);
+    }
+
+    /// Players held at a waking doorway: sent on once the world there is up, or told the way
+    /// closed if it went away or took too long.
+    fn send_held(&mut self) {
+        if self.held.is_empty() {
+            return;
+        }
+        let ways = self.cfg.ways.clone();
+        for h in std::mem::take(&mut self.held) {
+            let Some(p) = self.players.get(&h.conn) else { continue };
+            // walked away from the doorway: no longer waiting
+            let away = p.at.is_none_or(|at| (0..3).map(|i| (at[i] - h.sill[i]).powi(2)).sum::<f32>() > h.reach * h.reach);
+            if away {
+                continue;
+            }
+            let (account, tx) = (p.account, p.tx.clone());
+            let way = ways.as_deref().map_or(doors::Way::Running, |w| w.way(&h.name));
+            match way {
+                doors::Way::Running => self.send_on(h.conn, account, &tx, h.url, h.arrive, h.motion, h.frame),
+                // gone, or too long: the way is closed (told as the doorway's state too, which
+                // ends the client's wait)
+                doors::Way::Absent => self.give_up(&h, &tx),
+                _ if h.since.elapsed() >= HOLD_MOST => self.give_up(&h, &tx),
+                _ => self.held.push(h),
             }
         }
     }
@@ -602,17 +735,11 @@ impl WorldState {
     /// Off this tile's `edge` (`east`, `west`, `south`, `north`) onto the next tile of the
     /// atlas, if there is one that way and they're really at that edge: they come out at the
     /// same place on the map, just inside the next tile, standing on its ground.
-    fn over_edge(&mut self, conn: u64, edge: &str) {
+    fn over_edge(&mut self, conn: u64, edge: &str, motion: Motion) {
         let Some(tile) = &self.cfg.tile else { return };
         let Some((_, d)) = vox_core::terrain::EDGES.iter().find(|(n, _)| *n == edge) else { return };
         let Some(next) = tile.next(*d) else { return };
-        // an edge the Settings entity no longer lists is closed; a world whose settings say
-        // nothing about edges stays open, as every world was before this rule
-        let closed = serde_json::from_str::<serde_json::Value>(&self.settings_now())
-            .ok()
-            .and_then(|s| s["atlas"]["edges"].as_array().map(|e| !e.iter().any(|x| x.as_str() == Some(edge))))
-            .unwrap_or(false);
-        if closed {
+        if !self.edge_open(edge) {
             return;
         }
         let Some(p) = self.players.get(&conn) else { return };
@@ -639,8 +766,55 @@ impl WorldState {
         let ground = next.height(x.floor() as i32, z.floor() as i32).max(vox_core::terrain::SEA) + 1;
         let arrive = [x, ground as f32, z];
         let url = format!("/w/{}/ws", next.id());
+        // the tiles share the map's heights and lie a tile apart: moved, not turned
+        let frame = Frame::moved([-(d[0] as f32) * t, 0.0, -(d[1] as f32) * t]);
         let (account, tx) = (p.account, p.tx.clone());
-        self.send_on(conn, account, &tx, url, arrive);
+        self.send_on(conn, account, &tx, url, arrive, motion, frame);
+    }
+
+    /// Is this tile's `edge` open? An edge the Settings entity no longer lists is closed; a world
+    /// whose settings say nothing about edges stays open, as every world was before this rule.
+    fn edge_open(&self, edge: &str) -> bool {
+        let closed = serde_json::from_str::<serde_json::Value>(&self.settings_now())
+            .ok()
+            .and_then(|s| s["atlas"]["edges"].as_array().map(|e| !e.iter().any(|x| x.as_str() == Some(edge))))
+            .unwrap_or(false);
+        !closed
+    }
+
+    /// Work out this world's neighbours (neighbours.rs) and hand them to the link task if they
+    /// changed: the tiles over its open edges, and where its doorways lead.
+    pub(super) fn send_plan(&mut self) {
+        self.plan_at = Instant::now();
+        let (Some(plan), Some(base)) = (&self.plan, &self.cfg.link_base) else { return };
+        let tiles: Vec<String> = match &self.cfg.tile {
+            Some(tile) => vox_core::terrain::EDGES
+                .iter()
+                .filter(|(name, _)| self.edge_open(name))
+                .filter_map(|(_, d)| tile.next(*d))
+                .map(|next| next.id())
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut urls: Vec<String> = self
+            .entities
+            .map
+            .values()
+            .filter_map(|(_, c)| match c {
+                Component::Portal(p) => self.travel_of(p)?.0,
+                _ => None,
+            })
+            .collect();
+        urls.sort();
+        urls.dedup();
+        let next = neighbours::plan(&tiles, &urls, base, self.cfg.link_hosted);
+        plan.send_if_modified(|now| {
+            let changed = *now != next;
+            if changed {
+                *now = next;
+            }
+            changed
+        });
     }
 
     /// Someone stands at the objective: it's reached (once), everyone here is told, and the
@@ -1508,12 +1682,14 @@ impl WorldState {
             }
             ToServer::Build { id, node } => self.entity_edit(conn, id, Edit::Build { node }),
             ToServer::Unbuild { id, build } => self.start_unbuild(conn, id, build),
-            ToServer::Through { portal, side } => {
+            ToServer::Through { portal, side, motion } => {
                 if !p.bucket.take(now) {
                     return;
                 }
+                // how they say they move, held to what a player can do here
+                let motion = motion.sane(self.cfg.block_size);
                 if let Some(edge) = portal.strip_prefix("edge:") {
-                    return self.over_edge(conn, edge);
+                    return self.over_edge(conn, edge, motion);
                 }
                 let (at, account, tx) = (p.at, p.account, p.tx.clone());
                 // the doorway is a portal entity by name. A doorway within this world (no url)
@@ -1534,8 +1710,30 @@ impl WorldState {
                     return;
                 }
                 let arrive = door.carry(at, side);
+                let frame = door.frame(side);
                 let url = door.url.clone().unwrap_or_default();
-                self.send_on(conn, account, &tx, url, arrive);
+                // what the doorway shows decides whether it lets them through now (decision 4)
+                let dest = self.entities.map.values().find_map(|(_, c)| match c {
+                    Component::Portal(p) if p.name == portal => Some(self.door_dest(p)),
+                    _ => None,
+                });
+                let who = self.who(account);
+                let state = dest.as_ref().map_or(DoorState::Unknown, |d| doors::state(d, who, self.cfg.directory.is_some(), self.cfg.ways.as_deref()));
+                match (state, dest) {
+                    (DoorState::Waking, Some(doors::Dest::World(name))) => {
+                        let text = state.line(&door.name).unwrap_or_default();
+                        let _ = Self::send_to(&tx, &ToClient::Notice { text });
+                        self.held.retain(|h| h.conn != conn);
+                        self.held.push(Held { conn, name, door: door.name.clone(), sill: door.at, reach: HOLD_NEAR.max(door.size[0] * 0.5 + vox_core::in_blocks(1.0)), url, arrive, motion: motion.through(&frame), frame, since: Instant::now() });
+                    }
+                    (s, _) if !s.lets_through() => {
+                        let text = s.line(&door.name).unwrap_or_default();
+                        let _ = Self::send_to(&tx, &ToClient::Notice { text });
+                        // and the state itself, so the client stops waiting for an answer
+                        self.tell_door(conn, &door.name, s);
+                    }
+                    _ => self.send_on(conn, account, &tx, url, arrive, motion.through(&frame), frame),
+                }
             }
             ToServer::Climate(c) => {
                 // no air here to change

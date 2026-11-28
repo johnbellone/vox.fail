@@ -7,6 +7,7 @@
 //! - [`wire`]: the messages between a world server and its players.
 //! - [`auth`]: sign-in tokens from the directory, checked by world servers.
 //! - [`moves`]: how far a player can really move (the server's check on reported positions).
+//! - [`neighbour`]: the link between neighbouring world servers (its handshake and heartbeat).
 //! - [`terrain`]: generated ground for an atlas (a big map of tiles), the same on every machine.
 //! - [`relief`]: the shallow dips in natural ground, from a seed, the same on every machine.
 //! - [`portal`]: doorways to other places: where they are and where going through takes you.
@@ -26,9 +27,11 @@ pub mod entitle;
 pub mod entity;
 pub mod level;
 pub mod moves;
+pub mod neighbour;
 pub mod portal;
 pub mod predict;
 pub mod terrain;
+pub mod travel;
 pub mod ray;
 pub mod relief;
 pub mod rescale;

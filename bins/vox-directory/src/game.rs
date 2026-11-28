@@ -1423,6 +1423,9 @@ pub struct Trip {
     pub to: String,
     /// where they arrive there, blocks
     pub arrive: [f32; 3],
+    /// how they were moving, in the arriving world's frame (a world that doesn't say: still)
+    #[serde(default)]
+    pub motion: vox_core::travel::Motion,
 }
 
 /// What tells worlds apart in an address: the `<x>` of `/w/<x>/`, else the port. Two addresses
@@ -1484,6 +1487,8 @@ pub(crate) async fn travel(State(d): State<Directory>, h: HeaderMap, Json(t): Js
         world: to_id.clone(),
         arrive: t.arrive,
         nonce: u64::from_le_bytes(nonce),
+        // held to what a player can do, whatever the world asking says
+        motion: t.motion.sane(vox_core::BLOCK_M),
     };
     Ok(Json(json!({ "world": to_id, "url": to_url, "ticket": vox_core::auth::sign_ticket(&ticket, &d.0.key) })))
 }
