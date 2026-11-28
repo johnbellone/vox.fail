@@ -53,6 +53,7 @@ impl Default for Bindings {
             (TabPrev, &[K(KeyCode::KeyQ), K(KeyCode::PageUp)]),
             (Alternate, &[K(KeyCode::KeyX)]),
             (QuickWheel, &[K(KeyCode::Tab)]),
+            (EmoteWheel, &[K(KeyCode::KeyG)]),
             (PushToTalk, &[K(KeyCode::KeyB)]),
             (VoiceChannel, &[K(KeyCode::KeyN)]),
         ];
@@ -63,8 +64,11 @@ impl Default for Bindings {
             (Break, &[G::RightTrigger2]),
             (Place, &[G::LeftTrigger2]),
             (Pick, &[G::West]),
-            (HotbarNext, &[G::RightTrigger]),
-            (HotbarPrev, &[G::LeftTrigger]),
+            // the bumpers hold the two wheels; next and previous block have no button
+            (HotbarNext, &[]),
+            (HotbarPrev, &[]),
+            (QuickWheel, &[G::LeftTrigger]),
+            (EmoteWheel, &[G::RightTrigger]),
             (Inventory, &[G::North]),
             (Menu, &[G::Start]),
             (Chat, &[G::Select]),
@@ -75,8 +79,8 @@ impl Default for Bindings {
             (TabNext, &[G::RightTrigger]),
             (TabPrev, &[G::LeftTrigger]),
             (Alternate, &[G::West]),
-            (QuickWheel, &[G::DPadLeft]),
             (PushToTalk, &[G::DPadRight]),
+            (VoiceChannel, &[G::DPadLeft]),
         ];
         Bindings {
             kbm: kbm.iter().map(|(a, i)| (*a, i.to_vec())).collect(),
@@ -269,10 +273,17 @@ fn input_from_str(s: &str) -> Option<Input> {
     }
 }
 
+/// The layout of the default bindings that saved controls were made from. 1: the bumpers hold
+/// the block and emote wheels instead of cycling the hotbar (2026-11-28). Files from before
+/// have no version (0) and are moved to it once, by [`Bindings::migrate`].
+const LAYOUT: u32 = 1;
+
 /// What's saved: bindings by name, and the settings.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
 struct Saved {
+    /// the [`LAYOUT`] these were saved under
+    version: u32,
     keyboard: BTreeMap<Action, Vec<String>>,
     gamepad: BTreeMap<Action, Vec<String>>,
     settings: InputSettings,
@@ -282,6 +293,7 @@ impl Bindings {
     fn to_saved(&self, settings: &InputSettings) -> Saved {
         let names = |v: Vec<Input>| v.iter().filter_map(input_to_str).collect::<Vec<_>>();
         Saved {
+            version: LAYOUT,
             keyboard: self.kbm.iter().map(|(a, v)| (*a, names(v.clone()))).collect(),
             gamepad: self.pad.iter().map(|(a, v)| (*a, names(v.iter().map(|b| Input::Pad(*b)).collect()))).collect(),
             settings: settings.clone(),
@@ -303,7 +315,39 @@ impl Bindings {
                 .collect();
             b.pad.insert(*a, pads);
         }
+        if s.version < LAYOUT {
+            b.migrate(s.version);
+        }
         b
+    }
+
+    /// Move controls saved under an older layout to this one, keeping what the player chose
+    /// where it doesn't clash. Layout 1: the bumpers stop cycling blocks and hold the wheels (the
+    /// block wheel leaves the d-pad, which then gets the voice channel).
+    fn migrate(&mut self, from: u32) {
+        use GamepadButton as G;
+        if from < 1 {
+            for a in [Action::HotbarNext, Action::HotbarPrev] {
+                if let Some(v) = self.pad.get_mut(&a) {
+                    v.retain(|b| !matches!(b, G::LeftTrigger | G::RightTrigger));
+                }
+            }
+            // the block wheel moves to the left bumper unless the player had put it elsewhere
+            if matches!(self.pad(Action::QuickWheel), [] | [G::DPadLeft]) {
+                self.set(Action::QuickWheel, Input::Pad(G::LeftTrigger));
+            }
+            if self.pad(Action::EmoteWheel).is_empty() {
+                self.set(Action::EmoteWheel, Input::Pad(G::RightTrigger));
+            }
+            let taken = |b: &Bindings, btn: G| Action::ALL.iter().any(|a| a.in_game() && b.pad(*a).contains(&btn));
+            if self.pad(Action::VoiceChannel).is_empty() && !taken(self, G::DPadLeft) {
+                self.set(Action::VoiceChannel, Input::Pad(G::DPadLeft));
+            }
+            let key_taken = Action::ALL.iter().any(|a| a.in_game() && self.kbm(*a).contains(&Input::Key(KeyCode::KeyG)));
+            if self.kbm(Action::EmoteWheel).is_empty() && !key_taken {
+                self.kbm.insert(Action::EmoteWheel, vec![Input::Key(KeyCode::KeyG)]);
+            }
+        }
     }
 }
 
@@ -371,10 +415,9 @@ mod tests {
         for a in Action::ALL {
             let moving = matches!(a, Action::Forward | Action::Backward | Action::Left | Action::Right);
             let wheel = matches!(a, Action::HotbarNext | Action::HotbarPrev);
-            // every nameable pad button already has a game action, so VoiceChannel is
-            // keyboard-only by default; rebind it from the controls screen if you want a pad key
-            let keyboard_only = matches!(a, Action::VoiceChannel);
-            assert!(moving || keyboard_only || !b.pad(a).is_empty(), "{a:?} has no gamepad button");
+            // next and previous block have no pad button: the bumpers hold the block and emote
+            // wheels, which reach every block at once
+            assert!(moving || wheel || !b.pad(a).is_empty(), "{a:?} has no gamepad button");
             assert!(wheel || !b.kbm(a).is_empty(), "{a:?} has no key");
         }
     }
@@ -389,6 +432,45 @@ mod tests {
         assert_eq!(b2, b);
         assert_eq!(s2, s);
         assert_eq!(from_json("not json").0, Bindings::default());
+    }
+
+    /// Controls saved before the wheels moved to the bumpers (no version, the old layout).
+    fn old_layout(quick_wheel: &str) -> String {
+        let mut v: serde_json::Value = serde_json::from_str(&to_json(&Bindings::default(), &InputSettings::default())).unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("version");
+        let pad = o.get_mut("gamepad").unwrap().as_object_mut().unwrap();
+        pad.insert("QuickWheel".into(), serde_json::json!([format!("pad:{quick_wheel}")]));
+        pad.insert("HotbarNext".into(), serde_json::json!(["pad:RightBumper"]));
+        pad.insert("HotbarPrev".into(), serde_json::json!(["pad:LeftBumper"]));
+        pad.insert("VoiceChannel".into(), serde_json::json!([]));
+        pad.remove("EmoteWheel");
+        o.get_mut("keyboard").unwrap().as_object_mut().unwrap().remove("EmoteWheel");
+        v.to_string()
+    }
+
+    #[test]
+    fn old_saved_controls_move_the_bumpers_to_the_wheels_once() {
+        use GamepadButton as G;
+        let old = old_layout("DPadLeft");
+        let saved: Saved = serde_json::from_str(&old).unwrap();
+        assert_eq!(saved.version, 0);
+        // the old file really names the old buttons (so the move below is tested, not defaults)
+        assert_eq!(input_from_str(&saved.gamepad[&Action::HotbarNext][0]), Some(Input::Pad(G::RightTrigger)));
+        let (b, _) = from_json(&old);
+        assert_eq!(b.pad(Action::QuickWheel), &[G::LeftTrigger]);
+        assert_eq!(b.pad(Action::EmoteWheel), &[G::RightTrigger]);
+        assert!(b.pad(Action::HotbarNext).is_empty() && b.pad(Action::HotbarPrev).is_empty());
+        assert_eq!(b.pad(Action::VoiceChannel), &[G::DPadLeft]);
+        assert_eq!(b.kbm(Action::EmoteWheel), &[Input::Key(KeyCode::KeyG)]);
+        assert_eq!(b, Bindings::default(), "old defaults become the new defaults");
+        // saved again, it is the new layout and isn't moved twice
+        let (again, _) = from_json(&to_json(&b, &InputSettings::default()));
+        assert_eq!(again, b);
+        // a block wheel the player had moved elsewhere stays where they put it
+        let (moved, _) = from_json(&old_layout("North"));
+        assert_eq!(moved.pad(Action::QuickWheel), &[G::North]);
+        assert_eq!(moved.pad(Action::EmoteWheel), &[G::RightTrigger]);
     }
 
     #[test]

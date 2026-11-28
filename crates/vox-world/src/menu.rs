@@ -27,6 +27,7 @@ use crate::{
         hints::{self, Hint, HintStyle, hint_node, pixel_shadow},
     },
     voice::plugin::{VoiceSettings, next_channel},
+    emote::EmoteSettings,
 };
 use vox_core::wire::VOICE_PARTY;
 
@@ -38,6 +39,7 @@ pub enum Screen {
     Controls,
     Settings,
     Voice,
+    Emotes,
 }
 
 impl Screen {
@@ -48,6 +50,7 @@ impl Screen {
             Screen::Controls => "Controls",
             Screen::Settings => "Settings",
             Screen::Voice => "Voice",
+            Screen::Emotes => "Emotes",
         }
     }
 }
@@ -116,10 +119,12 @@ pub enum Choice {
     VoiceStep(VoiceItem, i8),
     /// mute or hear one player (their number), by the Voice screen's rows
     Mute(u32),
-    /// put this block in your hand (the current hotbar slot)
+    /// put this block in your hand (the current quick slot)
     Block(u16),
-    /// make this hotbar slot the current one
+    /// make this quick slot the current one
     Slot(usize),
+    /// step the emote in this slot of the emote wheel through the character's clips
+    Emote(usize, i8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,7 +243,8 @@ fn build(
     active: Res<ActiveDevice>,
     bindings: Res<Bindings>,
     settings: Res<InputSettings>,
-    voice: Option<Res<VoiceSettings>>,
+    // voice and the emotes, in one parameter to stay within Bevy's sixteen
+    extra: (Option<Res<VoiceSettings>>, Option<Res<EmoteSettings>>),
     w: Res<WorldClient>,
     blocks: Res<Blocks>,
     assets: Res<AssetServer>,
@@ -248,6 +254,7 @@ fn build(
     choices: Query<(Entity, &Choice)>,
     mut seen: Local<Seen>,
 ) {
+    let (voice, emotes) = extra;
     // the controls screen shows the device in use: redraw when it changes
     let device_changed = seen.device != Some(active.generation);
     seen.device = Some(active.generation);
@@ -262,7 +269,8 @@ fn build(
         || roster_changed
         || (device_changed && menus.top() == Some(Screen::Controls) && menus.capture.is_none())
         || (bindings.is_changed() && menus.top() == Some(Screen::Controls))
-        || (settings.is_changed() && menus.top() == Some(Screen::Settings));
+        || (settings.is_changed() && menus.top() == Some(Screen::Settings))
+        || (emotes.as_ref().is_some_and(|e| e.is_changed()) && menus.top() == Some(Screen::Emotes));
     if !redraw {
         return;
     }
@@ -330,6 +338,7 @@ fn build(
                         ("Resume", Choice::Resume),
                         ("Blocks", Choice::Open(Screen::Inventory)),
                         ("Controls", Choice::Open(Screen::Controls)),
+                        ("Emotes", Choice::Open(Screen::Emotes)),
                         ("Voice", Choice::Open(Screen::Voice)),
                         ("Settings", Choice::Open(Screen::Settings)),
                         ("Leave world", Choice::Leave),
@@ -395,8 +404,11 @@ fn build(
                         .id();
                     note(e, Choice::ResetAll);
                 }
-                Screen::Settings | Screen::Voice => {
-                    let rows: Vec<Row> = if screen == Screen::Voice {
+                Screen::Settings | Screen::Voice | Screen::Emotes => {
+                    let rows: Vec<Row> = if screen == Screen::Emotes {
+                        panel.spawn(text("The emote wheel: hold the right bumper, or G. Kept on this device.", &style, 9.0, QUIET));
+                        emotes.as_deref().map(emote_rows).unwrap_or_default()
+                    } else if screen == Screen::Voice {
                         if let Some(line) = voice_browser_line(cfg!(target_arch = "wasm32")) {
                             // the browser has no voice yet, so the line is all it shows
                             panel.spawn(text(line, &style, 10.0, INK));
@@ -489,7 +501,7 @@ fn build(
                                 });
                             }
                         });
-                    panel.spawn(text("Your hotbar", &style, 10.0, QUIET));
+                    panel.spawn(text("Quick blocks (the top of the block wheel; the number keys)", &style, 10.0, QUIET));
                     panel.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(4.0), ..default() }).with_children(|r| {
                         for i in 0..9 {
                             let c = Choice::Slot(i);
@@ -541,6 +553,25 @@ fn build(
 // ---- voice
 
 type Row = (String, String, Vec<(Choice, String)>);
+
+/// The Emotes screen's rows: each slot of the wheel, its emote, and buttons to step it.
+fn emote_rows(e: &EmoteSettings) -> Vec<Row> {
+    e.slots
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (format!("Emote {}", i + 1), name.clone(), vec![(Choice::Emote(i, -1), "<".into()), (Choice::Emote(i, 1), ">".into())]))
+        .collect()
+}
+
+/// The emote `step` places along `clips` from `current` (round the end); with no clips known
+/// (the character isn't loaded), the defaults.
+pub fn step_emote(current: &str, step: i8, clips: &[String]) -> String {
+    let fallback: Vec<String> = crate::emote::DEFAULT_EMOTES.iter().map(|s| s.to_string()).collect();
+    let list = if clips.is_empty() { &fallback } else { clips };
+    let n = list.len() as i32;
+    let at = list.iter().position(|c| c == current).map(|i| i as i32).unwrap_or(if step > 0 { -1 } else { 0 });
+    list[(at + i32::from(step)).rem_euclid(n) as usize].clone()
+}
 
 /// What the Voice screen says in place of its rows on the browser, which has no voice yet.
 fn voice_browser_line(browser: bool) -> Option<&'static str> {
@@ -681,6 +712,7 @@ fn choose(
     mut bindings: ResMut<Bindings>,
     mut settings: ResMut<InputSettings>,
     mut voice: Option<ResMut<VoiceSettings>>,
+    emotes: (Option<ResMut<EmoteSettings>>, Option<Res<crate::LocalAvatar>>),
     mut w: ResMut<WorldClient>,
     active: Res<ActiveDevice>,
     time: Res<Time<Real>>,
@@ -742,13 +774,25 @@ fn choose(
         Choice::Block(id) => {
             let slot = w.slot;
             w.set_hotbar(slot, id);
+            w.hand_prop = None;
             menus.dirty = true;
         }
         Choice::Slot(i) => {
             if i < w.hotbar().len() {
                 w.slot = i;
+                w.hand_prop = None;
             }
             menus.dirty = true;
+        }
+        Choice::Emote(i, step) => {
+            // (EmotePlugin saves the change)
+            let (mut e, avatar) = emotes;
+            if let Some(e) = e.as_deref_mut()
+                && let Some(current) = e.slots.get(i).cloned()
+            {
+                let clips = avatar.as_ref().map(|a| a.clips.as_slice()).unwrap_or_default();
+                e.slots[i] = step_emote(&current, step, clips);
+            }
         }
     }
 }
@@ -1015,5 +1059,16 @@ mod tests {
         app.world_mut().resource_mut::<WorldClient>().ready = false;
         press(&mut app, Action::Menu);
         assert_eq!(top(&app), None);
+    }
+
+    #[test]
+    fn emotes_step_round_the_clips() {
+        let clips: Vec<String> = ["Sleep", "Talk", "Victory"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(step_emote("Talk", 1, &clips), "Victory");
+        assert_eq!(step_emote("Victory", 1, &clips), "Sleep", "round the end");
+        assert_eq!(step_emote("Sleep", -1, &clips), "Victory");
+        assert_eq!(step_emote("Gone", 1, &clips), "Sleep", "one it doesn't have starts at the beginning");
+        assert_eq!(step_emote("Gone", -1, &clips), "Victory");
+        assert_eq!(step_emote("Victory", 1, &[]), crate::emote::DEFAULT_EMOTES[1], "no clips known: the defaults");
     }
 }

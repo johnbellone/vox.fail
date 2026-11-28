@@ -1,4 +1,8 @@
 ## 2026-11-28
+* **Update** [2026-11-28T05:14:59Z]: Updated concept `architecture/vox-world.md`. — HUD row: the wheels replace the hotbar (vox-jps).
+* **Update** [2026-11-28T05:14:30Z]: Updated concept `architecture/controls-and-hud-design.md`. — Link the wheels decision.
+* **Update** [2026-11-28T05:14:09Z]: Updated concept `architecture/controls-and-hud-design.md`. — Wheels replace the hotbar (vox-jps).
+* **Creation** [2026-11-28T05:13:53Z]: Documented concept `decisions/wheels-replace-hotbar.md` (Wheels Replace the Hotbar (Block Wheel on LB, Emote Wheel on RB)). — Recorded the wheels decision (bead vox-jps).
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/asset-pipeline.md`. — Level builders write through rescale_level.py at quarter-metre blocks.
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/vox-client-and-web.md`. — Device profiles: Start.detail, vox-client --detail, the page's deviceDetail; editor portal limits and prop units at quarter-metre blocks.
 * **Update** [2026-11-28T03:25:04Z]: Updated concept `architecture/weather-simulation.md`. — The luminous Void is a haze now (humidity 0.98, no fog bank), with a thinner fog volume and 450 m visibility.

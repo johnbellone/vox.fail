@@ -28,12 +28,14 @@ pub fn controls(
     mut walkers: Query<&mut Transform, With<Walker>>,
     mut shown: Query<&mut Visibility>,
     mut repeat: Local<BuildRepeat>,
-    // the quick wheel (if the HUD is in) and the prop cells that block walking (if props are in);
-    // one parameter, to stay within Bevy's sixteen
-    overlay: (Option<Res<crate::hud::QuickWheel>>, Option<Res<crate::props::PropOccupancy>>),
+    // the wheels (if they are in) and the prop cells that block walking (if props are in); one
+    // parameter, to stay within Bevy's sixteen
+    overlay: (Option<Res<crate::wheel::Wheels>>, Option<Res<crate::props::PropOccupancy>>),
     mut editor: Option<ResMut<crate::editor::EditorState>>,
 ) {
-    let (wheel, props) = overlay;
+    let (wheels, props) = overlay;
+    // a wheel open has the mouse and the right stick, and you stand still while you choose
+    let wheel_open = wheels.is_some_and(|q| q.is_open());
     // this frame's click is not known to be a pick until the mouse is looked at below
     if let Some(e) = editor.as_mut() {
         e.pointer_claimed = false;
@@ -124,8 +126,7 @@ pub fn controls(
             w.pick = Some((ray.origin / size, Vec3::from(ray.direction)));
         }
     }
-    // ---- look and zoom (not while the quick wheel has the mouse and stick)
-    let wheel_open = wheel.is_some_and(|q| q.open);
+    // ---- look and zoom (not while a wheel has the mouse and stick)
     if w.captured && !diablo && !wheel_open {
         w.cam_yaw -= actions.mouse_delta.x * settings.mouse_look;
         w.cam_pitch -= actions.mouse_delta.y * settings.mouse_look;
@@ -150,8 +151,8 @@ pub fn controls(
         }
     }
     // ---- moving
-    let mut stick = actions.movement;
-    let mut jump = actions.just_pressed(A::Jump);
+    let mut stick = if wheel_open { Vec2::ZERO } else { actions.movement };
+    let mut jump = actions.just_pressed(A::Jump) && !wheel_open;
     jump |= std::mem::take(&mut w.auto_jump);
     if let Some((dir, until)) = w.auto {
         if now < until {
@@ -160,12 +161,12 @@ pub fn controls(
             w.auto = None;
         }
     }
-    let up = actions.pressed(A::Jump);
-    let down = actions.pressed(A::Down);
+    let up = actions.pressed(A::Jump) && !wheel_open;
+    let down = actions.pressed(A::Down) && !wheel_open;
     let run = actions.pressed(A::Sprint);
     // fly: its own button, or jump twice quickly
-    let mut toggle_fly = actions.just_pressed(A::Fly);
-    if actions.just_pressed(A::Jump) {
+    let mut toggle_fly = actions.just_pressed(A::Fly) && !wheel_open;
+    if jump {
         if now - repeat.last_jump < 0.3 {
             toggle_fly = true;
             repeat.last_jump = -1.0;
@@ -173,14 +174,16 @@ pub fn controls(
             repeat.last_jump = now;
         }
     }
-    // ---- the hotbar
-    if let Some(i) = actions.digit {
-        if i < w.hotbar.len() {
-            w.slot = i;
-        }
+    // ---- the quick blocks: the number keys, and (if bound) next and previous; while a wheel
+    // is open, the mouse wheel turns its pages instead
+    if let Some(i) = actions.digit.filter(|_| !wheel_open)
+        && i < w.hotbar.len()
+    {
+        w.slot = i;
+        w.hand_prop = None;
     }
-    let mut cycle = actions.just_pressed(A::HotbarNext) as i32 - actions.just_pressed(A::HotbarPrev) as i32;
-    if actions.scroll.abs() > 0.0 {
+    let mut cycle = if wheel_open { 0 } else { actions.just_pressed(A::HotbarNext) as i32 - actions.just_pressed(A::HotbarPrev) as i32 };
+    if actions.scroll.abs() > 0.0 && !wheel_open {
         if diablo && !shift {
             // the wheel zooms the camera in and out
             w.zoom = (w.zoom * (1.0 - actions.scroll.signum() * 0.12)).clamp(4.0, 45.0);
@@ -191,6 +194,7 @@ pub fn controls(
     if cycle != 0 && !w.hotbar.is_empty() {
         let n = w.hotbar.len() as i32;
         w.slot = ((w.slot as i32 + cycle).rem_euclid(n)) as usize;
+        w.hand_prop = None;
     }
     if edit {
         // nothing turns the edit flight off
@@ -209,7 +213,11 @@ pub fn controls(
     let turned = actions.mouse_delta.length() * settings.mouse_look * w.captured as i32 as f32
         + actions.look_stick.length() * settings.stick_look * dt;
     let (mut place, mut remove) = (false, false);
-    if diablo && !pad_active {
+    if wheel_open {
+        // a wheel's choosing is not building; a button held as it closes doesn't count
+        repeat.held = None;
+        repeat.armed = false;
+    } else if diablo && !pad_active {
         // from above, the pointer builds: right click places, shift and right click removes
         place = clicked.1 && !shift;
         remove = clicked.1 && shift;
@@ -224,7 +232,7 @@ pub fn controls(
         }
         (remove, place) = repeat.step(held, just, now, turned);
     }
-    let pick = actions.just_pressed(A::Pick);
+    let pick = actions.just_pressed(A::Pick) && !wheel_open;
     // ---- where to walk
     let stick = stick.clamp_length_max(1.0);
     // "forward" is up the screen: the camera's direction on the ground; through a cut to a
@@ -244,6 +252,7 @@ pub fn controls(
     let mut dir = fwd * stick.y + right * stick.x;
     // a click (or holding the button) on the ground walks there
     if diablo
+        && !wheel_open
         && mouse.pressed(MouseButton::Left)
         && !shift
         && !click_taken
@@ -373,6 +382,11 @@ pub fn controls(
     if let Some(h) = w.target {
         if remove {
             w.edit(h.cell, 0);
+        } else if place && !edit && w.hand_prop.is_some() {
+            // a prop in your hand: put it down on the face you point at, facing you
+            let c = [h.cell[0] + h.normal[0], h.cell[1] + h.normal[1], h.cell[2] + h.normal[2]];
+            let yaw = prop_yaw(w.yaw);
+            w.put_prop(c, yaw);
         } else if place {
             let c = [h.cell[0] + h.normal[0], h.cell[1] + h.normal[1], h.cell[2] + h.normal[2]];
             let b = placed_block(
@@ -387,6 +401,14 @@ pub fn controls(
             w.pick_block(b);
         }
     }
+}
+
+/// The facing (in [`vox_core::entity::PROP_YAWS`] steps) of a prop put down by a player facing
+/// `yaw` (radians, as `WorldClient::yaw`): turned to face them, the nearest step.
+pub fn prop_yaw(yaw: f32) -> u8 {
+    let steps = vox_core::entity::PROP_YAWS as f32;
+    let turn = (yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU;
+    ((turn * steps).round() as i32).rem_euclid(steps as i32) as u8
 }
 
 /// The block a place click builds. With the editor's Blocks tool, it is the block the page

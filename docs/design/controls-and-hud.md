@@ -103,6 +103,45 @@ module, later its own folder per [repo-structure.md](repo-structure.md)). Game c
   label; it updates by itself when the device changes. The same glyph sheets are exported for
   the web pages.
 
+## Wheels instead of a hotbar (decided 2026-11-28)
+
+The owner's decision: the hotbar goes; two wheels held open by the bumpers replace it.
+
+- **The block wheel** (hold the **left bumper**; **Tab** on the keyboard).
+  - **The top** holds the world's quick blocks: the nine the hotbar held. Each world's `hotbar`
+    setting gives them, and the inventory screen changes them.
+  - **The bottom half** holds two sectors, **All blocks** and **Props**. Pointing at one and
+    holding for a moment (or pressing South) opens a **second wheel** over the first, listing
+    every block in the world's palette, or the props the world accepts. It is worked by the
+    right stick (or the mouse), sixteen to a page, with the left stick (or the mouse wheel)
+    turning pages; East (or Backspace) goes back to the first wheel. (The d-pad can't turn them:
+    d-pad right is push to talk.)
+  - **Letting go** takes what is pointed at. A block taken from All blocks goes into the current
+    quick slot, as the inventory screen does. A prop goes in your hand, and Place puts it down
+    where you aim, through the same checks as the editor (your plot, support, a free footprint).
+  - The keyboard's **1 to 9** still pick the quick blocks directly; there is no bar on screen.
+- **The emote wheel** (hold the **right bumper**; **G** on the keyboard).
+  - Eight emotes round the wheel, chosen by the player from their character's animations and
+    saved on this device, like the controls.
+  - **The right stick** (or the mouse) picks the emote.
+  - **The left stick** points at a target: the nearest player, prop or doorway that way, within
+    16 m, is snapped to and named in the middle of the wheel. On the keyboard, it is the one
+    nearest the middle of the view.
+  - **Letting go** plays the emote, turning you to face the target first. Moving stops it.
+    Others see it through the pose stream; nothing new goes over the network.
+- **What's on screen instead of the bar**: what is in your hand, small, bottom right: a block's
+  picture (a prop's name), with its name beside it for two seconds after it changes.
+- **The bumpers no longer cycle blocks.** Next and previous block stay as actions, with no
+  default buttons on the gamepad. On the keyboard the mouse wheel still cycles, while the wheel
+  zooms from above. Saved controls from before are moved to the new layout once, by a version
+  in the saved file.
+- **Menus are unchanged**: the bumpers still switch tabs there.
+- **Apps without the wheels** (the streaming app's world view adds no `WheelPlugin`) keep the
+  number keys and the mouse wheel, but a gamepad there has no way to change block now.
+
+The rest of this section's older text (the hotbar at the bottom centre, the quick wheel on the
+d-pad) is replaced by the above.
+
 ## HUD
 
 Drawn in `bevy_ui` in the pixel style (the Press Start 2P font, the game's palette):

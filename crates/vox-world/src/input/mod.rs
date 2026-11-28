@@ -65,16 +65,21 @@ pub enum Action {
     TabPrev,
     /// menus: a second action on what has focus (split a stack, reset a binding)
     Alternate,
-    /// hold for the quick wheel: point at a hotbar block (right stick or mouse), let go to take it
+    /// hold for the block wheel: point at a quick block (right stick or mouse), let go to take
+    /// it; its two lower sectors open a second wheel of every block or every prop
     QuickWheel,
     /// hold to talk to the people you can hear (nearby, or your raid party)
     PushToTalk,
     /// cycle the voice channel: nearby or party
     VoiceChannel,
+    /// hold for the emote wheel: the right stick picks an emote, the left stick a target; let
+    /// go to play it. (Added last: saved controls name actions, so the order is free, but the
+    /// list below keeps the order of the controls screen.)
+    EmoteWheel,
 }
 
 impl Action {
-    pub const ALL: [Action; 25] = [
+    pub const ALL: [Action; 26] = [
         Action::Forward,
         Action::Backward,
         Action::Left,
@@ -98,6 +103,7 @@ impl Action {
         Action::TabPrev,
         Action::Alternate,
         Action::QuickWheel,
+        Action::EmoteWheel,
         Action::PushToTalk,
         Action::VoiceChannel,
     ];
@@ -127,7 +133,8 @@ impl Action {
             Action::TabNext => "Next tab",
             Action::TabPrev => "Previous tab",
             Action::Alternate => "More",
-            Action::QuickWheel => "Quick select",
+            Action::QuickWheel => "Block wheel",
+            Action::EmoteWheel => "Emotes",
             Action::PushToTalk => "Push to talk",
             Action::VoiceChannel => "Voice channel",
         }
