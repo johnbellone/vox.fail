@@ -65,6 +65,9 @@ start uses the new one. Pull requests and `main` only run the Worker's checks (`
 To go back: `bunx wrangler rollback` in `apps/edge` (the Worker and its image reference), or tag
 the older commit again.
 
+The same tag also builds the desktop client for Steam (`.github/workflows/steam.yml`): see
+[steam/README.md](steam/README.md).
+
 ### Data, backups and restores
 
 - **What's stored:** the databases in R2, under `vox-data/vox/<name>.db/`: `directory.db`

@@ -1,0 +1,162 @@
+name: Steam
+
+# Builds vox-client for Windows and Linux and uploads both to Steam's test branch, for the same
+# version tag that release.yml puts live on vox.fail, so the Steam client always matches the
+# servers it talks to. Promoting a build to the default branch (what players get) is done by
+# hand on the Steamworks Builds page. Setup, secrets and the release steps:
+# deploy/steam/README.md.
+#
+# Each depot is the client and the files it looks for beside it (bins/vox-client/src/main.rs,
+# find_root): vox-client(.exe), assets/ and data/.
+#
+# The upload job runs only when the repository variable STEAM_APP_ID is set, so the builds can
+# run (and their artifacts be tried) before the Steamworks app exists. The variables
+# (STEAM_APP_ID, STEAM_DEPOT_WINDOWS, STEAM_DEPOT_LINUX, optional STEAM_BRANCH) are the
+# repository's: a job's `if` can't see an environment's. The secrets (STEAM_USERNAME,
+# STEAM_CONFIG_VDF) are in the "steam" environment, limited to v* tags.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: steam
+  cancel-in-progress: false
+
+env:
+  # Valve's Steam Linux Runtime 3.0 SDK: building against it means the client runs with the
+  # libraries Steam gives it (pick "Steam Linux Runtime 3.0 (sniper)" in Steamworks to match)
+  SNIPER_SDK: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked -p vox-client
+      - name: Stage the depot
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory steam/windows | Out-Null
+          Copy-Item target/release/vox-client.exe steam/windows/
+          Copy-Item -Recurse assets steam/windows/assets
+          Copy-Item -Recurse data steam/windows/data
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vox-client-windows
+          path: steam/windows/
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      # checked out here, where git-lfs is, and built in the SDK container with the tree mounted
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/cache@v4
+        with:
+          # the downloaded crates only: release builds are rare, and target/ would pile up a
+          # build per Rust release in the cache
+          path: |
+            .steam-build/cargo/registry
+            .steam-build/cargo/git
+          key: sniper-crates-${{ hashFiles('Cargo.lock') }}
+          restore-keys: sniper-crates-
+      - name: Build in the Steam Linux Runtime SDK
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src \
+            -e CARGO_HOME=/src/.steam-build/cargo -e RUSTUP_HOME=/src/.steam-build/rustup \
+            "$SNIPER_SDK" bash -euo pipefail -c '
+              # the libraries the client links (cpal: ALSA; gilrs: udev; winit: Wayland) must come from the runtime
+              pkg-config --exists alsa libudev wayland-client || { echo "the SDK image lacks the ALSA, udev or Wayland headers"; exit 1; }
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+              "$CARGO_HOME/bin/cargo" build --release --locked -p vox-client
+              # the newest glibc symbol the binary uses, i.e. the oldest glibc it runs on (the runtime has 2.31)
+              { objdump -T target/release/vox-client | grep -o "GLIBC_[0-9.]*" | sort -uV | tail -1; } || echo "(could not read the glibc versions)"
+              mkdir -p steam/linux
+              cp target/release/vox-client steam/linux/
+              cp -r assets data steam/linux/
+              chown -R "$(stat -c %u:%g /src)" steam target .steam-build
+            '
+      # artifacts don't keep file modes, so the program goes up as a tar to stay executable
+      - name: Pack the depot
+        run: tar -C steam -cf vox-client-linux.tar linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vox-client-linux
+          path: vox-client-linux.tar
+
+  upload:
+    needs: [windows, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: steam
+    # the steam environment only admits v* tags, so a manual run from a branch builds and stops
+    if: vars.STEAM_APP_ID != '' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: vox-client-windows
+          path: steam/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: vox-client-linux
+      - name: Unpack the Linux depot
+        run: |
+          tar -C steam -xf vox-client-linux.tar
+          test -x steam/linux/vox-client && test -f steam/linux/data/blocks.json
+          test -f steam/windows/vox-client.exe && test -f steam/windows/data/blocks.json
+      - name: Install steamcmd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lib32gcc-s1
+          mkdir -p "$RUNNER_TEMP/steamcmd"
+          curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -C "$RUNNER_TEMP/steamcmd" -xz
+          # the first run updates steamcmd itself
+          "$RUNNER_TEMP/steamcmd/steamcmd.sh" +quit
+      - name: Restore the build account's saved login
+        env:
+          STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
+        run: |
+          [ -n "$STEAM_CONFIG_VDF" ] || { echo "the steam environment has no STEAM_CONFIG_VDF secret"; exit 1; }
+          # steamcmd from the tarball may read it from its own folder or from ~/Steam: put it in both
+          for d in "$RUNNER_TEMP/steamcmd/config" "$HOME/Steam/config"; do
+            mkdir -p "$d"
+            printf '%s' "$STEAM_CONFIG_VDF" | base64 -d > "$d/config.vdf"
+          done
+      - name: Upload to Steam
+        timeout-minutes: 30
+        env:
+          STEAMCMD: ${{ runner.temp }}/steamcmd/steamcmd.sh
+          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
+          APP: ${{ vars.STEAM_APP_ID }}
+          DEPOT_WINDOWS: ${{ vars.STEAM_DEPOT_WINDOWS }}
+          DEPOT_LINUX: ${{ vars.STEAM_DEPOT_LINUX }}
+          BRANCH: ${{ vars.STEAM_BRANCH || 'beta' }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          deploy/steam/upload.sh --app "$APP" --branch "$BRANCH" \
+            --desc "$VERSION (${GITHUB_SHA::7})" --root steam --output "$RUNNER_TEMP/steam-output" \
+            --depot "$DEPOT_WINDOWS=windows" --depot "$DEPOT_LINUX=linux"
+      - name: Keep steamcmd's build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-build-logs
+          path: ${{ runner.temp }}/steam-output/
+          if-no-files-found: ignore
+      - name: Forget the login
+        if: always()
+        run: rm -f "$RUNNER_TEMP/steamcmd/config/config.vdf" "$HOME/Steam/config/config.vdf"

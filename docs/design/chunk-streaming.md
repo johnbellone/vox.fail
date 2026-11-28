@@ -321,6 +321,10 @@ the one below, so the levels are the coarse copies the rings need (the clipmap i
   ring chunk count as air when it is meshed, so its sides are closed. Those side faces act as
   skirts, and no cracks show where it meets a finer chunk. Finer data arrives before coarser
   is dropped.
+- **Simulation** uses the same tree as its index: awake bits, per-node summaries (wetness,
+  snow, temperature, damage), where to sample (coupling points, weighted ticks, ray queries) and
+  bricks for its fields, with sparse per-block state. See
+  [ADR 0001](../decisions/0001-simulation-in-the-voxel-octree.md).
 - Generated ground (atlas tiles) could build its octree on the client without the network.
   That waits for zones and the generator (world-scaling.md).
 
@@ -370,7 +374,9 @@ The same octree, traced per pixel on the GPU instead of meshed:
   first. Workers would need wasm threads and cross-origin isolation headers; revisit only if
   measurements show the budget can't keep up.
 - **Cave culling** (15 bits a chunk) for the islands, the sea's depths and the dungeons, after
-  frustum culling. It matters little in the open Void, so it comes last.
+  frustum culling. It matters little in the open Void, so it comes last. Interiors we author
+  get exact culling from rooms and openings instead
+  ([ADR 0002](../decisions/0002-bsn-scenes-rooms-and-openings.md)).
 - **Fewer draw calls**: count them first. If they bound frame time, merge each 2 × 2 × 2 group
   of coarse chunks into one mesh per material. Multi-draw indirect can't be relied on in
   browsers yet.
