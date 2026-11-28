@@ -330,6 +330,11 @@ pub fn controls(
         w.grounded = !w.fly
             && (contact.ground || (w.vy <= 0.0 && w.body.on_ground(with_props(|c| w.stands_on(c), occupancy))));
     }
+    // how fast we really moved, for a crossing to carry on
+    if frame > 0.0 {
+        let v = [0, 1, 2].map(|i| (w.body.pos[i] - before[i]) / frame);
+        w.velocity = if v.iter().all(|x| x.is_finite()) { v } else { [0.0; 3] };
+    }
     // walking to a point and stuck against something: give up
     if w.goal.is_some() && dir.length() > 0.1 {
         let moved = Vec2::new(w.body.pos[0] - before[0], w.body.pos[2] - before[2]).length();

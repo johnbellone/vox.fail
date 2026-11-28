@@ -8,6 +8,7 @@ use crate::props;
 use vox_core::edit::{self, Ctx, EYES, PlotArea, REACH, Role};
 use vox_core::entity::{Axis, Component, Dest, EntityWhy, Portal, Prop, Settings, Spawn, prop_cell};
 use vox_core::portal::Door;
+use vox_core::travel::{Frame, Motion};
 use vox_core::wire::EntityChange;
 
 /// How far from a doorway's plane (blocks) a player may be and still go through it: their last
@@ -266,9 +267,9 @@ impl WorldState {
                         }
                     }
                 }
-                Event::Ticket { conn, url, ticket, arrive } => {
+                Event::Ticket { conn, url, ticket, arrive, motion, frame } => {
                     if let Some(p) = self.players.get(&conn) {
-                        let _ = Self::send_to(&p.tx, &ToClient::Travel { url, ticket, arrive });
+                        let _ = Self::send_to(&p.tx, &ToClient::Travel { url, ticket, arrive, motion, frame });
                     }
                 }
                 Event::Editor { conn, account, editor } => self.editor_answer(conn, account, editor),
@@ -583,18 +584,23 @@ impl WorldState {
 
     /// On to `url`, arriving at `arrive`: with a ticket from the directory when there is one to
     /// be had (a signed-in player, a directory), else straight away without.
-    fn send_on(&self, conn: u64, account: Option<u64>, tx: &mpsc::Sender<Message>, url: String, arrive: [f32; 3]) {
+    /// Send `conn` on to `url`, arriving at `arrive` moving as `motion` (both in the arriving
+    /// world's frame) through `frame`: with a ticket from the directory when there is one.
+    #[allow(clippy::too_many_arguments)]
+    fn send_on(&self, conn: u64, account: Option<u64>, tx: &mpsc::Sender<Message>, url: String, arrive: [f32; 3], motion: Motion, frame: Frame) {
+        // (turned into the far frame it may have grown past a limit by rounding: held again)
+        let motion = motion.sane(self.cfg.block_size);
         match (&self.trips, account) {
             (Some(trips), Some(account)) => {
-                let trip = Trip { conn, account, to: url.clone(), arrive };
+                let trip = Trip { conn, account, to: url.clone(), arrive, motion, frame };
                 if trips.try_send(trip).is_err() {
                     // the directory is far behind: go on without a ticket
-                    let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive });
+                    let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive, motion, frame });
                 }
             }
             // no directory here, or a guest: no ticket to be had
             _ => {
-                let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive });
+                let _ = Self::send_to(tx, &ToClient::Travel { url, ticket: None, arrive, motion, frame });
             }
         }
     }
@@ -602,7 +608,7 @@ impl WorldState {
     /// Off this tile's `edge` (`east`, `west`, `south`, `north`) onto the next tile of the
     /// atlas, if there is one that way and they're really at that edge: they come out at the
     /// same place on the map, just inside the next tile, standing on its ground.
-    fn over_edge(&mut self, conn: u64, edge: &str) {
+    fn over_edge(&mut self, conn: u64, edge: &str, motion: Motion) {
         let Some(tile) = &self.cfg.tile else { return };
         let Some((_, d)) = vox_core::terrain::EDGES.iter().find(|(n, _)| *n == edge) else { return };
         let Some(next) = tile.next(*d) else { return };
@@ -639,8 +645,10 @@ impl WorldState {
         let ground = next.height(x.floor() as i32, z.floor() as i32).max(vox_core::terrain::SEA) + 1;
         let arrive = [x, ground as f32, z];
         let url = format!("/w/{}/ws", next.id());
+        // the tiles share the map's heights and lie a tile apart: moved, not turned
+        let frame = Frame::moved([-(d[0] as f32) * t, 0.0, -(d[1] as f32) * t]);
         let (account, tx) = (p.account, p.tx.clone());
-        self.send_on(conn, account, &tx, url, arrive);
+        self.send_on(conn, account, &tx, url, arrive, motion, frame);
     }
 
     /// Someone stands at the objective: it's reached (once), everyone here is told, and the
@@ -1508,12 +1516,14 @@ impl WorldState {
             }
             ToServer::Build { id, node } => self.entity_edit(conn, id, Edit::Build { node }),
             ToServer::Unbuild { id, build } => self.start_unbuild(conn, id, build),
-            ToServer::Through { portal, side } => {
+            ToServer::Through { portal, side, motion } => {
                 if !p.bucket.take(now) {
                     return;
                 }
+                // how they say they move, held to what a player can do here
+                let motion = motion.sane(self.cfg.block_size);
                 if let Some(edge) = portal.strip_prefix("edge:") {
-                    return self.over_edge(conn, edge);
+                    return self.over_edge(conn, edge, motion);
                 }
                 let (at, account, tx) = (p.at, p.account, p.tx.clone());
                 // the doorway is a portal entity by name. A doorway within this world (no url)
@@ -1534,8 +1544,9 @@ impl WorldState {
                     return;
                 }
                 let arrive = door.carry(at, side);
+                let frame = door.frame(side);
                 let url = door.url.clone().unwrap_or_default();
-                self.send_on(conn, account, &tx, url, arrive);
+                self.send_on(conn, account, &tx, url, arrive, motion.through(&frame), frame);
             }
             ToServer::Climate(c) => {
                 // no air here to change

@@ -7,6 +7,7 @@ use std::{collections::HashSet, time::Duration};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use vox_core::travel::Motion;
 use vox_core::{
     entity::{Axis, Component, Dest, Portal},
     wire::{self, ENTITIES_PER_MESSAGE, EntityChange, MAX_MESSAGE, PROTOCOL, ToClient, ToServer},
@@ -135,11 +136,11 @@ async fn editor_join_yard() {
     // standing in the doorway and going through still answers with the yard's way on
     let send = |m: ToServer| Message::Binary(wire::encode(&m).into());
     ws.send(send(ToServer::Pose { at: [0.0, 0.0, 23.0], blob: vec![] })).await.unwrap();
-    ws.send(send(ToServer::Through { portal: "void".into(), side: 1 })).await.unwrap();
+    ws.send(send(ToServer::Through { portal: "void".into(), side: 1, motion: Motion::default() })).await.unwrap();
     let travel = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let Message::Binary(b) = ws.next().await.unwrap().unwrap()
-                && let ToClient::Travel { url, ticket, arrive } = wire::decode(&b).unwrap()
+                && let ToClient::Travel { url, ticket, arrive, .. } = wire::decode(&b).unwrap()
             {
                 return (url, ticket, arrive);
             }

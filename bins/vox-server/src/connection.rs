@@ -310,7 +310,7 @@ pub(super) async fn ticket_office(tx: mpsc::Sender<Event>, mut trips: mpsc::Rece
         let (tx, url, secret, world) = (tx.clone(), url.clone(), secret.clone(), world.clone());
         // one at a time would hold everyone up behind a slow answer
         tokio::spawn(async move {
-            let body = serde_json::json!({ "world": world, "account": trip.account, "to": trip.to, "arrive": trip.arrive });
+            let body = serde_json::json!({ "world": world, "account": trip.account, "to": trip.to, "arrive": trip.arrive, "motion": trip.motion });
             let got = http.post(format!("{url}/api/world/travel")).bearer_auth(&secret).json(&body).send().await;
             let answer = match got {
                 Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
@@ -325,7 +325,7 @@ pub(super) async fn ticket_office(tx: mpsc::Sender<Event>, mut trips: mpsc::Rece
             };
             let ticket = answer.as_ref().and_then(|a| a["ticket"].as_str()).map(String::from);
             let to = answer.as_ref().and_then(|a| a["url"].as_str()).map_or(trip.to, String::from);
-            let _ = tx.send(Event::Ticket { conn: trip.conn, url: to, ticket, arrive: trip.arrive }).await;
+            let _ = tx.send(Event::Ticket { conn: trip.conn, url: to, ticket, arrive: trip.arrive, motion: trip.motion, frame: trip.frame }).await;
         });
     }
 }

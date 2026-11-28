@@ -29,6 +29,7 @@ pub mod moves;
 pub mod portal;
 pub mod predict;
 pub mod terrain;
+pub mod travel;
 pub mod ray;
 pub mod relief;
 pub mod rescale;

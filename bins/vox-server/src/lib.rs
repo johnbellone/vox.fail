@@ -206,7 +206,7 @@ enum Event {
     /// predates it, and is not applied)
     Rules(Vec<Plot>, Vec<serde_json::Value>, Vec<Vec<u64>>, Instant),
     /// the directory's answer for a trip: where to go, and the ticket (if it gave one)
-    Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3] },
+    Ticket { conn: u64, url: String, ticket: Option<String>, arrive: [f32; 3], motion: vox_core::travel::Motion, frame: vox_core::travel::Frame },
     /// the directory's answer on whether an account may make advanced edits (None: no answer,
     /// which refuses the edit)
     Editor { conn: u64, account: u64, editor: Option<bool> },
@@ -319,12 +319,15 @@ pub(crate) struct Asking {
 }
 
 /// A trip through a portal to ask the directory a ticket for: who, where to (the portal's
-/// url), arriving where.
+/// url), arriving where, moving how (in the arriving world's frame), and how the two worlds
+/// meet.
 pub(crate) struct Trip {
     pub conn: u64,
     pub account: u64,
     pub to: String,
     pub arrive: [f32; 3],
+    pub motion: vox_core::travel::Motion,
+    pub frame: vox_core::travel::Frame,
 }
 
 /// Trips waiting for the directory at most; past this a player goes on without a ticket.

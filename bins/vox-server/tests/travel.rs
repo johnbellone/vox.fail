@@ -8,6 +8,7 @@ use axum::{Json, Router, http::HeaderMap, routing::post};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use vox_core::travel::Motion;
 use vox_core::{
     auth::{self, Character, Claims, Ticket},
     wire::{self, PROTOCOL, ToClient, ToServer},
@@ -76,7 +77,7 @@ async fn join(url: &str, token: Option<String>) -> Result<Ws, String> {
 
 fn travel(m: ToClient) -> Option<(String, Option<String>, [f32; 3])> {
     match m {
-        ToClient::Travel { url, ticket, arrive } => Some((url, ticket, arrive)),
+        ToClient::Travel { url, ticket, arrive, .. } => Some((url, ticket, arrive)),
         _ => None,
     }
 }
@@ -88,17 +89,44 @@ async fn only_from_the_doorway() {
     let mut ws = join(&url, None).await.unwrap();
     // nowhere near the doorway: nothing happens
     send(&mut ws, &ToServer::Pose { at: [10.0, 0.0, 10.0], blob: vec![] }).await;
-    send(&mut ws, &ToServer::Through { portal: "gate".into(), side: 1 }).await;
+    send(&mut ws, &ToServer::Through { portal: "gate".into(), side: 1, motion: Motion::default() }).await;
     assert!(wait_for(&mut ws, 0.5, travel).await.is_none());
     // a doorway that isn't there
     tokio::time::sleep(Duration::from_millis(1500)).await;
     send(&mut ws, &ToServer::Pose { at: [1.0, 0.0, 2.0], blob: vec![] }).await;
-    send(&mut ws, &ToServer::Through { portal: "nowhere".into(), side: 1 }).await;
+    send(&mut ws, &ToServer::Through { portal: "nowhere".into(), side: 1, motion: Motion::default() }).await;
     assert!(wait_for(&mut ws, 0.5, travel).await.is_none());
     // in it: on to the yard, half a block east of its arrival point, as they were here
-    send(&mut ws, &ToServer::Through { portal: "gate".into(), side: 1 }).await;
+    send(&mut ws, &ToServer::Through { portal: "gate".into(), side: 1, motion: Motion::default() }).await;
     let (to, ticket, arrive) = wait_for(&mut ws, 2.0, travel).await.expect("no way through");
     assert_eq!((to.as_str(), ticket, arrive), (":7781", None, [0.5, 0.0, 11.5]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_crossing_carries_motion_and_the_doorways_frame() {
+    // ADR 0004: you arrive moving as you were (held to what a player can do), and the client is
+    // told how the two worlds meet
+    let mut c = config("void");
+    c.seed = Some(DUNGEON_LEVEL.into());
+    let (_s, url) = serve(c).await;
+    let mut ws = join(&url, None).await.unwrap();
+    send(&mut ws, &ToServer::Pose { at: [0.5, 0.0, 2.0], blob: vec![] }).await;
+    let falling = Motion { velocity: [4.0, -1.0e4, 0.0], yaw: 1.0 };
+    send(&mut ws, &ToServer::Through { portal: "down".into(), side: 1, motion: falling }).await;
+    let (motion, frame) = wait_for(&mut ws, 2.0, |m| match m {
+        ToClient::Travel { motion, frame, .. } => Some((motion, frame)),
+        _ => None,
+    })
+    .await
+    .expect("no way through");
+    let per_block = 1.0 / vox_core::BLOCK_M;
+    assert!((motion.velocity[1] + vox_core::moves::MAX_FALL * per_block).abs() < 1e-2, "a fall is held to the fastest: {motion:?}");
+    assert_eq!(motion.velocity[0], 4.0, "a walk sideways is kept");
+    assert!((motion.yaw - 1.0).abs() < 1e-5);
+    // the doorway turns nothing and moves its sill onto the arrival point
+    assert!(frame.turn.abs() < 1e-5);
+    let sill = frame.point([0.5, 0.0, 2.0]);
+    assert!((sill[0] - 0.0).abs() < 1e-4 && sill[1].abs() < 1e-4 && (sill[2] - 11.5).abs() < 1e-4, "{frame:?}");
 }
 
 /// A doorway to a dungeon: its way is the dungeon's address, and its arrival is the level's own
@@ -116,7 +144,7 @@ async fn a_dungeon_doorway_arrives_at_the_levels_arrival() {
     let (_s, url) = serve(c).await;
     let mut ws = join(&url, None).await.unwrap();
     send(&mut ws, &ToServer::Pose { at: [0.5, 0.0, 2.0], blob: vec![] }).await;
-    send(&mut ws, &ToServer::Through { portal: "down".into(), side: 1 }).await;
+    send(&mut ws, &ToServer::Through { portal: "down".into(), side: 1, motion: Motion::default() }).await;
     let (to, ticket, arrive) = wait_for(&mut ws, 2.0, travel).await.expect("no way through");
     assert_eq!((to.as_str(), ticket), ("dungeon:crypt", None));
     assert_eq!(arrive, [0.0, 0.0, 11.5]);
@@ -137,7 +165,7 @@ async fn tickets_from_the_directory() {
                 let arrive: [f32; 3] = serde_json::from_value(v["arrive"].clone()).unwrap();
                 let t = now();
                 let claims = Claims { account: v["account"].as_u64().unwrap(), name: "Ann".into(), character: Character::default(), issued: t, expires: t + auth::TICKET_LIFETIME };
-                let ticket = Ticket { claims, world: "yard".into(), arrive, nonce: 77 };
+                let ticket = Ticket { claims, world: "yard".into(), arrive, nonce: 77, motion: Motion::default() };
                 Json(serde_json::json!({ "world": "yard", "url": "/w/7781/ws", "ticket": auth::sign_ticket(&ticket, &signer) }))
             }
         }),
@@ -160,7 +188,7 @@ async fn tickets_from_the_directory() {
     let token = auth::sign(&Claims { account: 7, name: "Ann".into(), character: Character::default(), issued: t, expires: t + 600 }, &key);
     let mut ws = join(&void_url, Some(token)).await.unwrap();
     send(&mut ws, &ToServer::Pose { at: [0.5, 0.0, 2.0], blob: vec![] }).await;
-    send(&mut ws, &ToServer::Through { portal: "gate".into(), side: 1 }).await;
+    send(&mut ws, &ToServer::Through { portal: "gate".into(), side: 1, motion: Motion::default() }).await;
     let (to, ticket, arrive) = wait_for(&mut ws, 3.0, travel).await.expect("no way through");
     // in the middle of the doorway: the middle of the arrival point
     assert_eq!((to.as_str(), arrive), ("/w/7781/ws", [0.0, 0.0, 11.5]));

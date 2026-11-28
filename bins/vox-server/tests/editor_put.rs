@@ -16,6 +16,7 @@ use axum::{Json, extract::Query, http::StatusCode, response::IntoResponse};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use vox_core::travel::Motion;
 use vox_core::{
     Why,
     auth::{self, Character, Claims, SigningKey},
@@ -436,9 +437,9 @@ async fn editor_put_a_dungeon_doorway_travels_by_name() {
     let to = Dest::Dungeon { name: "crypt".into(), arrive: [1.0, 0.0, 1.5] };
     send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("crypt", [2.5, 0.0, 2.5], to) }).await;
     assert_eq!(next_entities(&mut a.ws).await.len(), 1);
-    send(&mut a.ws, &ToServer::Through { portal: "crypt".into(), side: 1 }).await;
+    send(&mut a.ws, &ToServer::Through { portal: "crypt".into(), side: 1, motion: Motion::default() }).await;
     let (url_got, ticket, _arrive) = until(&mut a.ws, |m| match m {
-        ToClient::Travel { url, ticket, arrive } => Some((url, ticket, arrive)),
+        ToClient::Travel { url, ticket, arrive, .. } => Some((url, ticket, arrive)),
         _ => None,
     })
     .await;
@@ -455,7 +456,7 @@ async fn editor_put_a_doorway_in_place_answers_no_travel() {
     let here = Dest::Here { arrive: [1.0, 0.0, 1.5] };
     send(&mut a.ws, &ToServer::Put { id: 1, entity: None, expect: None, component: portal("inner", [2.5, 0.0, 2.5], here) }).await;
     assert_eq!(next_entities(&mut a.ws).await.len(), 1);
-    send(&mut a.ws, &ToServer::Through { portal: "inner".into(), side: 1 }).await;
+    send(&mut a.ws, &ToServer::Through { portal: "inner".into(), side: 1, motion: Motion::default() }).await;
     // a refused edit after it is answered in order, so anything the walk sent came first
     send(&mut a.ws, &ToServer::Edit { id: 9, cell: [0, -70, 0], block: 1 }).await;
     let mut travelled = false;

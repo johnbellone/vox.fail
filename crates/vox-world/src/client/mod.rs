@@ -354,6 +354,8 @@ pub struct WorldClient {
     pub body: Body,
     spawn: [f32; 3],
     vy: f32,
+    /// how fast you moved last frame, blocks a second (sent with a crossing)
+    velocity: [f32; 3],
     /// which way the character faces, and the camera's turn and tilt (radians)
     yaw: f32,
     pub cam_yaw: f32,
@@ -412,6 +414,8 @@ pub struct Arrival {
     pub cam_yaw: f32,
     pub zoom: f32,
     pub move_yaw: Option<f32>,
+    /// still falling (or rising) as you were, blocks a second (ADR 0004)
+    pub vy: f32,
 }
 
 impl Default for WorldClient {
@@ -469,6 +473,7 @@ impl Default for WorldClient {
             body: Body { pos: [0.5, 0.0, 0.5], half: HALF_WIDTH, height: HEIGHT },
             spawn: [0.5, 0.0, 0.5],
             vy: 0.0,
+            velocity: [0.0; 3],
             yaw: 0.0,
             cam_yaw: 0.0,
             cam_pitch: -0.25,
@@ -703,6 +708,7 @@ impl WorldClient {
             cam_yaw: self.cam_yaw + turn,
             zoom: self.zoom,
             move_yaw: self.move_yaw.map(|y| y + turn),
+            vy: self.vy,
         }
     }
 
@@ -710,6 +716,7 @@ impl WorldClient {
     /// the world is in front of you and walking on doesn't take you straight back).
     pub fn arrive(&mut self, a: Arrival) {
         self.body.pos = a.pos;
+        self.vy = if a.vy.is_finite() { a.vy } else { 0.0 };
         self.yaw = a.yaw;
         self.cam_yaw = a.cam_yaw;
         self.zoom = a.zoom;
@@ -755,21 +762,28 @@ impl WorldClient {
             }
             return;
         }
-        self.send(&ToServer::Through { portal: portal.into(), side: if side < 0.0 { -1 } else { 1 } });
+        // how we move, so the world there starts us moving the same (the world holds it to what
+        // a player can do)
+        let motion = vox_core::travel::Motion { velocity: self.velocity, yaw: self.yaw };
+        self.send(&ToServer::Through { portal: portal.into(), side: if side < 0.0 { -1 } else { 1 }, motion });
         self.asked = Some((a, self.now()));
     }
 
     /// The world's answer to [`WorldClient::through`]: go to `url` with `ticket`, coming out at
-    /// `arrive` (where the world there will put us).
-    pub fn travelled(&mut self, url: &str, ticket: Option<String>, arrive: [f32; 3]) {
+    /// `arrive` (where the world there will put us), still falling as `motion` says. `frame` (how
+    /// the two worlds meet) is for drawing the far side in place, once crossings stream it
+    /// (vox-81l.3); one that isn't sane is not used.
+    pub fn travelled(&mut self, url: &str, ticket: Option<String>, arrive: [f32; 3], motion: vox_core::travel::Motion, frame: vox_core::travel::Frame) {
         if !arrive.iter().all(|v| v.is_finite()) {
             return;
         }
+        let _frame = frame.valid().then_some(frame);
         let mut a = match self.asked.take() {
             Some((a, _)) => a,
             None => self.arrival(arrive, 0.0),
         };
         a.pos = arrive;
+        a.vy = motion.sane(self.block_size).velocity[1];
         self.ticket = ticket;
         self.travel(url, a);
     }

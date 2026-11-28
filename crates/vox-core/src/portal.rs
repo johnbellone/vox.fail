@@ -107,6 +107,14 @@ impl Door {
         self.yaw - base - if side < 0.0 { std::f32::consts::PI } else { 0.0 }
     }
 
+    /// How this world meets the other side, going through from `side`: a point mapped by the
+    /// frame is where [`Door::carry`] takes it, and a velocity or facing turns with it.
+    pub fn frame(&self, side: f32) -> crate::travel::Frame {
+        let turn = self.turn(side);
+        let at = crate::travel::Frame { offset: [0.0; 3], turn }.point(self.at);
+        crate::travel::Frame { offset: [self.arrive[0] - at[0], self.arrive[1] - at[1], self.arrive[2] - at[2]], turn }
+    }
+
     /// A point here as the matching point on the other side, coming from `side`.
     pub fn carry(&self, p: [f32; 3], side: f32) -> [f32; 3] {
         let (s, c) = self.turn(side).sin_cos();
@@ -212,5 +220,28 @@ mod tests {
         c.tidy();
         let crate::entity::Component::Portal(p) = c else { panic!("still a portal") };
         assert_eq!(Door::from_portal(&p, Some("/w/7781/ws".into()), [-3.0, 0.0, 2.0]), parsed[0]);
+    }
+
+    #[test]
+    fn a_doorways_frame_takes_points_where_carry_does() {
+        for (along_x, yaw) in [(false, 0.0), (true, 90.0), (false, 37.0), (true, -120.0)] {
+            let d = Door {
+                name: "d".into(),
+                at: [10.0, 2.0, -4.0],
+                along_x,
+                size: DEFAULT_SIZE,
+                level: "yard".into(),
+                url: None,
+                arrive: [-30.0, 7.0, 55.0],
+                yaw: f32::to_radians(yaw),
+            };
+            for side in [1.0, -1.0] {
+                let f = d.frame(side);
+                for p in [[10.0, 2.0, -4.0], [11.5, 3.0, -3.0], [9.0, 2.5, -5.5]] {
+                    let (a, b) = (f.point(p), d.carry(p, side));
+                    assert!((0..3).all(|i| (a[i] - b[i]).abs() < 1e-3), "{along_x} {yaw} {side}: {a:?} vs {b:?}");
+                }
+            }
+        }
     }
 }
