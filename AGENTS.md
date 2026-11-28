@@ -59,12 +59,12 @@ Two products share one Cargo workspace:
 | `apps/edge/` | (Bun) | vox.fail's Cloudflare Worker: serves the site, runs the servers' container behind a Durable Object (`src/container.ts`), and shows an offline page when they can't start. Configured in `wrangler.jsonc`; deployed by `.github/workflows/release.yml`. See its README. |
 | `data/` | | Game data: `blocks.json`, `characters.json`, `wardrobe.json`, `levels/*.json` (void, yard, islands, sea, orbit), clip manifests. |
 | `assets/` | | Models, props, sets, sounds, fonts, shaders. |
-| `deploy/` | | vox.fail on Cloudflare: `cloudflare-setup.sh` (zone, DNS, R2, secrets), and the container's start (`docker/start.sh`, `vox-supervise`, `litestream.yml`, the args files). Self-hosting: systemd units, a Cloudflare Tunnel config, the container image (`docker/Dockerfile`) and a Helm chart (`helm/vox`). See `deploy/README.md`. |
+| `deploy/` | | vox.fail on Cloudflare: `cloudflare-setup.sh` (zone, DNS, R2, secrets), and the container's start (`docker/start.sh`, `vox-supervise`, `litestream.yml`, the args files). Self-hosting: systemd units, a Cloudflare Tunnel config, the container image (`docker/Dockerfile`) and a Helm chart (`helm/vox`). The desktop client on Steam: `steam/upload.sh` and `steam/README.md`. See `deploy/README.md`. |
 | `tools/assets/` | | Python asset builders (models, sets, wardrobe, block tiles, levels). |
 | `tools/dev/` | | `play-local.sh` (run everything locally), `build_web.sh` (the wasm client), `oxen_probe.sh` (the snapshot store against Oxen), `screenshots.sh` (the README's pictures, drawn by the real client into `docs/screenshots/`; run by hand when the look changes). |
 | `tools/test/` | | `visual_test.py`, `web_e2e.py`, `eval_voice.py`. |
 | `tools/review/` | | Avatar review: `render_sheet.mjs` (the close-up sheet, three.js), `ingame.py` (the in-game sheet, the app's snapshot mode), `avatar_pr.py` (check an avatar, write or check its pull request). See `docs/avatar/avatar-workflow.md`. |
-| `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents). |
+| `docs/` | | `help/` (player help, also shown on the site; being added, bead `vox-dg5.4` onward), `vox/` (worlds), `avatar/` (the avatar manual), `design/` (design documents), `decisions/` (architecture decision records, numbered). |
 | `.pi/agents/` | | Project subagents: `vox-writer` (haiku) and `vox-reviewer` (sonnet). See [Models and subagents](#models-and-subagents). |
 | `.pi/prompts/`, `.agents/skills/` | | Pi commands (`/new-avatar`, `/review-avatar`) and skills (`new-avatar`, `okf-memory`). |
 | `.beads/` | | The beads task database (`bd`). Never edit by hand. |
