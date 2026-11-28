@@ -270,6 +270,10 @@ pub struct Crosshair;
 
 /// How long to wait for the world to answer a trip through a portal, s.
 const ASK_WITHIN: f64 = 5.0;
+/// How long to wait at a waking doorway's sill: a little longer than the world holds us there.
+const HELD_WITHIN: f64 = 95.0;
+/// Most doorway states kept (a world's own doorways; a hostile world can't grow this).
+const DOOR_STATES_MOST: usize = 256;
 
 #[derive(Resource)]
 pub struct WorldClient {
@@ -356,6 +360,10 @@ pub struct WorldClient {
     vy: f32,
     /// how fast you moved last frame, blocks a second (sent with a crossing)
     velocity: [f32; 3],
+    /// what each doorway here shows about where it leads, as the world last said (by name)
+    pub door_states: HashMap<String, vox_core::travel::DoorState>,
+    /// the doorway asked to go through, while its answer is awaited
+    asked_door: Option<String>,
     /// which way the character faces, and the camera's turn and tilt (radians)
     yaw: f32,
     pub cam_yaw: f32,
@@ -474,6 +482,8 @@ impl Default for WorldClient {
             spawn: [0.5, 0.0, 0.5],
             vy: 0.0,
             velocity: [0.0; 3],
+            door_states: HashMap::new(),
+            asked_door: None,
             yaw: 0.0,
             cam_yaw: 0.0,
             cam_pitch: -0.25,
@@ -767,6 +777,27 @@ impl WorldClient {
         let motion = vox_core::travel::Motion { velocity: self.velocity, yaw: self.yaw };
         self.send(&ToServer::Through { portal: portal.into(), side: if side < 0.0 { -1 } else { 1 }, motion });
         self.asked = Some((a, self.now()));
+        self.asked_door = Some(portal.to_string());
+    }
+
+    /// Put back at `to` (blocks) by something that won't let you on, no longer falling.
+    pub fn bump(&mut self, to: [f32; 3]) {
+        if to.iter().all(|v| v.is_finite()) {
+            self.body.pos = to;
+            self.vy = self.vy.max(0.0);
+        }
+    }
+
+    /// What the doorway called `portal` shows, as the world says. A name that isn't plain or
+    /// short is ignored, and past [`DOOR_STATES_MOST`] doorways new ones are.
+    pub fn door_state(&mut self, portal: String, state: vox_core::travel::DoorState) {
+        if portal.is_empty() || portal.chars().count() > 64 || portal.chars().any(char::is_control) {
+            return;
+        }
+        if self.door_states.len() >= DOOR_STATES_MOST && !self.door_states.contains_key(&portal) {
+            return;
+        }
+        self.door_states.insert(portal, state);
     }
 
     /// The world's answer to [`WorldClient::through`]: go to `url` with `ticket`, coming out at
@@ -778,6 +809,7 @@ impl WorldClient {
             return;
         }
         let _frame = frame.valid().then_some(frame);
+        self.asked_door = None;
         let mut a = match self.asked.take() {
             Some((a, _)) => a,
             None => self.arrival(arrive, 0.0),
@@ -810,12 +842,18 @@ impl WorldClient {
 
     /// The way through a portal was closed (no world answered): go back where you were.
     pub fn travel_check(&mut self) {
-        // asked the way and no answer: this world didn't let us through
+        // asked the way and no answer: this world didn't let us through. A waking doorway holds
+        // us at its sill until the world there is up (the world tells us if it gives up)
+        let waking = self.asked_door.as_ref().and_then(|d| self.door_states.get(d)) == Some(&vox_core::travel::DoorState::Waking);
+        let within = if waking { HELD_WITHIN } else { ASK_WITHIN };
         if let Some((_, at)) = self.asked
-            && self.now() - at > ASK_WITHIN
+            && self.now() - at > within
         {
             self.asked = None;
-            self.notice("The way is closed");
+            self.asked_door = None;
+            if !waking {
+                self.notice("The way is closed");
+            }
         }
         let Some((back, at, pos)) = self.travel.clone() else { return };
         // nobody there (the link says so at once), or no welcome for a long while
@@ -1049,6 +1087,8 @@ impl WorldClient {
     ) {
         // a prop in your hand is this world's to judge; a new one starts with blocks
         self.hand_prop = None;
+        // what this world's doorways show, the world says again
+        self.door_states.clear();
         self.you = Some(you);
         self.world = world;
         // the last world's air stays behind: this one sends its own, or has none (orbit)

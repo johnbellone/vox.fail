@@ -18,6 +18,7 @@
 //! they opened (kept as portal entities, which new arrivals get with the rest).
 
 mod connection;
+pub mod doors;
 mod entities;
 pub mod flags;
 mod props;
@@ -140,6 +141,9 @@ pub struct Config {
     /// play and tests only: a live world asks the directory who may edit, and a world with a
     /// directory refuses this flag. Without it, guests may not edit.
     pub editors_all: bool,
+    /// what the host knows about its worlds, for what doorways show ([`doors`]); `vox-host` sets
+    /// it. None (a plain `vox-server`): doorways to other worlds show their unchecked look.
+    pub ways: Option<Arc<dyn doors::Ways>>,
 }
 
 impl Config {
@@ -171,6 +175,7 @@ impl Config {
             rules_every: Duration::from_secs(30),
             editors_all: false,
             props: PathBuf::from("data/props"),
+            ways: None,
         }
     }
 }
@@ -499,6 +504,24 @@ struct Player {
     pending: Option<Pending>,
     /// their last finished builds, oldest first, for `ToServer::Unbuild` (dropped with them)
     kept: VecDeque<KeptBuild>,
+    /// what each doorway near them shows, as last sent to them (by portal name)
+    doors: HashMap<String, vox_core::travel::DoorState>,
+}
+
+/// A player held at a waking doorway's sill until the world it leads to is up (ADR 0004
+/// decision 4): sent on then, or told the way closed.
+struct Held {
+    conn: u64,
+    /// the destination's name, as its host knows it
+    name: String,
+    /// the doorway, for the notice, and its sill: walking away gives up the wait
+    door: String,
+    sill: [f32; 3],
+    url: String,
+    arrive: [f32; 3],
+    motion: vox_core::travel::Motion,
+    frame: vox_core::travel::Frame,
+    since: Instant,
 }
 
 /// One block edit in the log: (seq, at, player name, account, cell, old, new).
@@ -561,6 +584,10 @@ struct WorldState {
     /// when a keyed portal was last made, moved, linked or removed here (the directory has
     /// changed its list): a rules fetch that began before it is not applied to the portals
     last_keyed_commit: Option<Instant>,
+    /// players held at waking doorways
+    held: Vec<Held>,
+    /// when doorways were last checked for the players near them
+    doors_at: Instant,
     /// woken after a keyed-portal change here, so the rules are fetched again at once and the
     /// fetch that follows is one that began after the change (None: no directory)
     rules_now: Option<Arc<Notify>>,

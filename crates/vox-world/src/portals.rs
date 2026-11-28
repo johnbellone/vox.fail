@@ -188,6 +188,50 @@ pub struct PortalMaterial {
     #[texture(1)]
     #[sampler(2)]
     pub echo: Handle<Image>,
+    /// what it shows about where it leads (ADR 0004): x the state now, y the state before, z
+    /// the blend between them (0-1, over half a second), w seconds in this state; see
+    /// [`door_code`]
+    #[uniform(3)]
+    pub look: Vec4,
+}
+
+/// A doorway state's number in the shader (`shaders/portal.wesl`).
+pub fn door_code(s: vox_core::travel::DoorState) -> f32 {
+    use vox_core::travel::DoorState as D;
+    match s {
+        D::Unknown => 0.0,
+        D::Open => 1.0,
+        D::Waking => 2.0,
+        D::Unlinked => 3.0,
+        D::Restricted(_) => 4.0,
+    }
+}
+
+/// Seconds a change of look takes.
+pub const LOOK_BLEND: f32 = 0.5;
+
+/// What a doorway's look is doing: the state it shows, the one it showed, and when it changed
+/// (seconds, the world client's clock).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct DoorLook {
+    pub now: vox_core::travel::DoorState,
+    pub was: vox_core::travel::DoorState,
+    pub since: f64,
+}
+
+impl DoorLook {
+    /// Take the state the world says, at time `t`; a change starts a blend.
+    pub fn set(&mut self, s: vox_core::travel::DoorState, t: f64) {
+        if s != self.now {
+            *self = DoorLook { now: s, was: self.now, since: t };
+        }
+    }
+
+    /// The material's `look` at time `t`.
+    pub fn uniform(&self, t: f64) -> Vec4 {
+        let held = (t - self.since).max(0.0) as f32;
+        Vec4::new(door_code(self.now), door_code(self.was), (held / LOOK_BLEND).min(1.0), held.min(600.0))
+    }
 }
 
 impl Material for PortalMaterial {
@@ -249,6 +293,8 @@ struct Live {
     dressed: bool,
     /// how much shows now (eased)
     shown: f32,
+    /// what it shows about where it leads, and its blend
+    look: DoorLook,
 }
 
 #[derive(Resource, Default)]
@@ -440,7 +486,11 @@ pub fn update(
                 }
             };
             let image = images.add(target(px));
-            let mat = mats.add(PortalMaterial { params: Vec4::new(0.0, 0.0, def.size.x / def.size.y, p.live.len() as f32 * 1.7), echo: image.clone() });
+            let mat = mats.add(PortalMaterial {
+                params: Vec4::new(0.0, 0.0, def.size.x / def.size.y, p.live.len() as f32 * 1.7),
+                echo: image.clone(),
+                look: DoorLook::default().uniform(0.0),
+            });
             let rot = if def.along_x { Quat::from_rotation_y(FRAC_PI_2) } else { Quat::IDENTITY };
             let quad = commands
                 .spawn((
@@ -468,7 +518,7 @@ pub fn update(
                     Name::new(format!("echo {}", def.name)),
                 ))
                 .id();
-            p.live.push(Live { def, scene, quad, cam, image, mat, px, last_side: None, dressed: false, shown: 0.0 });
+            p.live.push(Live { def, scene, quad, cam, image, mat, px, last_side: None, dressed: false, shown: 0.0, look: DoorLook::default() });
         }
         // scenes no doorway shows any more (a doorway moved or removed, another world): gone,
         // with what they spawned, so they don't pile up while a world is edited
@@ -618,10 +668,15 @@ pub fn update(
         }
         l.last_side = Some(side_now);
         // the doorway's look
+        l.look.set(w.door_states.get(&l.def.name).copied().unwrap_or_default(), now);
         if let Some(mut m) = mats.get_mut(&l.mat) {
             let want = Vec4::new(pres, if ready { 1.0 } else { 0.0 }, m.params.z, m.params.w);
             if m.params != want {
                 m.params = want;
+            }
+            let look = l.look.uniform(now);
+            if m.look != look {
+                m.look = look;
             }
         }
         if let Ok(mut v) = vis.get_mut(l.quad) {
@@ -717,8 +772,23 @@ pub fn update(
     }
 }
 
-/// Through `def` from `side`, standing at `body` (blocks).
+/// How far back (blocks) a closed doorway puts you, from its plane: half a metre.
+const BUMP: f32 = vox_core::in_blocks(0.5);
+
+/// Through `def` from `side`, standing at `body` (blocks). A doorway the world says is closed
+/// to you (unlinked, restricted) doesn't take you: you bump gently back to the side you came
+/// from, and are told why (ADR 0004 decision 11).
 fn go(w: &mut WorldClient, def: &PortalDef, body: Vec3, side: f32) {
+    let state = w.door_states.get(&def.name).copied().unwrap_or_default();
+    if def.url.is_some() && !state.lets_through() && state != vox_core::travel::DoorState::Waking {
+        let n = def.normal();
+        let off = (body - def.at).dot(n);
+        w.bump((body + n * (side * BUMP - off)).to_array());
+        if let Some(line) = state.line(&def.name) {
+            w.notice(line);
+        }
+        return;
+    }
     let to = def.carry(body, side);
     let a = w.arrival(to.to_array(), def.turn(side));
     match &def.url {

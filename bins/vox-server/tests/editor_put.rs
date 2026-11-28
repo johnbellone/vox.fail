@@ -166,14 +166,16 @@ fn url_to(url: &str) -> Dest {
     Dest::Url { url: url.into(), arrive: [0.0; 3] }
 }
 
-/// A stand-in directory: a world named `test` with no plots, and the editor check, which says
+/// A stand-in directory: a world named `test` with no plots, account 7 in a raid party, and the
+/// editor check, which says
 /// yes for account 7 (and, slowly, for account 5), no for everyone else, and fails (500) for
 /// account 9. Each check is counted.
 async fn directory(asks: Arc<AtomicUsize>) -> String {
     let app = axum::Router::new()
         .route(
             "/api/world/test/rules",
-            axum::routing::get(|| async { Json(serde_json::json!({ "plots": [], "portals": [] })) }),
+            // Ann (account 7) is in a raid party, so a dungeon's doorway lets her through
+            axum::routing::get(|| async { Json(serde_json::json!({ "plots": [], "portals": [], "parties": [[7]] })) }),
         )
         .route(
             "/api/world/test/editor",

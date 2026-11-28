@@ -25,7 +25,8 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, RwLock, Weak,
-        atomic::{AtomicBool, Ordering},
+        OnceLock,
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -134,11 +135,31 @@ struct World {
     slot: Mutex<Option<(Server, Instant)>>,
     /// an instance that has stopped: gone for good, never started again
     gone: AtomicBool,
+    /// [`STOPPED`], [`STARTING`] or [`RUNNING`], for what doorways to it show (read without
+    /// waiting on `slot`, which a start holds)
+    state: AtomicU8,
 }
+
+const STOPPED: u8 = 0;
+const STARTING: u8 = 1;
+const RUNNING: u8 = 2;
 
 impl World {
     fn new(id: String, aliases: Vec<String>, keep: bool, ends: Option<Instant>, cfg: Config) -> World {
-        World { id, aliases, keep, ends, cfg, slot: Mutex::new(None), gone: AtomicBool::new(false) }
+        World { id, aliases, keep, ends, cfg, slot: Mutex::new(None), gone: AtomicBool::new(false), state: AtomicU8::new(STOPPED) }
+    }
+
+    /// What doorways to it show.
+    fn way(&self) -> vox_server::doors::Way {
+        use vox_server::doors::Way;
+        if self.gone.load(Ordering::Acquire) {
+            return Way::Absent;
+        }
+        match self.state.load(Ordering::Acquire) {
+            RUNNING => Way::Running,
+            STARTING => Way::Starting,
+            _ => Way::Stopped,
+        }
     }
 
     /// The world, started if it wasn't, and marked in use now.
@@ -152,8 +173,17 @@ impl World {
             return Err("that instance is over".into());
         }
         let cfg = self.cfg.clone();
+        self.state.store(STARTING, Ordering::Release);
         // opening its database and loading its chunks is blocking work
-        let server = tokio::task::spawn_blocking(move || Server::start(cfg)).await.map_err(|e| e.to_string())??;
+        let started = tokio::task::spawn_blocking(move || Server::start(cfg)).await.map_err(|e| e.to_string()).and_then(|r| r);
+        let server = match started {
+            Ok(s) => s,
+            Err(e) => {
+                self.state.store(STOPPED, Ordering::Release);
+                return Err(e);
+            }
+        };
+        self.state.store(RUNNING, Ordering::Release);
         eprintln!("vox-host: started {}", self.id);
         *slot = Some((server.clone(), Instant::now()));
         Ok(server)
@@ -180,6 +210,7 @@ impl World {
             self.gone.store(true, Ordering::Release);
         }
         // held while saving, so a connection arriving now waits and then starts it afresh
+        self.state.store(STOPPED, Ordering::Release);
         server.shutdown().await;
         eprintln!("vox-host: stopped {} ({})", self.id, if over { "its time is up" } else { "unused" });
         true
@@ -187,12 +218,66 @@ impl World {
 
     async fn stop(&self) {
         if let Some((server, _)) = self.slot.lock().await.take() {
+            self.state.store(STOPPED, Ordering::Release);
             server.shutdown().await;
         }
     }
 
     async fn running(&self) -> Option<Server> {
         self.slot.lock().await.as_ref().map(|(s, _)| s.clone())
+    }
+}
+
+/// The host as its worlds see it, without keeping it alive.
+struct WeakHost {
+    worlds: Weak<RwLock<Worlds>>,
+    instances: Option<Weak<Instances>>,
+    atlases: Weak<Vec<Atlas>>,
+}
+
+/// What a world asks its host about the others (ADR 0004 decision 12): whether a world by that
+/// name is running, starting or stopped, and waking a stopped one.
+struct HostWays {
+    host: OnceLock<WeakHost>,
+    /// worlds ask from their own threads; a wake runs on the host's runtime
+    handle: tokio::runtime::Handle,
+}
+
+impl HostWays {
+    fn host(&self) -> Option<Host> {
+        let h = self.host.get()?;
+        Some(Host {
+            worlds: h.worlds.upgrade()?,
+            instances: match &h.instances {
+                Some(i) => Some(i.upgrade()?),
+                None => None,
+            },
+            atlases: h.atlases.upgrade()?,
+        })
+    }
+}
+
+impl vox_server::doors::Ways for HostWays {
+    fn way(&self, name: &str) -> vox_server::doors::Way {
+        use vox_server::doors::Way;
+        let Some(host) = self.host() else { return Way::Absent };
+        match host.world(name) {
+            Some(w) => w.way(),
+            // a tile not made yet is made (and started) on its first visit
+            None if host.is_tile(name) => Way::Stopped,
+            None => Way::Absent,
+        }
+    }
+
+    fn wake(&self, name: &str) {
+        let Some(host) = self.host() else { return };
+        // an instance is made only by the directory, for a party; nothing else is woken twice
+        let Some(w) = host.world_or_tile(name).filter(|w| w.ends.is_none() && w.way() == vox_server::doors::Way::Stopped) else { return };
+        self.handle.spawn(async move {
+            if let Err(e) = w.ensure().await {
+                eprintln!("vox-host: couldn't wake {}: {e}", w.id);
+            }
+        });
     }
 }
 
@@ -229,8 +314,13 @@ impl Host {
             }
         }
         let idle = options.idle;
+        // every world (and every tile and instance made later) can ask the host about the
+        // others, for what its doorways show; the host is filled in once it exists
+        let ways = Arc::new(HostWays { host: OnceLock::new(), handle: tokio::runtime::Handle::current() });
+        let dyn_ways: Arc<dyn vox_server::doors::Ways> = ways.clone();
         let mut worlds = Worlds::default();
-        for s in specs {
+        for mut s in specs {
+            s.cfg.ways = Some(dyn_ways.clone());
             let w = Arc::new(World::new(s.id, s.aliases, s.keep || idle.is_none(), None, s.cfg));
             for n in std::iter::once(&w.id).chain(&w.aliases) {
                 worlds.names.insert(n.clone(), w.clone());
@@ -242,7 +332,20 @@ impl Host {
                 return Err(format!("atlas \"{}\": a name of lower-case letters and digits, and a size of 1 to 100000 tiles each way", a.name));
             }
         }
-        let host = Host { worlds: Arc::new(RwLock::new(worlds)), instances: options.instances.map(Arc::new), atlases: Arc::new(options.atlases) };
+        let mut atlases = options.atlases;
+        for a in &mut atlases {
+            a.base.ways = Some(dyn_ways.clone());
+        }
+        let instances = options.instances.map(|mut i| {
+            i.base.ways = Some(dyn_ways.clone());
+            Arc::new(i)
+        });
+        let host = Host { worlds: Arc::new(RwLock::new(worlds)), instances, atlases: Arc::new(atlases) };
+        let _ = ways.host.set(WeakHost {
+            worlds: Arc::downgrade(&host.worlds),
+            instances: host.instances.as_ref().map(Arc::downgrade),
+            atlases: Arc::downgrade(&host.atlases),
+        });
         for w in host.all().into_iter().filter(|w| w.keep) {
             if let Err(e) = w.ensure().await {
                 host.shutdown().await;
